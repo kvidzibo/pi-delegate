@@ -1,0 +1,314 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+	ACTIVITY_ARG_MAX,
+	ACTIVITY_NAME_PAD,
+	aliasForModel,
+	appendActivity,
+	applyProgress,
+	asActivityList,
+	clipActivityArg,
+	clipThinkingTail,
+	createProgress,
+	delegateHeaderBits,
+	delegateTargetLine,
+	formatActivityPlain,
+	formatDelegateTarget,
+	paintHeader,
+	parseChildProgress,
+	plannedModel,
+	summarizeToolArgs,
+	THINKING_TAIL_MAX,
+	type ActivityItem,
+} from "../display.ts";
+
+const models = {
+	recon: "local-qwen38/qwen38-q4km",
+	implement: "openai-codex/gpt-5.6-luna",
+	review: "openai-codex/gpt-5.6-terra",
+	oracle: "openai-codex/gpt-5.6-sol",
+};
+
+test("aliases known child models", () => {
+	assert.equal(aliasForModel(models.recon), "Qwen");
+	assert.equal(aliasForModel("openai-codex/gpt-5.3-codex-spark"), "Spark");
+	assert.equal(aliasForModel(models.implement), "Luna");
+	assert.equal(aliasForModel(models.review), "Terra");
+	assert.equal(aliasForModel(models.oracle), "Sol");
+	assert.equal(aliasForModel("openai-codex/mystery"), "mystery");
+	assert.equal(aliasForModel("acme/solicitor"), "solicitor");
+	assert.equal(aliasForModel(undefined), "…");
+});
+
+test("planned model follows kind", () => {
+	assert.equal(plannedModel("recon", models), models.recon);
+	assert.equal(plannedModel("implement", models), models.implement);
+	assert.equal(plannedModel("review", models), models.review);
+	assert.equal(plannedModel("oracle", models), models.oracle);
+});
+
+test("header shows kind and model", () => {
+	assert.equal(formatDelegateTarget(undefined, undefined), "…");
+	assert.equal(formatDelegateTarget("nope", undefined), "…");
+	assert.equal(formatDelegateTarget("recon", undefined), "recon → …");
+	assert.equal(formatDelegateTarget("recon", models.recon), "recon → Qwen (local-qwen38/qwen38-q4km)");
+	assert.equal(
+		formatDelegateTarget("implement", models.implement),
+		"implement → Luna (openai-codex/gpt-5.6-luna)",
+	);
+	assert.equal(
+		delegateTargetLine("review", models.review),
+		"[delegate review → Terra (openai-codex/gpt-5.6-terra)]",
+	);
+});
+
+test("child progress lines from json events", () => {
+	assert.deepEqual(parseChildProgress({ type: "tool_execution_start", toolName: "read", args: { path: "src/foo.ts" } }), {
+		mark: "→",
+		name: "read",
+		args: "src/foo.ts",
+	});
+	assert.equal(
+		formatActivityPlain({
+			mark: "✓",
+			name: "bash",
+			args: "ls -la",
+		}),
+		`✓  ${"bash".padEnd(ACTIVITY_NAME_PAD)}  ls -la`,
+	);
+	assert.deepEqual(
+		parseChildProgress({ type: "tool_execution_end", toolName: "grep", args: { pattern: "TODO" }, isError: true }),
+		{ mark: "✗", name: "grep", args: "TODO" },
+	);
+	assert.deepEqual(
+		parseChildProgress({
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_start" },
+		}),
+		{ mark: "…", name: "thinking" },
+	);
+	assert.deepEqual(
+		parseChildProgress({
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", delta: "Need map first" },
+		}),
+		{ mark: "…", name: "thinking", args: "Need map first" },
+	);
+	assert.equal(parseChildProgress({ type: "agent_start" }), undefined);
+	assert.deepEqual(
+		parseChildProgress({
+			type: "tool_execution_update",
+			toolCallId: "c9",
+			toolName: "bash",
+			args: { command: "ls -la" },
+		}),
+		{ mark: "→", name: "bash", args: "ls -la", id: "c9" },
+	);
+	const long = summarizeToolArgs("bash", { command: "x".repeat(90) });
+	assert.equal(long.length, ACTIVITY_ARG_MAX);
+	assert.equal(long.endsWith("…"), true);
+	assert.equal(clipActivityArg("short"), "short");
+});
+
+test("activity lines align", () => {
+	assert.equal(formatActivityPlain({ mark: "→", name: "read", args: "a.ts" }), `→  ${"read".padEnd(8)}  a.ts`);
+	assert.equal(formatActivityPlain({ mark: "…", name: "writing" }), "…  writing");
+});
+
+test("live activity keeps last 3 and upgrades start to end", () => {
+	const items: ActivityItem[] = [];
+	appendActivity(items, { mark: "…", name: "writing" });
+	appendActivity(items, { mark: "→", name: "read", args: "a.ts" });
+	appendActivity(items, { mark: "✓", name: "read", args: "a.ts" });
+	appendActivity(items, { mark: "→", name: "grep", args: "TODO" });
+	appendActivity(items, { mark: "→", name: "bash", args: "ls" });
+	assert.equal(appendActivity(items, { mark: "→", name: "bash", args: "ls" }), false);
+	assert.deepEqual(
+		items.map((item) => item.name),
+		["read", "grep", "bash"],
+	);
+	assert.equal(items[0]?.mark, "✓");
+	assert.deepEqual(asActivityList(items), items);
+	assert.deepEqual(asActivityList([{ mark: "nope", name: "read" }]), []);
+});
+
+test("current row stays off the last-3 done list", () => {
+	const state = createProgress();
+	applyProgress(state, { mark: "…", name: "thinking", args: "Need map first" });
+	assert.deepEqual(state.done, []);
+	assert.equal(state.current, undefined);
+	assert.equal(state.thinking, "Need map first");
+	applyProgress(state, { mark: "→", name: "read", args: "a.md", id: "c1" });
+	assert.equal(state.current?.mark, "→");
+	applyProgress(state, { mark: "✓", name: "read", id: "c1" });
+	assert.equal(state.done.length, 1);
+	assert.equal(state.done[0]?.mark, "✓");
+	assert.equal(state.done[0]?.args, "a.md");
+	assert.equal(state.current, undefined);
+	applyProgress(state, { mark: "…", name: "writing" });
+	assert.equal(state.done.length, 1);
+	assert.equal(state.current?.name, "writing");
+});
+
+test("tool end without args updates start in place", () => {
+	const items: ActivityItem[] = [];
+	appendActivity(items, {
+		mark: "→",
+		name: "read",
+		args: "/tmp/pi-delegate/delegate/README.md",
+		id: "c1",
+	});
+	assert.equal(
+		appendActivity(items, { mark: "✓", name: "read", id: "c1" }),
+		true,
+	);
+	assert.equal(items.length, 1);
+	assert.deepEqual(items[0], {
+		mark: "✓",
+		name: "read",
+		args: "/tmp/pi-delegate/delegate/README.md",
+		id: "c1",
+	});
+	appendActivity(items, { mark: "→", name: "read", args: "other.md", id: "c2" });
+	appendActivity(items, parseChildProgress({
+		type: "tool_execution_end",
+		toolCallId: "c2",
+		toolName: "read",
+		isError: false,
+	})!);
+	assert.equal(items.length, 2);
+	assert.equal(items[1]?.mark, "✓");
+	assert.equal(items[1]?.args, "other.md");
+});
+
+test("thinking does not wipe in-flight tool args", () => {
+	const state = createProgress();
+	const pattern =
+		"defaultCacheDir|formatChildProgressLine|appendActivity|clipActivityArg|plannedModel|delegateTargetLine";
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_start",
+			toolCallId: "b1",
+			toolName: "bash",
+			args: { command: "ls -la delegate" },
+		})!,
+	);
+	assert.equal(applyProgress(state, parseChildProgress({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_delta", delta: "Keep bash args" },
+	})!), true);
+	assert.equal(state.current?.name, "bash");
+	assert.equal(state.thinking, "Keep bash args");
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_end",
+			toolCallId: "b1",
+			toolName: "bash",
+			isError: false,
+		})!,
+	);
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_start",
+			toolCallId: "g1",
+			toolName: "grep",
+			args: { pattern },
+		})!,
+	);
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_end",
+			toolCallId: "g1",
+			toolName: "grep",
+			isError: false,
+		})!,
+	);
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_start",
+			toolCallId: "g2",
+			toolName: "grep",
+			args: { pattern: "resolveTarget" },
+		})!,
+	);
+	applyProgress(state, parseChildProgress({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_delta", delta: "Still grepping" },
+	})!);
+	applyProgress(
+		state,
+		parseChildProgress({
+			type: "tool_execution_end",
+			toolCallId: "g2",
+			toolName: "grep",
+			isError: false,
+		})!,
+	);
+	applyProgress(state, parseChildProgress({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_start" },
+	})!);
+	applyProgress(state, parseChildProgress({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_delta", delta: "Need failing test first" },
+	})!);
+	assert.deepEqual(
+		state.done.map((item) => `${item.mark} ${item.name} ${item.args ?? ""}`),
+		[
+			"✓ bash ls -la delegate",
+			`✓ grep ${clipActivityArg(pattern)}`,
+			"✓ grep resolveTarget",
+		],
+	);
+	assert.equal(state.current, undefined);
+	assert.equal(state.thinking, "Need failing test first");
+	assert.ok((state.done[1]?.args?.length ?? 0) <= ACTIVITY_ARG_MAX);
+});
+
+test("thinking tail sits on header, not live row", () => {
+	assert.equal(clipThinkingTail("short"), "short");
+	const long = `Need ${"x".repeat(80)} end`;
+	const clipped = clipThinkingTail(long);
+	assert.equal(clipped.length, THINKING_TAIL_MAX);
+	assert.equal(clipped.startsWith("…"), true);
+	assert.equal(clipped.endsWith("end"), true);
+	assert.deepEqual(delegateHeaderBits("implement", models.implement, long), {
+		target: "implement → Luna",
+		model: models.implement,
+		thinking: clipped,
+	});
+	const theme = {
+		fg: (key: string, text: string) => `[${key}]${text}`,
+		bold: (text: string) => `*${text}*`,
+		italic: (text: string) => `/${text}/`,
+	};
+	assert.equal(
+		paintHeader(theme, "delegate", "implement", models.implement, "Need failing test first"),
+		"[toolTitle]*delegate*  [accent]implement → Luna  [dim]openai-codex/gpt-5.6-luna  [thinkingText]/Need failing test first/",
+	);
+	assert.deepEqual(delegateHeaderBits("recon", models.recon, "Need map first", "tg 12.3/s"), {
+		target: "recon → Qwen",
+		model: models.recon,
+		tg: "tg 12.3/s",
+		thinking: "Need map first",
+	});
+	assert.equal(
+		paintHeader(theme, "delegate", "recon", models.recon, "Need map first", "tg 12.3/s"),
+		"[toolTitle]*delegate*  [accent]recon → Qwen  [dim]local-qwen38/qwen38-q4km  [accent]tg 12.3/s  [thinkingText]/Need map first/",
+	);
+	const state = createProgress();
+	applyProgress(state, parseChildProgress({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_delta", delta: "User wants header text" },
+	})!);
+	assert.equal(state.current, undefined);
+	assert.equal(state.thinking, "User wants header text");
+	applyProgress(state, { mark: "…", name: "writing" });
+	assert.equal(state.thinking, undefined);
+	assert.equal(state.current?.name, "writing");
+});

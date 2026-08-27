@@ -1,0 +1,30 @@
+{
+  "maxTaskChars": 20000,
+  "maxConcurrent": 2,
+  "defaultTimeoutMs": 300000,
+  "maxTimeoutMs": 900000,
+  "maxOutputBytes": 65536,
+  "agents": {
+    "recon": {
+      "model": "local-qwen38/qwen38-q4km",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "thinking": "off",
+      "offline": true
+    },
+    "implement": {
+      "model": "openai-codex/gpt-5.6-luna",
+      "tools": ["read", "grep", "find", "ls", "bash", "write", "edit"],
+      "thinking": "low"
+    },
+    "review": {
+      "model": "openai-codex/gpt-5.6-terra",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "thinking": "medium"
+    },
+    "oracle": {
+      "model": "openai-codex/gpt-5.6-sol",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "thinking": "high"
+    }
+  }
+}
