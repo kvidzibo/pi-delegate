@@ -6,6 +6,14 @@
   "keywords": ["pi-package"],
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kvidzibo/pi-delegate.git"
+  },
+  "homepage": "https://github.com/kvidzibo/pi-delegate#readme",
+  "bugs": {
+    "url": "https://github.com/kvidzibo/pi-delegate/issues"
+  },
   "pi": {
     "extensions": ["./delegate"]
   },

@@ -18,7 +18,7 @@ One child per call. No nesting.
 After the GitHub repo exists and a tag is pushed:
 
 ```bash
-pi install git:github.com/<owner>/pi-delegate@v0.1.0
+pi install git:github.com/kvidzibo/pi-delegate@v0.1.0
 ```
 
 Local checkout:
@@ -67,7 +67,7 @@ See `delegate/SPEC.md`.
 
 ## Publish
 
-1. Create public GitHub repo.
-2. Put `repository` / `homepage` / `bugs` in `package.json`.
-3. `git tag v0.1.0 && git push origin main --tags`
-4. Users install the git spec above.
+Local files already point at `kvidzibo/pi-delegate`. Remaining ops (not done here):
+
+1. `gh repo create kvidzibo/pi-delegate --public --source . --remote origin` (no push yet if you want a review first)
+2. `git tag v0.1.0 && git push origin main --tags`
