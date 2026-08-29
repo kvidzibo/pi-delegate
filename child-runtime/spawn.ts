@@ -9,12 +9,24 @@ export interface PiInvocation {
 	args: string[];
 }
 
+export interface ChildDiag {
+	command: string;
+	args: string[];
+	pid?: number;
+	timeoutMs: number;
+	durationMs: number;
+	eventCount: number;
+	events: string[];
+	sawAssistant: boolean;
+}
+
 export interface ChildResult {
 	text: string;
 	exitCode: number;
 	stderrTail: string;
 	model?: string;
 	stopReason?: string;
+	diag?: ChildDiag;
 }
 
 export interface AssistantSnapshot {
@@ -50,6 +62,62 @@ const STDERR_TAIL_BYTES = 4096;
 
 export function jsonlRecordLimit(maxOutputBytes: number): number {
 	return Math.min(Math.max(maxOutputBytes * 4, 262144), 1_048_576);
+}
+
+const EVENT_TYPE_LIMIT = 20;
+
+export function redactChildArgs(args: string[]): string[] {
+	return args.map((arg) => {
+		if (!arg.startsWith("Task: ")) return arg;
+		return `Task:<redacted ${arg.length - 6} chars>`;
+	});
+}
+
+export function jsonlEventType(event: unknown): string | undefined {
+	if (!event || typeof event !== "object") return undefined;
+	const type = (event as { type?: unknown }).type;
+	return typeof type === "string" && type.length > 0 ? type : undefined;
+}
+
+export function rememberEventType(events: string[], type: string, limit = EVENT_TYPE_LIMIT): void {
+	if (events.length < limit) {
+		events.push(type);
+		return;
+	}
+	events.shift();
+	events.push(type);
+}
+
+export function finalizeChildText(assistantText: string, dump: string, maxBytes: number): string {
+	const source = assistantText.length > 0 ? assistantText : dump;
+	return truncateOutput(source, maxBytes);
+}
+
+export function summarizeChildRun(input: {
+	command: string;
+	args: string[];
+	pid?: number;
+	timeoutMs: number;
+	durationMs: number;
+	eventCount: number;
+	events: string[];
+	sawAssistant: boolean;
+	exitCode: number;
+	stopReason?: string;
+	stderrTail: string;
+}): string {
+	const argv = [input.command, ...redactChildArgs(input.args)].join(" ");
+	const more = input.eventCount > input.events.length ? "…" : "";
+	const events =
+		input.eventCount === 0 ? "(none)" : `${input.eventCount} ${JSON.stringify(input.events)}${more}`;
+	const stderr = input.stderrTail.trim() ? input.stderrTail.trim() : "(empty)";
+	return [
+		`cmd: ${argv}`,
+		`pid: ${input.pid ?? "none"} timeoutMs: ${input.timeoutMs} durationMs: ${input.durationMs}`,
+		`exit: ${input.exitCode} stop: ${input.stopReason ?? "none"} assistant: ${input.sawAssistant ? "yes" : "no"}`,
+		`events: ${events}`,
+		`stderr: ${stderr}`,
+	].join("\n");
 }
 
 export function getPiInvocation(args: string[]): PiInvocation {
@@ -202,17 +270,26 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const args = input.buildArgs(tmp.filePath);
 		const invocation = getPiInvocation(args);
 		const childEnv = { ...input.env } as NodeJS.ProcessEnv;
+		const started = Date.now();
 
 		let stderr = "";
 		let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
 		let timedOut = false;
 		let aborted = false;
 		let overflow = false;
+		let pid: number | undefined;
+		let eventCount = 0;
+		const events: string[] = [];
 		const recordLimit = jsonlRecordLimit(input.maxOutputBytes);
 		const consume = (line: string): void => {
 			if (!line.trim()) return;
 			try {
 				const parsed = JSON.parse(line);
+				const type = jsonlEventType(parsed);
+				if (type) {
+					eventCount += 1;
+					rememberEventType(events, type);
+				}
 				try {
 					input.onParsed?.(parsed);
 				} catch {
@@ -237,6 +314,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: process.platform !== "win32",
 			});
+			pid = proc.pid;
 
 			const timer = setTimeout(() => {
 				timedOut = true;
@@ -287,12 +365,31 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			});
 		});
 
-		return {
-			text: truncateOutput(state.text, input.maxOutputBytes),
+		const stopReason = resolveStopReason({ aborted, timedOut, overflow, state });
+		const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
+		const diag: ChildDiag = {
+			command: invocation.command,
+			args: redactChildArgs(invocation.args),
+			timeoutMs: input.timeoutMs,
+			durationMs: Date.now() - started,
+			eventCount,
+			events,
+			sawAssistant: state.sawAssistant,
+		};
+		if (pid !== undefined) diag.pid = pid;
+		const dump = summarizeChildRun({
+			...diag,
 			exitCode,
-			stderrTail: tailBytes(stderr, STDERR_TAIL_BYTES),
+			stopReason,
+			stderrTail,
+		});
+		return {
+			text: finalizeChildText(state.text, dump, input.maxOutputBytes),
+			exitCode,
+			stderrTail,
 			model: state.model,
-			stopReason: resolveStopReason({ aborted, timedOut, overflow, state }),
+			stopReason,
+			diag,
 		};
 	} finally {
 		if (tmp) rmSync(tmp.dir, { recursive: true, force: true });
