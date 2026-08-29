@@ -15,9 +15,10 @@ import {
 	type JobBoardRow,
 } from "./display.ts";
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
+import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
 import { isLocalModel } from "./tg.ts";
-import { renderChildCall, renderChildResult } from "./view.ts";
+import { renderChildCall, renderChildResult, renderNotifyMessage } from "./view.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -135,6 +136,8 @@ export default function delegate(pi: ExtensionAPI) {
 	const liveTargets = new Map<string, LiveTarget>();
 	type WidgetUi = { setWidget: (id: string, lines: string[] | undefined) => void };
 	let ui: WidgetUi | undefined;
+	let hasUI = false;
+	let shuttingDown = false;
 
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
@@ -149,16 +152,33 @@ export default function delegate(pi: ExtensionAPI) {
 		ui.setWidget("delegate", formatJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent }));
 	};
 
+	const gate = new NotifyGate({
+		isLive: () => !shuttingDown && hasUI && typeof pi.sendMessage === "function",
+		send: (payload) => {
+			pi.sendMessage(payload, { deliverAs: "followUp", triggerTurn: true });
+		},
+	});
+
 	const scheduler = new JobScheduler({
 		maxConcurrent: config.maxConcurrent,
 		maxLocalConcurrent: config.maxLocalConcurrent,
 		maxQueued: config.maxQueued,
 		onChange: paintBoard,
+		onTerminal: (snap) => gate.schedule(snap),
 	});
 
-	const bindUi = (ctx: { ui?: WidgetUi }): void => {
+	const bindUi = (ctx: { ui?: WidgetUi; hasUI?: boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
+		if (typeof ctx.hasUI === "boolean") hasUI = ctx.hasUI;
 	};
+
+	if (typeof pi.registerMessageRenderer === "function") {
+		pi.registerMessageRenderer<NotifyDetails>(NOTIFY_CUSTOM_TYPE, (message, { expanded }, theme) => {
+			const details = message.details;
+			if (!details) return undefined;
+			return renderNotifyMessage({ theme, details, expanded });
+		});
+	}
 
 	const liveFromSnap = (toolCallId: string, snap: JobSnapshot, background: boolean): LiveTarget => {
 		const live: LiveTarget = { kind: snap.kind, model: snap.model };
@@ -176,12 +196,16 @@ export default function delegate(pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", (_event, ctx) => {
+		shuttingDown = false;
 		bindUi(ctx);
 	});
 	pi.on("session_shutdown", async () => {
+		shuttingDown = true;
+		gate.shutdown();
 		await scheduler.shutdown();
 		ui?.setWidget("delegate", undefined);
 		ui = undefined;
+		hasUI = false;
 		liveTargets.clear();
 	});
 
@@ -189,7 +213,7 @@ export default function delegate(pi: ExtensionAPI) {
 		name: "delegate",
 		label: "Delegate",
 		description:
-			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks. Local models share maxLocalConcurrent. No nesting.",
+			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
 		promptGuidelines: [
 			"Use delegate for isolated child work. One child per call. No nesting.",
@@ -200,6 +224,7 @@ export default function delegate(pi: ExtensionAPI) {
 			"Optional model override: any Pi model id (provider/id). Kind keeps tools and prompt.",
 			"background: true returns jobId immediately; child keeps running.",
 			"jobId waits for that job. timeoutMs 0 peeks without waiting.",
+			"Interactive mode may inject a short completion notice; collect with jobId for the full result. Print/JSON stays pull-only.",
 			"Many local/GPU children queue (maxLocalConcurrent). Hosted still parallel.",
 			"Background implement can race parent file writes.",
 		],
@@ -252,6 +277,7 @@ export default function delegate(pi: ExtensionAPI) {
 					const failed = !pending && snap.failed;
 					const text = receiptText(snap);
 					liveFromSnap(toolCallId, snap, true);
+					if (shouldConsume(snap)) gate.consume(snap.id);
 					return formatOutput({
 						text,
 						failed,
@@ -284,6 +310,7 @@ export default function delegate(pi: ExtensionAPI) {
 					local,
 					task: parsed.task,
 					timeoutMs: parsed.timeoutMs,
+					background: parsed.background,
 					cancelOnAbort: parsed.background ? undefined : signal,
 					run: (_handle, childSignal, onEvent) =>
 						runChild({
