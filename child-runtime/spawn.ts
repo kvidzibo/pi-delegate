@@ -302,7 +302,3 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 export function promptSourceFromDir(dir: string, name = "child.md"): string {
 	return join(dir, "prompts", name);
 }
-
-export function configPathFromDir(dir: string): string {
-	return join(dir, "config.json");
-}

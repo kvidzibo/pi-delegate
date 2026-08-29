@@ -192,12 +192,6 @@ export function createProgress(): ProgressState {
 	return { done: [], open: new Map() };
 }
 
-export function formatActivityPlain(item: ActivityItem): string {
-	const name = item.name.padEnd(ACTIVITY_NAME_PAD);
-	const args = item.args?.trim() ?? "";
-	return args ? `${item.mark}  ${name}  ${args}` : `${item.mark}  ${name}`.trimEnd();
-}
-
 export function sameActivity(a: ActivityItem, b: ActivityItem): boolean {
 	return a.mark === b.mark && a.name === b.name && (a.args ?? "") === (b.args ?? "");
 }
