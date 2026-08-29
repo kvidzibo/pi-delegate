@@ -15,7 +15,11 @@ One child per call. No nesting.
 
 ## Install
 
-After the GitHub repo exists and a tag is pushed:
+```bash
+pi install npm:@kvidzibo/pi-delegate
+```
+
+Git:
 
 ```bash
 pi install git:github.com/kvidzibo/pi-delegate@v0.1.0
@@ -67,7 +71,5 @@ See `delegate/SPEC.md`.
 
 ## Publish
 
-Local files already point at `kvidzibo/pi-delegate`. Remaining ops (not done here):
-
-1. `gh repo create kvidzibo/pi-delegate --public --source . --remote origin` (no push yet if you want a review first)
-2. `git tag v0.1.0 && git push origin main --tags`
+- GitHub: `kvidzibo/pi-delegate`
+- npm: `@kvidzibo/pi-delegate` (gallery crawls the `pi-package` keyword)
