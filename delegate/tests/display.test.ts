@@ -14,6 +14,7 @@ import {
 	delegateTargetLine,
 	formatActivityPlain,
 	formatDelegateTarget,
+	formatJobBoard,
 	paintHeader,
 	parseChildProgress,
 	plannedModel,
@@ -301,6 +302,14 @@ test("thinking tail sits on header, not live row", () => {
 		paintHeader(theme, "delegate", "recon", models.recon, "Need map first", "tg 12.3/s"),
 		"[toolTitle]*delegate*  [accent]recon → Qwen  [dim]local-qwen38/qwen38-q4km  [accent]tg 12.3/s  [thinkingText]/Need map first/",
 	);
+	assert.equal(
+		paintHeader(theme, "delegate", "recon", models.recon, undefined, undefined, {
+			background: true,
+			jobId: "d0001",
+			status: "queued",
+		}),
+		"[toolTitle]*delegate*  [accent]recon → Qwen  [dim]local-qwen38/qwen38-q4km  [dim]bg  [accent]d0001  [dim]queued",
+	);
 	const state = createProgress();
 	applyProgress(state, parseChildProgress({
 		type: "message_update",
@@ -311,4 +320,44 @@ test("thinking tail sits on header, not live row", () => {
 	applyProgress(state, { mark: "…", name: "writing" });
 	assert.equal(state.thinking, undefined);
 	assert.equal(state.current?.name, "writing");
+});
+
+test("job board shows run/wait and gpu reason", () => {
+	assert.deepEqual(
+		formatJobBoard(
+			[
+				{
+					id: "d0001",
+					kind: "recon",
+					model: models.recon,
+					local: true,
+					status: "running",
+					tg: "tg 28.4/s",
+					current: { mark: "→", name: "bash", args: "rg -n spawn" },
+				},
+				{
+					id: "d0002",
+					kind: "implement",
+					model: models.implement,
+					local: false,
+					status: "running",
+				},
+				{
+					id: "d0003",
+					kind: "recon",
+					model: models.recon,
+					local: true,
+					status: "queued",
+					reason: "gpu",
+				},
+			],
+			{ maxLocalConcurrent: 1 },
+		),
+		[
+			"delegate  2 run  1 wait  local 1/1",
+			"  run   d0001  recon → Qwen  tg 28.4/s  → bash  rg -n spawn",
+			"  run   d0002  implement → Luna",
+			"  wait  d0003  recon → Qwen  gpu",
+		],
+	);
 });

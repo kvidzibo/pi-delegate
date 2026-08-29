@@ -52,10 +52,19 @@ export function renderChildCall(input: {
 	model?: string;
 	thinking?: string;
 	tg?: string;
+	background?: boolean;
+	jobId?: string;
+	status?: string;
 	lastComponent?: unknown;
 }): Text {
 	const text = (input.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-	text.setText(paintHeader(input.theme, input.title, input.kind, input.model, input.thinking, input.tg));
+	text.setText(
+		paintHeader(input.theme, input.title, input.kind, input.model, input.thinking, input.tg, {
+			background: input.background,
+			jobId: input.jobId,
+			status: input.status,
+		}),
+	);
 	return text;
 }
 
@@ -75,9 +84,14 @@ export function renderChildResult(input: {
 	panel.extra = [];
 	if (!input.isPartial && input.expanded) {
 		const answer = typeof details.answer === "string" ? details.answer : "";
+		const task = typeof details.task === "string" ? details.task : "";
+		const status = typeof details.status === "string" ? details.status : "";
 		if (answer) {
 			panel.extra.push("");
 			panel.extra.push(...answer.split("\n"));
+		} else if (task && (status === "queued" || status === "running")) {
+			panel.extra.push("");
+			panel.extra.push(task);
 		}
 	}
 	return panel;

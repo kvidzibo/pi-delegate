@@ -1,0 +1,33 @@
+name: publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm CLI >= 11.5.1 (Node 22 image may ship older).
+      - run: npm install -g npm@latest
+      # Factory load (npm run test:load) needs `pi` on PATH; not available here.
+      - run: npm run test:unit
+      - name: Publish if version is new
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "Skip: $NAME@$VERSION already on npm"
+            exit 0
+          fi
+          npm publish --access public --provenance

@@ -17,6 +17,8 @@ export interface AgentConfig {
 export interface DelegateConfig {
 	maxTaskChars: number;
 	maxConcurrent: number;
+	maxLocalConcurrent: number;
+	maxQueued: number;
 	defaultTimeoutMs: number;
 	maxTimeoutMs: number;
 	maxOutputBytes: number;
@@ -98,6 +100,12 @@ function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 	if (!Number.isInteger(parsed.maxConcurrent) || (parsed.maxConcurrent as number) < 1) {
 		errors.push("maxConcurrent (integer >= 1)");
 	}
+	if (!Number.isInteger(parsed.maxLocalConcurrent) || (parsed.maxLocalConcurrent as number) < 1) {
+		errors.push("maxLocalConcurrent (integer >= 1)");
+	}
+	if (!Number.isInteger(parsed.maxQueued) || (parsed.maxQueued as number) < 1) {
+		errors.push("maxQueued (integer >= 1)");
+	}
 	if (!Number.isInteger(parsed.defaultTimeoutMs)) errors.push("defaultTimeoutMs (integer)");
 	if (!Number.isInteger(parsed.maxTimeoutMs)) errors.push("maxTimeoutMs (integer)");
 	if (!Number.isInteger(parsed.maxOutputBytes) || (parsed.maxOutputBytes as number) < 1) {
@@ -143,6 +151,8 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 	return {
 		maxTaskChars: parsed.maxTaskChars as number,
 		maxConcurrent: parsed.maxConcurrent as number,
+		maxLocalConcurrent: parsed.maxLocalConcurrent as number,
+		maxQueued: parsed.maxQueued as number,
 		defaultTimeoutMs: parsed.defaultTimeoutMs as number,
 		maxTimeoutMs: parsed.maxTimeoutMs as number,
 		maxOutputBytes: parsed.maxOutputBytes as number,
@@ -177,6 +187,8 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 	const merged: Record<string, unknown> = {
 		maxTaskChars: extra.maxTaskChars ?? base.maxTaskChars,
 		maxConcurrent: extra.maxConcurrent ?? base.maxConcurrent,
+		maxLocalConcurrent: extra.maxLocalConcurrent ?? base.maxLocalConcurrent,
+		maxQueued: extra.maxQueued ?? base.maxQueued,
 		defaultTimeoutMs: extra.defaultTimeoutMs ?? base.defaultTimeoutMs,
 		maxTimeoutMs: extra.maxTimeoutMs ?? base.maxTimeoutMs,
 		maxOutputBytes: extra.maxOutputBytes ?? base.maxOutputBytes,

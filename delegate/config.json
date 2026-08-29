@@ -1,6 +1,8 @@
 {
   "maxTaskChars": 20000,
-  "maxConcurrent": 2,
+  "maxConcurrent": 8,
+  "maxLocalConcurrent": 1,
+  "maxQueued": 16,
   "defaultTimeoutMs": 300000,
   "maxTimeoutMs": 900000,
   "maxOutputBytes": 65536,

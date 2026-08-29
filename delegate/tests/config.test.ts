@@ -28,6 +28,9 @@ test("kind validation", () => {
 test("shipped config parses four agents", () => {
 	const config = shipped();
 	assert.equal(config.maxTaskChars, 20000);
+	assert.equal(config.maxConcurrent, 8);
+	assert.equal(config.maxLocalConcurrent, 1);
+	assert.equal(config.maxQueued, 16);
 	assert.equal(config.agents.recon.offline, true);
 	assert.equal(config.agents.implement.offline, false);
 	assert.ok(config.agents.implement.tools.includes("edit"));
@@ -55,9 +58,11 @@ test("user overlay overrides one model", () => {
 	const config = shipped();
 	const merged = mergeDelegateConfig(
 		config,
-		{ agents: { recon: { model: "ollama/qwen3" } } },
+		{ maxLocalConcurrent: 1, agents: { recon: { model: "ollama/qwen3" } } },
 		"overlay.json",
 	);
+	assert.equal(merged.maxLocalConcurrent, 1);
+	assert.equal(merged.maxQueued, config.maxQueued);
 	assert.equal(merged.agents.recon.model, "ollama/qwen3");
 	assert.deepEqual(merged.agents.recon.tools, config.agents.recon.tools);
 	assert.equal(merged.agents.recon.offline, true);
@@ -93,6 +98,10 @@ test("broken shipped invariants refused", () => {
 	assert.throws(
 		() => parseDelegateConfig({ ...valid, maxTaskChars: 0 }, "x"),
 		/maxTaskChars/,
+	);
+	assert.throws(
+		() => parseDelegateConfig({ ...valid, maxLocalConcurrent: 0 }, "x"),
+		/maxLocalConcurrent/,
 	);
 	assert.throws(
 		() =>
