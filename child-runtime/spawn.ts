@@ -88,6 +88,11 @@ export function rememberEventType(events: string[], type: string, limit = EVENT_
 	events.push(type);
 }
 
+export function finalizeChildText(assistantText: string, dump: string, maxBytes: number): string {
+	const source = assistantText.length > 0 ? assistantText : dump;
+	return truncateOutput(source, maxBytes);
+}
+
 export function summarizeChildRun(input: {
 	command: string;
 	args: string[];
@@ -372,16 +377,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			sawAssistant: state.sawAssistant,
 		};
 		if (pid !== undefined) diag.pid = pid;
-		const text = truncateOutput(state.text, input.maxOutputBytes);
+		const dump = summarizeChildRun({
+			...diag,
+			exitCode,
+			stopReason,
+			stderrTail,
+		});
 		return {
-			text:
-				text ||
-				summarizeChildRun({
-					...diag,
-					exitCode,
-					stopReason,
-					stderrTail,
-				}),
+			text: finalizeChildText(state.text, dump, input.maxOutputBytes),
 			exitCode,
 			stderrTail,
 			model: state.model,

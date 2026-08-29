@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
 	applyAssistantSnapshot,
 	extractAssistantText,
+	finalizeChildText,
 	jsonlEventType,
 	jsonlRecordLimit,
 	killChildTree,
@@ -99,6 +100,23 @@ test("summarize names pi argv not a codex CLI", () => {
 	assert.match(text, /stop: timeout/);
 	assert.match(text, /events: \(none\)/);
 	assert.match(text, /stderr: \(empty\)/);
+});
+
+test("finalizeChildText keeps assistant text and caps dump", () => {
+	const dump = `cmd: node pi --model x\nstderr: ${"e".repeat(8000)}`;
+	const assistant = finalizeChildText("hello", dump, 32);
+	assert.equal(assistant.startsWith("hello") || assistant.includes("truncated"), true);
+	assert.equal(assistant.includes("stderr:"), false);
+	assert.ok(Buffer.byteLength(assistant, "utf8") <= 32);
+
+	const empty = finalizeChildText("", dump, 64);
+	assert.match(empty, /^cmd: /);
+	assert.ok(Buffer.byteLength(empty, "utf8") <= 64);
+	assert.match(empty, /truncated/);
+
+	const tiny = finalizeChildText("héllo", dump, 8);
+	assert.ok(Buffer.byteLength(tiny, "utf8") <= 8);
+	assert.equal(tiny.includes("cmd:"), false);
 });
 
 test("jsonl record limit stays bounded", () => {
