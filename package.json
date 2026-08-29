@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi parent child tool: named agents, model from config",
   "author": "Tomas Rackauskas",
   "keywords": ["pi-package"],
@@ -13,6 +13,9 @@
   "homepage": "https://github.com/kvidzibo/pi-delegate#readme",
   "bugs": {
     "url": "https://github.com/kvidzibo/pi-delegate/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "pi": {
     "extensions": ["./delegate"]

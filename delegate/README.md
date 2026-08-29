@@ -11,7 +11,9 @@ One routing tool. Four agents. Model from config.
 
 Child is a nested `pi --mode json -p` with `--no-extensions`. `offline: true` adds `--offline`.
 
-TUI row (no footer). Local child may add live `tg n/s` after model id.
+TUI row (no footer). Local child may add live `tg n/s` after model id. Background jobs add a sticky widget (`N run  M wait  local x/y`) while queued or running.
+
+`background: true` returns `jobId`. `jobId` waits; `timeoutMs: 0` peeks. Local models share `maxLocalConcurrent`.
 
 Parent tool list is `delegate` only. Shared process helpers live in `../child-runtime/`.
 

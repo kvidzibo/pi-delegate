@@ -26,8 +26,6 @@ export interface RunChildInput {
 	onEvent?: (event: unknown) => void;
 }
 
-let activeChildren = 0;
-
 export function buildChildArgs(input: ChildArgsInput): string[] {
 	const args = [
 		"--mode",
@@ -83,24 +81,4 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		signal: input.signal,
 		onEvent: input.onEvent,
 	});
-}
-
-export function acquireSlot(maxConcurrent: number): void {
-	if (activeChildren >= maxConcurrent) {
-		throw new Error(`delegate refused: ${activeChildren} already running (max ${maxConcurrent}).`);
-	}
-	activeChildren += 1;
-}
-
-export function releaseSlot(): void {
-	if (activeChildren > 0) activeChildren -= 1;
-}
-
-export async function withSlot<T>(maxConcurrent: number, fn: () => Promise<T>): Promise<T> {
-	acquireSlot(maxConcurrent);
-	try {
-		return await fn();
-	} finally {
-		releaseSlot();
-	}
 }
