@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { runPiChild, type ChildResult } from "../child-runtime/spawn.ts";
 
 export type { ChildResult };
@@ -60,8 +63,44 @@ export function buildChildEnv(env: NodeJS.Dict<string> | undefined): NodeJS.Proc
 	};
 }
 
+export function delegateLogPath(env: NodeJS.Dict<string> = process.env): string | undefined {
+	if (env.PI_DELEGATE_LOG === "0") return undefined;
+	if (typeof env.PI_DELEGATE_LOG === "string" && env.PI_DELEGATE_LOG.length > 0) {
+		return env.PI_DELEGATE_LOG;
+	}
+	return join(homedir(), ".pi", "agent", "delegate.log");
+}
+
+export function appendDelegateLog(path: string, record: Record<string, unknown>): void {
+	appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+function logChildResult(input: RunChildInput, result: ChildResult): void {
+	const path = delegateLogPath(input.env ?? process.env);
+	if (!path) return;
+	try {
+		appendDelegateLog(path, {
+			ts: new Date().toISOString(),
+			model: result.model ?? input.model,
+			stopReason: result.stopReason,
+			exitCode: result.exitCode,
+			timeoutMs: input.timeoutMs,
+			durationMs: result.diag?.durationMs,
+			pid: result.diag?.pid,
+			command: result.diag?.command,
+			args: result.diag?.args,
+			eventCount: result.diag?.eventCount,
+			events: result.diag?.events,
+			sawAssistant: result.diag?.sawAssistant,
+			stderrTail: result.stderrTail,
+		});
+	} catch {
+		/* logging must not hide the child result */
+	}
+}
+
 export async function runChild(input: RunChildInput): Promise<ChildResult> {
-	return runPiChild({
+	const result = await runPiChild({
 		cwd: input.cwd,
 		model: input.model,
 		timeoutMs: input.timeoutMs,
@@ -81,4 +120,6 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		signal: input.signal,
 		onEvent: input.onEvent,
 	});
+	logChildResult(input, result);
+	return result;
 }

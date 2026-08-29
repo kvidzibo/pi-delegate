@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { buildChildArgs, buildChildEnv } from "../spawn.ts";
+import { appendDelegateLog, buildChildArgs, buildChildEnv, delegateLogPath } from "../spawn.ts";
 
 const base = {
 	model: "local-qwen38/qwen38-q4km",
@@ -47,4 +50,30 @@ test("child env marks nest", () => {
 	assert.equal(env.PI_THIN_CHILD, undefined);
 	assert.equal(env.PI_CODEX_CHILD, undefined);
 	assert.equal(env.PATH, "/usr/bin");
+});
+
+test("delegate log path override and disable", () => {
+	assert.equal(delegateLogPath({ PI_DELEGATE_LOG: "0" }), undefined);
+	assert.equal(delegateLogPath({ PI_DELEGATE_LOG: "/tmp/delegate.log" }), "/tmp/delegate.log");
+});
+
+test("delegate log writes one json line without task text", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-log-"));
+	const path = join(dir, "delegate.log");
+	try {
+		appendDelegateLog(path, {
+			stopReason: "timeout",
+			exitCode: 143,
+			command: "/usr/bin/node",
+			args: ["/opt/pi", "--model", "openai-codex/gpt-5.6-sol", "Task:<redacted 12 chars>"],
+			eventCount: 0,
+		});
+		const line = readFileSync(path, "utf8").trim();
+		const rec = JSON.parse(line) as { stopReason: string; args: string[] };
+		assert.equal(rec.stopReason, "timeout");
+		assert.equal(rec.args.includes("openai-codex/gpt-5.6-sol"), true);
+		assert.equal(line.includes("secret"), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

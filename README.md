@@ -65,6 +65,8 @@ In TUI/RPC, a finished background job injects a short follow-up notice (preview 
 
 Background `implement` can race parent file writes.
 
+Child is always a `pi` process (`--mode json -p --model <id>`). Codex/Anthropic/Ollama are providers behind that model id, not a separate CLI. Each child end appends one JSON line to `~/.pi/agent/delegate.log` (cmd, pid, exit, JSONL event types, stderr). Task text is redacted. `PI_DELEGATE_LOG=0` disables. `PI_DELEGATE_LOG=/path` overrides. Timeout/empty-answer tool results include the same dump so the parent is not blind.
+
 Then `/reload` (or restart Pi) so the overlay is picked up.
 
 ## Tests

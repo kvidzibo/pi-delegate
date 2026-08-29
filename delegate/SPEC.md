@@ -83,6 +83,8 @@ Never `--session`, `--continue`, `--fork`, `--extension`, `--append-system-promp
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
+Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args with `Task:` redacted, pid, timeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
+
 ## Tests
 
 `npm test` (unit + factory load). `npm run test:unit` does not need Pi.
