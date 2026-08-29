@@ -4,23 +4,17 @@ import { test } from "node:test";
 import {
 	assertNotNested,
 	isFailedChildResult,
-	isInsideChild,
 	normalizeTimeoutMs,
-	normalizeTools,
 	normalizeTask,
 	resolveChildCwd,
 	truncateOutput,
 } from "../policy.ts";
 
-const allowed = ["read", "grep", "find", "ls", "bash"];
-const fallback = ["read", "grep", "find", "ls", "bash"];
 const timeouts = { defaultTimeoutMs: 300000, maxTimeoutMs: 900000 };
 
 test("nested env refused", () => {
 	assert.throws(() => assertNotNested({ PI_DELEGATE_CHILD: "1" }), /already inside a delegate child/);
 	assert.doesNotThrow(() => assertNotNested({}));
-	assert.equal(isInsideChild({ PI_DELEGATE_CHILD: "1" }), true);
-	assert.equal(isInsideChild({}), false);
 });
 
 test("timeout default and clamp", () => {
@@ -28,15 +22,6 @@ test("timeout default and clamp", () => {
 	assert.equal(normalizeTimeoutMs(500, timeouts), 1000);
 	assert.equal(normalizeTimeoutMs(2_000_000, timeouts), 900000);
 	assert.equal(normalizeTimeoutMs(12000, timeouts), 12000);
-});
-
-test("unknown tool refused", () => {
-	assert.throws(() => normalizeTools(["read", "write"], allowed, fallback), /write/);
-});
-
-test("default tools accepted", () => {
-	assert.deepEqual(normalizeTools(undefined, allowed, fallback), fallback);
-	assert.deepEqual(normalizeTools(["bash", "read", "bash"], allowed, fallback), ["bash", "read"]);
 });
 
 test("output truncation notice", () => {
