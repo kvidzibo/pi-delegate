@@ -79,18 +79,3 @@ npm run test:unit # no Pi required; this is what CI runs
 No live child. Factory load is omitted from GitHub Actions because runners have no `pi`.
 
 See `delegate/SPEC.md`.
-
-## Publish
-
-- GitHub: `kvidzibo/pi-delegate`
-- npm: `@kvidzibo/pi-delegate` (gallery crawls the `pi-package` keyword)
-
-Push to `main` runs `.github/workflows/publish.yml`: unit tests, then `npm publish` if `package.json` `version` is not already on npm. Same version = skip (no error).
-
-Bump `version` in the PR that should ship. Do not republish an existing version.
-
-One-time npm trusted publisher (no `NPM_TOKEN` secret):
-
-1. [Package access](https://www.npmjs.com/package/@kvidzibo/pi-delegate/access) → **Trusted Publisher**
-2. GitHub Actions: user `kvidzibo`, repo `pi-delegate`, workflow `publish.yml`
-3. Allow `npm publish`
