@@ -13,9 +13,9 @@ Background spawn returns `jobId` immediately. Local/GPU children share `maxLocal
 ```
 delegate/
   README.md SPEC.md config.json
-  index.ts config.ts spawn.ts display.ts view.ts tg.ts jobs.ts
+  index.ts config.ts spawn.ts display.ts view.ts tg.ts jobs.ts notify.ts
   prompts/{recon,implement,review,oracle}.md
-  tests/{config,spawn,display,tg,jobs}.test.ts
+  tests/{config,spawn,display,tg,jobs,notify}.test.ts
 ```
 
 Repo root has `package.json` (`pi.extensions: ["./delegate"]`). This directory has no package.json.
@@ -35,8 +35,8 @@ Description must say: named agents, model from config, no nesting.
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | spawn: child timeout (starts when process starts, not while queued). `jobId`: wait budget. `0` with `jobId` = peek |
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking/offline. |
-| `background` | no | `true` = return `jobId` now; child keeps running. Parent Esc does not kill it |
-| `jobId` | collect | wait or peek. Cannot combine with `background` |
+| `background` | no | `true` = return `jobId` now; child keeps running. Parent Esc does not kill it. Interactive mode may later inject a short completion notice |
+| `jobId` | collect | wait or peek. Cannot combine with `background`. Terminal collect suppresses the notice |
 
 No model allowlist. No fallback chain.
 
@@ -50,7 +50,9 @@ One child per call. No nesting (`PI_DELEGATE_CHILD`).
 
 Foreground spawn waits for a slot (parent blocked). Local foreground also takes the local slot.
 
-`session_shutdown` aborts running jobs and drops the queue.
+`session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts.
+
+Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms, then `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it.
 
 Header: `delegate  <kind> → <alias>  <model id>` + `bg <jobId> <status>` when background/collect + live `tg n/s` when child model looks local + live thinking tail.
 Under it: last 3 finished tools, then one live row. Expand shows child answer, or task when still queued/running.
@@ -88,6 +90,8 @@ Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 No live child. Factory-load smoke must pass without a user overlay.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; child timeout starts at spawn; shutdown drops queue.
+
+Notify tests: exactly-once terminal notice; wait/peek of terminal suppresses; running peek does not; success display false; failure display true; preview clip; no-UI/print no send; shutdown no send; onTerminal throw does not break scheduler.
 
 ## Stop
 

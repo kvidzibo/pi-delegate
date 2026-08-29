@@ -22,7 +22,7 @@ pi install npm:@kvidzibo/pi-delegate
 Git:
 
 ```bash
-pi install git:github.com/kvidzibo/pi-delegate@v0.2.0
+pi install git:github.com/kvidzibo/pi-delegate@v0.3.0
 ```
 
 Local checkout:
@@ -60,6 +60,8 @@ Per-agent keys: `model`, `tools`, `thinking` (`off|minimal|low|medium|high`), `o
 Optional tool argument `model` overrides that call only. Kind keeps tools and prompt.
 
 `background: true` spawns and returns `jobId`. Call again with `jobId` to wait, or `timeoutMs: 0` to peek. Local models (`local-qwen*`, `llama.cpp`, `ollama`) never overlap above `maxLocalConcurrent`. Hosted jobs still run in parallel. Child timeout starts when the process starts, not while queued. `session_shutdown` kills leftovers.
+
+In TUI/RPC, a finished background job injects a short follow-up notice (preview only; full result still via `jobId`). Failures are visible; successes stay quiet in the transcript. Collecting a finished job suppresses the notice. Print/JSON stays pull-only. `session_shutdown` does not notify.
 
 Background `implement` can race parent file writes.
 

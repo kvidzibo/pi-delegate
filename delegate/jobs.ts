@@ -46,6 +46,7 @@ export type JobSnapshot = {
 	exitCode?: number;
 	stopReason?: string;
 	stderrTail?: string;
+	background: boolean;
 };
 
 export type EnqueueInput = {
@@ -55,6 +56,7 @@ export type EnqueueInput = {
 	task: string;
 	timeoutMs: number;
 	run: JobRun;
+	background?: boolean;
 	cancelOnAbort?: AbortSignal;
 };
 
@@ -105,6 +107,8 @@ type InternalJob = {
 	stopReason?: string;
 	listeners: Set<(snap: JobSnapshot) => void>;
 	cancelAbort?: { signal: AbortSignal; onAbort: () => void };
+	background: boolean;
+	terminalEmitted: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -161,14 +165,16 @@ export class JobScheduler {
 	private readonly jobs: InternalJob[] = [];
 	private readonly limits: SchedulerLimits;
 	private readonly onChange?: () => void;
+	private readonly onTerminal?: (snap: JobSnapshot) => void;
 
-	constructor(input: SchedulerLimits & { onChange?: () => void }) {
+	constructor(input: SchedulerLimits & { onChange?: () => void; onTerminal?: (snap: JobSnapshot) => void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
 			maxLocalConcurrent: input.maxLocalConcurrent,
 			maxQueued: input.maxQueued,
 		};
 		this.onChange = input.onChange;
+		this.onTerminal = input.onTerminal;
 	}
 
 	enqueue(input: EnqueueInput): JobSnapshot {
@@ -192,6 +198,8 @@ export class JobScheduler {
 			progress: createProgress(),
 			meter: createTgMeter(),
 			listeners: new Set(),
+			background: input.background === true,
+			terminalEmitted: false,
 		};
 		if (input.cancelOnAbort) {
 			const onAbort = (): void => {
@@ -279,7 +287,11 @@ export class JobScheduler {
 			try {
 				this.notify(job);
 			} finally {
-				this.pump();
+				try {
+					this.emitTerminal(job);
+				} finally {
+					this.pump();
+				}
 			}
 			return;
 		}
@@ -375,6 +387,7 @@ export class JobScheduler {
 			failed,
 			activity: [...job.progress.done],
 			current: job.status === "running" ? job.progress.current : undefined,
+			background: job.background,
 		};
 		const reason = this.queueReason(job);
 		if (reason) snap.reason = reason;
@@ -482,8 +495,25 @@ export class JobScheduler {
 			try {
 				this.notify(job);
 			} finally {
-				this.pump();
+				try {
+					this.emitTerminal(job);
+				} finally {
+					this.pump();
+				}
 			}
+		}
+	}
+
+	private emitTerminal(job: InternalJob): void {
+		if (this.closed) return;
+		if (job.terminalEmitted) return;
+		if (!this.terminal(job)) return;
+		job.terminalEmitted = true;
+		if (!this.onTerminal) return;
+		try {
+			this.onTerminal(this.snapshot(job));
+		} catch {
+			/* notify errors must not break the scheduler */
 		}
 	}
 }

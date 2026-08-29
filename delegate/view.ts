@@ -8,6 +8,7 @@ import {
 	type ActivityMark,
 	type ThemeFg,
 } from "./display.ts";
+import { paintNotify, type NotifyDetails } from "./notify.ts";
 
 export type { ThemeFg };
 export { paintHeader };
@@ -95,4 +96,14 @@ export function renderChildResult(input: {
 		}
 	}
 	return panel;
+}
+
+export function renderNotifyMessage(input: {
+	theme: ThemeFg;
+	details: NotifyDetails;
+	expanded: boolean;
+}): Text {
+	const text = new Text("", 0, 0);
+	text.setText(paintNotify(input.theme, input.details, input.expanded));
+	return text;
 }

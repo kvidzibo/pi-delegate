@@ -13,7 +13,7 @@ Child is a nested `pi --mode json -p` with `--no-extensions`. `offline: true` ad
 
 TUI row (no footer). Local child may add live `tg n/s` after model id. Background jobs add a sticky widget (`N run  M wait  local x/y`) while queued or running.
 
-`background: true` returns `jobId`. `jobId` waits; `timeoutMs: 0` peeks. Local models share `maxLocalConcurrent`.
+`background: true` returns `jobId`. `jobId` waits; `timeoutMs: 0` peeks. Local models share `maxLocalConcurrent`. Interactive mode may inject a short completion notice (preview; full result via `jobId`). Print/JSON stays pull-only.
 
 Parent tool list is `delegate` only. Shared process helpers live in `../child-runtime/`.
 
