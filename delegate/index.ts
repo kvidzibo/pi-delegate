@@ -10,8 +10,6 @@ import {
 	delegateTargetLine,
 	formatJobBoard,
 	knownKind,
-	plannedModel,
-	type DelegateModels,
 	type JobBoardRow,
 } from "./display.ts";
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
@@ -140,12 +138,6 @@ export default function delegate(pi: ExtensionAPI) {
 				? undefined
 				: join(agentDir(), "delegate.json"),
 	});
-	const models: DelegateModels = {
-		recon: config.agents.recon.model,
-		implement: config.agents.implement.model,
-		review: config.agents.review.model,
-		oracle: config.agents.oracle.model,
-	};
 	const liveTargets = new Map<string, LiveTarget>();
 	type WidgetUi = { setWidget: (id: string, lines: string[] | undefined) => void };
 	let ui: WidgetUi | undefined;
@@ -418,7 +410,7 @@ export default function delegate(pi: ExtensionAPI) {
 			const model =
 				live?.model ??
 				(typeof context.state.model === "string" ? context.state.model : undefined) ??
-				(kind ? plannedModel(kind, models) : undefined);
+				(kind ? config.agents[kind].model : undefined);
 			const tg = live?.tg ?? (typeof context.state.tg === "string" ? context.state.tg : undefined);
 			const jobId = live?.jobId ?? (typeof context.state.jobId === "string" ? context.state.jobId : undefined);
 			const status = live?.status ?? (typeof context.state.status === "string" ? context.state.status : undefined);

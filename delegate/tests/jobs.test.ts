@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
-import { parseDelegateCall, JobScheduler, type JobRun } from "../jobs.ts";
+import { parseDelegateCall, JobScheduler, type EnqueueInput, type JobRun } from "../jobs.ts";
 
 const limits = { maxConcurrent: 4, maxLocalConcurrent: 1, maxQueued: 16 };
 const ok: ChildResult = { text: "ok", exitCode: 0, stderrTail: "" };
@@ -43,6 +43,27 @@ function runOk(delay = 15): JobRun {
 		if (signal.aborted) return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
 		return ok;
 	};
+}
+
+function enq(
+	input: Pick<EnqueueInput, "task" | "run"> & Partial<Omit<EnqueueInput, "task" | "run">>,
+): EnqueueInput {
+	return {
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		timeoutMs: 5000,
+		...input,
+	};
+}
+
+function hosted(input: Pick<EnqueueInput, "task" | "run"> & Partial<Omit<EnqueueInput, "task" | "run">>): EnqueueInput {
+	return enq({
+		kind: "implement",
+		model: "openai-codex/gpt-5.6-luna",
+		local: false,
+		...input,
+	});
 }
 
 test("parse spawn and collect modes", () => {
@@ -110,16 +131,7 @@ test("ten local jobs never overlap with maxLocalConcurrent 1", async () => {
 	};
 	const ids: string[] = [];
 	for (let i = 0; i < 10; i++) {
-		ids.push(
-			scheduler.enqueue({
-				kind: "recon",
-				model: "local-qwen38/qwen38-q4km",
-				local: true,
-				task: `t${i}`,
-				timeoutMs: 5000,
-				run,
-			}).id,
-		);
+		ids.push(scheduler.enqueue(enq({ task: `t${i}`, run })).id);
 	}
 	assert.equal(scheduler.active().filter((job) => job.status === "running").length, 1);
 	assert.equal(scheduler.active().filter((job) => job.status === "queued").length, 9);
@@ -133,44 +145,33 @@ test("hosted is not blocked by local gpu queue", async () => {
 	const localGate = deferred();
 	const hostedStarted = deferred();
 	const scheduler = new JobScheduler({ ...limits, maxConcurrent: 3 });
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "local",
-		timeoutMs: 5000,
-		run: async () => {
-			await localGate.promise;
-			return ok;
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "local",
+			run: async () => {
+				await localGate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.list().some((job) => job.local && job.status === "running"));
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "local-2",
-		timeoutMs: 5000,
-		run: runOk(10),
-	});
-	const hosted = scheduler.enqueue({
-		kind: "implement",
-		model: "openai-codex/gpt-5.6-luna",
-		local: false,
-		task: "hosted",
-		timeoutMs: 5000,
-		run: async () => {
-			hostedStarted.resolve();
-			await sleep(10);
-			return ok;
-		},
-	});
+	scheduler.enqueue(enq({ task: "local-2", run: runOk(10) }));
+	const hostedJob = scheduler.enqueue(
+		hosted({
+			task: "hosted",
+			run: async () => {
+				hostedStarted.resolve();
+				await sleep(10);
+				return ok;
+			},
+		}),
+	);
 	await hostedStarted.promise;
-	const snap = scheduler.get(hosted.id);
+	const snap = scheduler.get(hostedJob.id);
 	assert.equal(snap.status, "running");
 	assert.equal(scheduler.list().filter((job) => job.status === "queued" && job.local)[0]?.reason, "gpu");
 	localGate.resolve();
-	await scheduler.wait(hosted.id);
+	await scheduler.wait(hostedJob.id);
 	await scheduler.shutdown();
 });
 
@@ -178,31 +179,27 @@ test("child run starts only after slot; timeout is not queue time", async () => 
 	const starts: number[] = [];
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "first",
-		timeoutMs: 5000,
-		run: async () => {
-			starts.push(Date.now());
-			await gate.promise;
-			return ok;
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "first",
+			run: async () => {
+				starts.push(Date.now());
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => starts.length === 1);
 	const queuedAt = Date.now();
-	const second = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "second",
-		timeoutMs: 5000,
-		run: async () => {
-			starts.push(Date.now());
-			return ok;
-		},
-	});
+	const second = scheduler.enqueue(
+		enq({
+			task: "second",
+			run: async () => {
+				starts.push(Date.now());
+				return ok;
+			},
+		}),
+	);
 	assert.equal(scheduler.get(second.id).status, "queued");
 	await sleep(40);
 	assert.equal(starts.length, 1);
@@ -215,17 +212,15 @@ test("child run starts only after slot; timeout is not queue time", async () => 
 test("peek does not wait; wait timeout leaves job running", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
-	const job = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "hold",
-		timeoutMs: 5000,
-		run: async () => {
-			await gate.promise;
-			return ok;
-		},
-	});
+	const job = scheduler.enqueue(
+		enq({
+			task: "hold",
+			run: async () => {
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.get(job.id).status === "running");
 	const peeked = await scheduler.wait(job.id, { timeoutMs: 0 });
 	assert.equal(peeked.status, "running");
@@ -244,42 +239,10 @@ test("maxQueued refuses extra waiting jobs", async () => {
 		await gate.promise;
 		return ok;
 	};
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "run",
-		timeoutMs: 5000,
-		run,
-	});
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "q1",
-		timeoutMs: 5000,
-		run,
-	});
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "q2",
-		timeoutMs: 5000,
-		run,
-	});
-	assert.throws(
-		() =>
-			scheduler.enqueue({
-				kind: "recon",
-				model: "local-qwen38/qwen38-q4km",
-				local: true,
-				task: "q3",
-				timeoutMs: 5000,
-				run,
-			}),
-		/already queued/,
-	);
+	scheduler.enqueue(enq({ task: "run", run }));
+	scheduler.enqueue(enq({ task: "q1", run }));
+	scheduler.enqueue(enq({ task: "q2", run }));
+	assert.throws(() => scheduler.enqueue(enq({ task: "q3", run })), /already queued/);
 	gate.resolve();
 	await scheduler.shutdown();
 });
@@ -288,76 +251,46 @@ test("shutdown drops queue and aborts running", async () => {
 	const scheduler = new JobScheduler(limits);
 	const gate = deferred();
 	let aborted = false;
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "run",
-		timeoutMs: 5000,
-		run: async (_job, signal) => {
-			await Promise.race([
-				gate.promise,
-				new Promise<void>((resolve) => {
-					signal.addEventListener("abort", () => {
-						aborted = true;
-						resolve();
-					});
-				}),
-			]);
-			return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "run",
+			run: async (_job, signal) => {
+				await Promise.race([
+					gate.promise,
+					new Promise<void>((resolve) => {
+						signal.addEventListener("abort", () => {
+							aborted = true;
+							resolve();
+						});
+					}),
+				]);
+				return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.list()[0]?.status === "running");
-	const queued = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "wait",
-		timeoutMs: 5000,
-		run: runOk(),
-	});
+	const queued = scheduler.enqueue(enq({ task: "wait", run: runOk() }));
 	await scheduler.shutdown();
 	assert.equal(aborted, true);
 	assert.equal(scheduler.get(queued.id).status, "failed");
 	assert.equal(scheduler.get(queued.id).stopReason, "aborted");
-	assert.throws(
-		() =>
-			scheduler.enqueue({
-				kind: "recon",
-				model: "local-qwen38/qwen38-q4km",
-				local: true,
-				task: "late",
-				timeoutMs: 5000,
-				run: runOk(),
-			}),
-		/shutdown/,
-	);
+	assert.throws(() => scheduler.enqueue(enq({ task: "late", run: runOk() })), /shutdown/);
 });
 
 test("fg abort cancels queued job", async () => {
 	const scheduler = new JobScheduler(limits);
 	const gate = deferred();
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "hold",
-		timeoutMs: 5000,
-		run: async () => {
-			await gate.promise;
-			return ok;
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "hold",
+			run: async () => {
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	const ac = new AbortController();
-	const queued = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "fg",
-		timeoutMs: 5000,
-		run: runOk(),
-		cancelOnAbort: ac.signal,
-	});
+	const queued = scheduler.enqueue(enq({ task: "fg", run: runOk(), cancelOnAbort: ac.signal }));
 	assert.equal(queued.status, "queued");
 	ac.abort();
 	await waitUntil(() => scheduler.get(queued.id).status === "failed");
@@ -369,17 +302,15 @@ test("fg abort cancels queued job", async () => {
 test("collect wait abort does not kill a background job", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
-	const job = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "bg",
-		timeoutMs: 5000,
-		run: async () => {
-			await gate.promise;
-			return ok;
-		},
-	});
+	const job = scheduler.enqueue(
+		enq({
+			task: "bg",
+			run: async () => {
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.get(job.id).status === "running");
 
 	const already = new AbortController();
@@ -403,23 +334,21 @@ test("fg abort kills a running local job; bg has no cancelOnAbort", async () => 
 	const scheduler = new JobScheduler(limits);
 	const ac = new AbortController();
 	let sawAbort = false;
-	const fg = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "fg-run",
-		timeoutMs: 5000,
-		cancelOnAbort: ac.signal,
-		run: async (_job, signal) => {
-			await new Promise<void>((resolve) => {
-				signal.addEventListener("abort", () => {
-					sawAbort = true;
-					resolve();
+	const fg = scheduler.enqueue(
+		enq({
+			task: "fg-run",
+			cancelOnAbort: ac.signal,
+			run: async (_job, signal) => {
+				await new Promise<void>((resolve) => {
+					signal.addEventListener("abort", () => {
+						sawAbort = true;
+						resolve();
+					});
 				});
-			});
-			return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
-		},
-	});
+				return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.get(fg.id).status === "running");
 	ac.abort();
 	await waitUntil(() => scheduler.get(fg.id).status === "failed");
@@ -444,23 +373,8 @@ test("fg plus bg local never overlap", async () => {
 		current -= 1;
 		return ok;
 	};
-	const fg = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "fg",
-		timeoutMs: 5000,
-		run,
-		cancelOnAbort: new AbortController().signal,
-	});
-	const bg = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "bg",
-		timeoutMs: 5000,
-		run,
-	});
+	const fg = scheduler.enqueue(enq({ task: "fg", run, cancelOnAbort: new AbortController().signal }));
+	const bg = scheduler.enqueue(enq({ task: "bg", run }));
 	await Promise.all([scheduler.wait(fg.id), scheduler.wait(bg.id)]);
 	assert.equal(maxSeen, 1);
 	await scheduler.shutdown();
@@ -472,15 +386,7 @@ test("onTerminal fires once after done, not on shutdown abort", async () => {
 		...limits,
 		onTerminal: (snap) => terminals.push(`${snap.id}:${snap.status}:${snap.background}`),
 	});
-	const done = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "ok",
-		timeoutMs: 5000,
-		background: true,
-		run: runOk(10),
-	});
+	const done = scheduler.enqueue(enq({ task: "ok", background: true, run: runOk(10) }));
 	assert.equal(done.background, true);
 	await scheduler.wait(done.id);
 	assert.deepEqual(terminals, [`${done.id}:done:true`]);
@@ -490,33 +396,23 @@ test("onTerminal fires once after done, not on shutdown abort", async () => {
 		onTerminal: (snap) => terminals.push(`shut:${snap.id}`),
 	});
 	const gate = deferred();
-	blocked.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "run",
-		timeoutMs: 5000,
-		background: true,
-		run: async (_job, signal) => {
-			await Promise.race([
-				gate.promise,
-				new Promise<void>((resolve) => {
-					signal.addEventListener("abort", () => resolve(), { once: true });
-				}),
-			]);
-			return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
-		},
-	});
+	blocked.enqueue(
+		enq({
+			task: "run",
+			background: true,
+			run: async (_job, signal) => {
+				await Promise.race([
+					gate.promise,
+					new Promise<void>((resolve) => {
+						signal.addEventListener("abort", () => resolve(), { once: true });
+					}),
+				]);
+				return { text: "", exitCode: 1, stderrTail: "", stopReason: "aborted" };
+			},
+		}),
+	);
 	await waitUntil(() => blocked.list()[0]?.status === "running");
-	blocked.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "queued",
-		timeoutMs: 5000,
-		background: true,
-		run: runOk(),
-	});
+	blocked.enqueue(enq({ task: "queued", background: true, run: runOk() }));
 	const before = terminals.length;
 	await blocked.shutdown();
 	assert.equal(terminals.length, before);
@@ -536,36 +432,32 @@ test("onTerminal throw still starts the next eligible job", async () => {
 			throw new Error("notify boom");
 		},
 	});
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "local",
-		timeoutMs: 5000,
-		background: true,
-		run: async () => {
-			await localGate.promise;
-			return ok;
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "local",
+			background: true,
+			run: async () => {
+				await localGate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.list().some((job) => job.status === "running"));
-	const hosted = scheduler.enqueue({
-		kind: "implement",
-		model: "openai-codex/gpt-5.6-luna",
-		local: false,
-		task: "hosted",
-		timeoutMs: 5000,
-		background: true,
-		run: async () => {
-			hostedStarted.resolve();
-			return ok;
-		},
-	});
-	assert.equal(scheduler.get(hosted.id).status, "queued");
+	const hostedJob = scheduler.enqueue(
+		hosted({
+			task: "hosted",
+			background: true,
+			run: async () => {
+				hostedStarted.resolve();
+				return ok;
+			},
+		}),
+	);
+	assert.equal(scheduler.get(hostedJob.id).status, "queued");
 	localGate.resolve();
 	await hostedStarted.promise;
-	assert.equal(scheduler.get(hosted.id).status === "running" || scheduler.get(hosted.id).status === "done", true);
-	await scheduler.wait(hosted.id);
+	assert.equal(scheduler.get(hostedJob.id).status === "running" || scheduler.get(hostedJob.id).status === "done", true);
+	await scheduler.wait(hostedJob.id);
 	assert.ok(calls >= 1);
 	await scheduler.shutdown();
 });
@@ -582,31 +474,27 @@ test("onChange throw still starts the next eligible job", async () => {
 			if (paints === 1) throw new Error("widget boom");
 		},
 	});
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "local",
-		timeoutMs: 5000,
-		run: async () => {
-			await localGate.promise;
-			return ok;
-		},
-	});
+	scheduler.enqueue(
+		enq({
+			task: "local",
+			run: async () => {
+				await localGate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.list().some((job) => job.status === "running"));
-	const hosted = scheduler.enqueue({
-		kind: "implement",
-		model: "openai-codex/gpt-5.6-luna",
-		local: false,
-		task: "hosted",
-		timeoutMs: 5000,
-		run: async () => {
-			hostedStarted.resolve();
-			return ok;
-		},
-	});
+	const hostedJob = scheduler.enqueue(
+		hosted({
+			task: "hosted",
+			run: async () => {
+				hostedStarted.resolve();
+				return ok;
+			},
+		}),
+	);
 	await hostedStarted.promise;
-	assert.equal(scheduler.get(hosted.id).status === "running" || scheduler.get(hosted.id).status === "done", true);
+	assert.equal(scheduler.get(hostedJob.id).status === "running" || scheduler.get(hostedJob.id).status === "done", true);
 	localGate.resolve();
 	await scheduler.shutdown();
 });
@@ -615,18 +503,16 @@ test("quiet wait returns running; events postpone quiet", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
 	let onEvent: ((event: unknown) => void) | undefined;
-	const job = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "hold",
-		timeoutMs: 5000,
-		run: async (_handle, _signal, emit) => {
-			onEvent = emit;
-			await gate.promise;
-			return ok;
-		},
-	});
+	const job = scheduler.enqueue(
+		enq({
+			task: "hold",
+			run: async (_handle, _signal, emit) => {
+				onEvent = emit;
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.get(job.id).status === "running" && Boolean(onEvent));
 	const quiet = await scheduler.wait(job.id, { quietMs: 25 });
 	assert.equal(quiet.status, "running");
@@ -643,25 +529,16 @@ test("quiet wait returns running; events postpone quiet", async () => {
 test("fg wait budget includes queue time", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "hold",
-		timeoutMs: 5000,
-		run: async () => {
-			await gate.promise;
-			return ok;
-		},
-	});
-	const second = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "queued",
-		timeoutMs: 5000,
-		run: runOk(),
-	});
+	scheduler.enqueue(
+		enq({
+			task: "hold",
+			run: async () => {
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
+	const second = scheduler.enqueue(enq({ task: "queued", run: runOk() }));
 	assert.equal(second.status, "queued");
 	const timed = await scheduler.wait(second.id, { timeoutMs: 30 });
 	assert.equal(timed.status, "queued");
@@ -674,33 +551,24 @@ test("wrap steers running job; queued wrap cancels", async () => {
 	const scheduler = new JobScheduler(limits);
 	let wrapped: string | undefined;
 	let ready = false;
-	const running = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "run",
-		timeoutMs: 5000,
-		run: async (_job, _signal, _onEvent, onControl) => {
-			onControl({
-				wrap: (message) => {
-					wrapped = message;
-					return true;
-				},
-			});
-			ready = true;
-			await gate.promise;
-			return ok;
-		},
-	});
+	const running = scheduler.enqueue(
+		enq({
+			task: "run",
+			run: async (_job, _signal, _onEvent, onControl) => {
+				onControl({
+					wrap: (message) => {
+						wrapped = message;
+						return true;
+					},
+				});
+				ready = true;
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => ready);
-	const queued = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "later",
-		timeoutMs: 5000,
-		run: runOk(),
-	});
+	const queued = scheduler.enqueue(enq({ task: "later", run: runOk() }));
 	const steered = scheduler.wrap(running.id, "wrap now");
 	assert.equal(steered.wrapped, true);
 	assert.equal(steered.status, "running");
@@ -716,25 +584,16 @@ test("wrap steers running job; queued wrap cancels", async () => {
 test("quiet wait returns queued job without waiting forever", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
-	scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "hold",
-		timeoutMs: 5000,
-		run: async () => {
-			await gate.promise;
-			return ok;
-		},
-	});
-	const queued = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "later",
-		timeoutMs: 5000,
-		run: runOk(),
-	});
+	scheduler.enqueue(
+		enq({
+			task: "hold",
+			run: async () => {
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
+	const queued = scheduler.enqueue(enq({ task: "later", run: runOk() }));
 	assert.equal(queued.status, "queued");
 	assert.ok((queued.quietForMs ?? -1) >= 0);
 	const timed = await scheduler.wait(queued.id, { quietMs: 25 });
@@ -749,21 +608,19 @@ test("promoteBackground detaches fg abort", async () => {
 	const ac = new AbortController();
 	const gate = deferred();
 	let sawAbort = false;
-	const job = scheduler.enqueue({
-		kind: "recon",
-		model: "local-qwen38/qwen38-q4km",
-		local: true,
-		task: "fg",
-		timeoutMs: 5000,
-		cancelOnAbort: ac.signal,
-		run: async (_job, signal) => {
-			signal.addEventListener("abort", () => {
-				sawAbort = true;
-			});
-			await gate.promise;
-			return ok;
-		},
-	});
+	const job = scheduler.enqueue(
+		enq({
+			task: "fg",
+			cancelOnAbort: ac.signal,
+			run: async (_job, signal) => {
+				signal.addEventListener("abort", () => {
+					sawAbort = true;
+				});
+				await gate.promise;
+				return ok;
+			},
+		}),
+	);
 	await waitUntil(() => scheduler.get(job.id).status === "running");
 	const bg = scheduler.promoteBackground(job.id);
 	assert.equal(bg.background, true);

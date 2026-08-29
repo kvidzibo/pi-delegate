@@ -3,8 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runPiChild, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 
-export type { ChildResult };
-
 export interface ChildArgsInput {
 	model: string;
 	thinking: string;

@@ -10,9 +10,6 @@ import {
 } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 
-export type { ThemeFg };
-export { paintHeader };
-
 function markColor(mark: ActivityMark): string {
 	if (mark === "✓") return "success";
 	if (mark === "✗") return "error";
