@@ -31,6 +31,8 @@ test("shipped config parses four agents", () => {
 	assert.equal(config.maxConcurrent, 8);
 	assert.equal(config.maxLocalConcurrent, 1);
 	assert.equal(config.maxQueued, 16);
+	assert.equal(config.checkIntervalMs, 60000);
+	assert.equal(config.hardTimeoutMs, 0);
 	assert.equal(config.agents.recon.offline, true);
 	assert.equal(config.agents.implement.offline, false);
 	assert.ok(config.agents.implement.tools.includes("edit"));

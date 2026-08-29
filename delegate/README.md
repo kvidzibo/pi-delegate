@@ -9,11 +9,11 @@ One routing tool. Four agents. Model from config.
 | `review` | read, grep, find, ls, bash | no |
 | `oracle` | read, grep, find, ls, bash | no |
 
-Child is a nested `pi --mode json -p` with `--no-extensions`. `offline: true` adds `--offline`.
+Child is a nested `pi --mode rpc` with `--no-extensions`. `offline: true` adds `--offline`. Wrap uses RPC `steer`. After `agent_settled`, stdin closes.
 
 TUI row (no footer). Local child may add live `tg n/s` after model id. Background jobs add a sticky widget (`N run  M wait  local x/y`) while queued or running.
 
-`background: true` returns `jobId`. `jobId` waits; `timeoutMs: 0` peeks. Local models share `maxLocalConcurrent`. Interactive mode may inject a short completion notice (preview; full result via `jobId`). Print/JSON stays pull-only.
+`background: true` returns `jobId`. `timeoutMs` waits, never kills. `jobId` waits/peeks; `wrap: true` steers wrap-up; `cancel: true` kills. Collect samples quiet every `checkIntervalMs` (60s) inside the wait. Local models share `maxLocalConcurrent`. Interactive mode may inject a short completion notice (preview; full result via `jobId`). Print/JSON stays pull-only.
 
 Parent tool list is `delegate` only. Shared process helpers live in `../child-runtime/`.
 

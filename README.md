@@ -22,7 +22,7 @@ pi install npm:@kvidzibo/pi-delegate
 Git:
 
 ```bash
-pi install git:github.com/kvidzibo/pi-delegate@v0.3.0
+pi install git:github.com/kvidzibo/pi-delegate@v0.4.0
 ```
 
 Local checkout:
@@ -59,13 +59,13 @@ Per-agent keys: `model`, `tools`, `thinking` (`off|minimal|low|medium|high`), `o
 
 Optional tool argument `model` overrides that call only. Kind keeps tools and prompt.
 
-`background: true` spawns and returns `jobId`. Call again with `jobId` to wait, or `timeoutMs: 0` to peek. Local models (`local-qwen*`, `llama.cpp`, `ollama`) never overlap above `maxLocalConcurrent`. Hosted jobs still run in parallel. Child timeout starts when the process starts, not while queued. `session_shutdown` kills leftovers.
+`timeoutMs` is a wait budget. It does **not** kill the child. Foreground expiry auto-backgrounds and returns a short check-in (`jobId`, last tools, `quietForMs`). Collect `jobId` again to wait; omit `timeoutMs` to wait until done or 60s quiet (silent inside the wait — no extra parent tokens while events flow). `timeoutMs: 0` peeks. `wrap: true` steers the child to finish (current tool may complete first). `cancel: true` kills. `hardTimeoutMs` in config (default `0`) is the only process-start kill. Local models (`local-qwen*`, `llama.cpp`, `ollama`) never overlap above `maxLocalConcurrent`. A running child keeps its slot. Hosted jobs still run in parallel. `session_shutdown` kills leftovers.
 
 In TUI/RPC, a finished background job injects a short follow-up notice (preview only; full result still via `jobId`). Failures are visible; successes stay quiet in the transcript. Collecting a finished job suppresses the notice. Print/JSON stays pull-only. `session_shutdown` does not notify.
 
 Background `implement` can race parent file writes.
 
-Child is always a `pi` process (`--mode json -p --model <id>`). Codex/Anthropic/Ollama are providers behind that model id, not a separate CLI. Each child end appends one JSON line to `~/.pi/agent/delegate.log` (cmd, pid, exit, JSONL event types, stderr). Task text is redacted. `PI_DELEGATE_LOG=0` disables. `PI_DELEGATE_LOG=/path` overrides. Timeout/empty-answer tool results include the same dump so the parent is not blind.
+Child is always a `pi` process (`--mode rpc --model <id>`). Codex/Anthropic/Ollama are providers behind that model id, not a separate CLI. Task goes on stdin as an RPC prompt. Each child end appends one JSON line to `~/.pi/agent/delegate.log` (cmd, pid, exit, JSONL event types, stderr). Task text is not on argv. `PI_DELEGATE_LOG=0` disables. `PI_DELEGATE_LOG=/path` overrides. Empty-answer tool results include the same dump so the parent is not blind.
 
 Then `/reload` (or restart Pi) so the overlay is picked up.
 

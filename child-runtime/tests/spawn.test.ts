@@ -82,9 +82,9 @@ test("jsonl event type and ring buffer", () => {
 test("summarize names pi argv not a codex CLI", () => {
 	const text = summarizeChildRun({
 		command: "/usr/bin/node",
-		args: ["/opt/pi", "--mode", "json", "-p", "--model", "openai-codex/gpt-5.6-sol", "Task: do not log me"],
+		args: ["/opt/pi", "--mode", "rpc", "--model", "openai-codex/gpt-5.6-sol", "Task: do not log me"],
 		pid: 9,
-		timeoutMs: 300000,
+		hardTimeoutMs: 300000,
 		durationMs: 300012,
 		eventCount: 0,
 		events: [],
@@ -97,6 +97,7 @@ test("summarize names pi argv not a codex CLI", () => {
 	assert.match(text, /--model openai-codex\/gpt-5\.6-sol/);
 	assert.match(text, /Task:<redacted 13 chars>/);
 	assert.equal(text.includes("do not log me"), false);
+	assert.match(text, /hardTimeoutMs: 300000/);
 	assert.match(text, /stop: timeout/);
 	assert.match(text, /events: \(none\)/);
 	assert.match(text, /stderr: \(empty\)/);
@@ -126,6 +127,7 @@ test("jsonl record limit stays bounded", () => {
 
 test("SIGKILL still fires after SIGTERM even if killed is true", () => {
 	const sent: Array<[number | string, string]> = [];
+	let unrefed = false;
 	const proc = {
 		pid: 4242,
 		exitCode: null as number | null,
@@ -145,11 +147,47 @@ test("SIGKILL still fires after SIGTERM even if killed is true", () => {
 		},
 		setTimeoutFn: (fn) => {
 			later.push(fn);
-			return { unref() {} };
+			return {
+				unref() {
+					unrefed = true;
+					return this;
+				},
+			};
 		},
 	});
 	assert.deepEqual(sent[0], [-4242, "SIGTERM"]);
 	assert.equal(later.length, 1);
+	assert.equal(unrefed, false);
+	later[0]?.();
+	assert.ok(sent.some((entry) => entry[0] === -4242 && entry[1] === "SIGKILL"));
+});
+
+test("SIGKILL still hits process group after leader exits", () => {
+	const sent: Array<[number | string, string]> = [];
+	const proc = {
+		pid: 4242,
+		exitCode: null as number | null,
+		signalCode: null as NodeJS.Signals | null,
+		kill(signal?: NodeJS.Signals) {
+			sent.push(["proc", signal ?? "SIGTERM"]);
+			this.exitCode = 0;
+			return true;
+		},
+	};
+	const later: Array<() => void> = [];
+	killChildTree(proc, {
+		platform: "linux",
+		killProcess: (pid, signal) => {
+			sent.push([pid, signal]);
+			if (signal === "SIGTERM") proc.exitCode = 0;
+		},
+		setTimeoutFn: (fn) => {
+			later.push(fn);
+			return { unref() {} };
+		},
+	});
+	assert.equal(proc.exitCode, 0);
+	assert.deepEqual(sent[0], [-4242, "SIGTERM"]);
 	later[0]?.();
 	assert.ok(sent.some((entry) => entry[0] === -4242 && entry[1] === "SIGKILL"));
 });

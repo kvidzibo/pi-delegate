@@ -10,13 +10,12 @@ const base = {
 	thinking: "off",
 	tools: ["read", "grep", "find", "ls", "bash"],
 	promptPath: "/tmp/prompt.md",
-	task: "list files",
 };
 
 test("argv includes isolation flags", () => {
 	const args = buildChildArgs(base);
-	assert.equal(args[args.indexOf("--mode") + 1], "json");
-	assert.ok(args.includes("-p"));
+	assert.equal(args[args.indexOf("--mode") + 1], "rpc");
+	assert.equal(args.includes("-p"), false);
 	assert.ok(args.includes("--no-session"));
 	assert.ok(args.includes("--no-extensions"));
 	assert.ok(args.includes("--no-skills"));
@@ -27,7 +26,7 @@ test("argv includes isolation flags", () => {
 	assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls,bash");
 	assert.equal(args[args.indexOf("--system-prompt") + 1], "/tmp/prompt.md");
 	assert.equal(args.includes("--append-system-prompt"), false);
-	assert.equal(args.at(-1), "Task: list files");
+	assert.equal(args.some((arg) => arg.startsWith("Task:")), false);
 });
 
 test("offline flag only when requested", () => {

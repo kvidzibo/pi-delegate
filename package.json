@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pi parent child tool: named agents, model from config",
   "author": "Tomas Rackauskas",
   "keywords": ["pi-package"],

@@ -62,10 +62,20 @@ function snapshotBoard(snap: JobSnapshot): JobBoardRow | undefined {
 function receiptText(snap: JobSnapshot): string {
 	if (snap.status === "queued") {
 		const why = snap.reason === "gpu" ? " gpu" : snap.reason === "slot" ? " slot" : "";
-		return `bg ${snap.id} queued${why}\nUse jobId to wait, or timeoutMs 0 to peek.`;
+		const wait = snap.reason === "gpu" ? "Waiting for gpu." : snap.reason === "slot" ? "Waiting for slot." : "Waiting.";
+		return `bg ${snap.id} queued${why}\nquietForMs: ${snap.quietForMs ?? 0}\n${wait} jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.`;
 	}
 	if (snap.status === "running") {
-		return `bg ${snap.id} running\nUse jobId to wait, or timeoutMs 0 to peek.`;
+		const lines = [`bg ${snap.id} running`, `quietForMs: ${snap.quietForMs ?? 0}`];
+		if (snap.wrapped) lines.push("wrap queued (current tool may finish first)");
+		for (const item of snap.activity.slice(-3)) {
+			lines.push(`${item.mark} ${item.name}${item.args ? ` ${item.args}` : ""}`);
+		}
+		if (snap.current) {
+			lines.push(`current: ${snap.current.name}${snap.current.args ? ` ${snap.current.args}` : ""}`);
+		}
+		lines.push("Slot still held. jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.");
+		return lines.join("\n");
 	}
 	return snap.answer || snap.stderrTail || snap.stopReason || "(no output)";
 }
@@ -114,6 +124,9 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.stopReason) details.stopReason = snap.stopReason;
 	if (snap.stderrTail) details.stderrTail = snap.stderrTail;
 	if (snap.answer) details.answer = snap.answer;
+	details.terminal = snap.status === "done" || snap.status === "failed";
+	if (snap.quietForMs !== undefined) details.quietForMs = snap.quietForMs;
+	if (snap.wrapped) details.wrapped = true;
 	return details;
 }
 
@@ -213,7 +226,7 @@ export default function delegate(pi: ExtensionAPI) {
 		name: "delegate",
 		label: "Delegate",
 		description:
-			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
+			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
 		promptGuidelines: [
 			"Use delegate for isolated child work. One child per call. No nesting.",
@@ -223,9 +236,12 @@ export default function delegate(pi: ExtensionAPI) {
 			"Use kind oracle last resort. Never parallel oracle.",
 			"Optional model override: any Pi model id (provider/id). Kind keeps tools and prompt.",
 			"background: true returns jobId immediately; child keeps running.",
-			"jobId waits for that job. timeoutMs 0 peeks without waiting.",
+			"timeoutMs is a wait budget. It does not kill the child. Foreground expiry auto-backgrounds and returns a short check-in.",
+			"jobId waits. Omit timeoutMs to wait until done or 60s quiet. timeoutMs 0 peeks.",
+			"On a nonterminal check-in: if progress is useful, call jobId again. If no value, wrap:true. If still stuck, cancel:true.",
+			"wrap steers the child to finish; current tool may complete first. cancel kills.",
 			"Interactive mode may inject a short completion notice; collect with jobId for the full result. Print/JSON stays pull-only.",
-			"Many local/GPU children queue (maxLocalConcurrent). Hosted still parallel.",
+			"Many local/GPU children queue (maxLocalConcurrent). Hosted still parallel. A running child keeps its slot.",
 			"Background implement can race parent file writes.",
 		],
 		parameters: Type.Object({
@@ -236,7 +252,8 @@ export default function delegate(pi: ExtensionAPI) {
 			),
 			timeoutMs: Type.Optional(
 				Type.Integer({
-					description: "Spawn: child timeout. jobId: wait budget. 0 with jobId = peek.",
+					description:
+						"Wait budget, never a kill. Spawn/fg: first wait. jobId: max wait (omit = until done or quiet). 0 with jobId = peek.",
 				}),
 			),
 			model: Type.Optional(
@@ -247,7 +264,11 @@ export default function delegate(pi: ExtensionAPI) {
 			background: Type.Optional(
 				Type.Boolean({ description: "Return jobId now; child runs in the background." }),
 			),
-			jobId: Type.Optional(Type.String({ description: "Wait or peek an existing job." })),
+			jobId: Type.Optional(Type.String({ description: "Wait, peek, wrap, or cancel an existing job." })),
+			wrap: Type.Optional(
+				Type.Boolean({ description: "With jobId: steer child to wrap up. Does not interrupt the current tool." }),
+			),
+			cancel: Type.Optional(Type.Boolean({ description: "With jobId: abort and kill the child." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			try {
@@ -268,9 +289,13 @@ export default function delegate(pi: ExtensionAPI) {
 				if (parsed.mode === "collect") {
 					const current = scheduler.get(parsed.jobId);
 					publish(current, true, current.status === "queued" || current.status === "running");
+					if (parsed.cancel) scheduler.cancel(parsed.jobId);
+					else if (parsed.wrap) scheduler.wrap(parsed.jobId);
+					const peek = parsed.peek === true;
 					const snap = await scheduler.wait(parsed.jobId, {
-						timeoutMs: parsed.peek ? 0 : parsed.waitMs,
-						signal: parsed.peek ? undefined : signal,
+						timeoutMs: peek ? 0 : parsed.waitMs,
+						quietMs: peek || parsed.cancel ? undefined : config.checkIntervalMs,
+						signal: peek ? undefined : signal,
 						onSnapshot: (next) => publish(next, true, next.status === "queued" || next.status === "running"),
 					});
 					const pending = snap.status === "queued" || snap.status === "running";
@@ -312,7 +337,7 @@ export default function delegate(pi: ExtensionAPI) {
 					timeoutMs: parsed.timeoutMs,
 					background: parsed.background,
 					cancelOnAbort: parsed.background ? undefined : signal,
-					run: (_handle, childSignal, onEvent) =>
+					run: (_handle, childSignal, onEvent, onControl) =>
 						runChild({
 							task: parsed.task,
 							cwd,
@@ -320,12 +345,13 @@ export default function delegate(pi: ExtensionAPI) {
 							thinking: resolved.agent.thinking,
 							tools: resolved.agent.tools,
 							offline: resolved.agent.offline,
-							timeoutMs: parsed.timeoutMs,
+							hardTimeoutMs: config.hardTimeoutMs,
 							maxOutputBytes: config.maxOutputBytes,
 							promptSourcePath: promptSourceFromDir(EXTENSION_DIR, `${kind}.md`),
 							signal: childSignal,
 							env: process.env,
 							onEvent,
+							onControl,
 						}),
 				});
 				publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
@@ -342,9 +368,27 @@ export default function delegate(pi: ExtensionAPI) {
 					});
 				}
 
-				const done = await scheduler.wait(snap.id, {
+				let done = await scheduler.wait(snap.id, {
+					timeoutMs: parsed.timeoutMs,
+					signal,
 					onSnapshot: (next) => publish(next, false, next.status === "queued" || next.status === "running"),
 				});
+				if (done.status === "queued" || done.status === "running") {
+					done = scheduler.promoteBackground(snap.id);
+				}
+				if (done.status === "queued" || done.status === "running") {
+					const text = receiptText(done);
+					liveFromSnap(toolCallId, done, true);
+					return formatOutput({
+						text,
+						failed: false,
+						exitCode: 0,
+						maxBytes: config.maxOutputBytes,
+						kind,
+						model: done.model || resolved.model,
+						details: detailsFromSnap(done, { background: true, pending: true }),
+					});
+				}
 				const model = done.model || resolved.model;
 				const text = truncateOutput(done.answer || done.stderrTail || "(no output)", config.maxOutputBytes);
 				const failed = done.failed;
@@ -358,16 +402,10 @@ export default function delegate(pi: ExtensionAPI) {
 					maxBytes: config.maxOutputBytes,
 					kind,
 					model,
-					details: {
-						kind,
+					details: detailsFromSnap(done, {
 						exitCode: done.exitCode ?? (failed ? 1 : 0),
-						model,
-						stopReason: done.stopReason,
-						stderrTail: done.stderrTail,
-						activity: [...done.activity],
 						answer: text,
-						tg: done.tg,
-					},
+					}),
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

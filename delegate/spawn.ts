@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runPiChild, type ChildResult } from "../child-runtime/spawn.ts";
+import { runPiChild, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 
 export type { ChildResult };
 
@@ -10,7 +10,6 @@ export interface ChildArgsInput {
 	thinking: string;
 	tools: string[];
 	promptPath: string;
-	task: string;
 	offline?: boolean;
 }
 
@@ -21,19 +20,19 @@ export interface RunChildInput {
 	thinking: string;
 	tools: string[];
 	offline?: boolean;
-	timeoutMs: number;
+	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
 	signal?: AbortSignal;
 	env?: NodeJS.Dict<string>;
 	onEvent?: (event: unknown) => void;
+	onControl?: (ctl: ChildControl) => void;
 }
 
 export function buildChildArgs(input: ChildArgsInput): string[] {
 	const args = [
 		"--mode",
-		"json",
-		"-p",
+		"rpc",
 		"--no-session",
 		"--no-extensions",
 		"--no-skills",
@@ -50,7 +49,6 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		input.tools.join(","),
 		"--system-prompt",
 		input.promptPath,
-		`Task: ${input.task}`,
 	);
 	return args;
 }
@@ -84,7 +82,7 @@ function logChildResult(input: RunChildInput, result: ChildResult): void {
 			model: result.model ?? input.model,
 			stopReason: result.stopReason,
 			exitCode: result.exitCode,
-			timeoutMs: input.timeoutMs,
+			hardTimeoutMs: input.hardTimeoutMs,
 			durationMs: result.diag?.durationMs,
 			pid: result.diag?.pid,
 			command: result.diag?.command,
@@ -103,7 +101,8 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 	const result = await runPiChild({
 		cwd: input.cwd,
 		model: input.model,
-		timeoutMs: input.timeoutMs,
+		task: input.task,
+		hardTimeoutMs: input.hardTimeoutMs,
 		maxOutputBytes: input.maxOutputBytes,
 		promptSourcePath: input.promptSourcePath,
 		tmpPrefix: "pi-delegate-",
@@ -114,11 +113,11 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 				thinking: input.thinking,
 				tools: input.tools,
 				promptPath,
-				task: input.task,
 				offline: input.offline,
 			}),
 		signal: input.signal,
 		onEvent: input.onEvent,
+		onControl: input.onControl,
 	});
 	logChildResult(input, result);
 	return result;

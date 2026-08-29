@@ -106,6 +106,7 @@ export function isFailedChildResult(result: { exitCode: number; stopReason?: str
 		stop === "error" ||
 		stop === "aborted" ||
 		stop === "timeout" ||
+		stop === "hard_timeout" ||
 		stop === "protocol-error" ||
 		stop === "no-assistant-output"
 	) {
