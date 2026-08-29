@@ -21,6 +21,8 @@ export interface DelegateConfig {
 	maxQueued: number;
 	defaultTimeoutMs: number;
 	maxTimeoutMs: number;
+	checkIntervalMs: number;
+	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	agents: Record<Kind, AgentConfig>;
 }
@@ -108,15 +110,25 @@ function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 	}
 	if (!Number.isInteger(parsed.defaultTimeoutMs)) errors.push("defaultTimeoutMs (integer)");
 	if (!Number.isInteger(parsed.maxTimeoutMs)) errors.push("maxTimeoutMs (integer)");
+	if (!Number.isInteger(parsed.checkIntervalMs)) errors.push("checkIntervalMs (integer)");
+	if (!Number.isInteger(parsed.hardTimeoutMs)) errors.push("hardTimeoutMs (integer)");
 	if (!Number.isInteger(parsed.maxOutputBytes) || (parsed.maxOutputBytes as number) < 1) {
 		errors.push("maxOutputBytes (integer >= 1)");
 	}
 	if (errors.length === 0) {
 		const defaultTimeoutMs = parsed.defaultTimeoutMs as number;
 		const maxTimeoutMs = parsed.maxTimeoutMs as number;
+		const checkIntervalMs = parsed.checkIntervalMs as number;
+		const hardTimeoutMs = parsed.hardTimeoutMs as number;
 		if (maxTimeoutMs < 1000) errors.push("maxTimeoutMs (>= 1000)");
 		if (defaultTimeoutMs < 1000 || defaultTimeoutMs > maxTimeoutMs) {
 			errors.push("defaultTimeoutMs (in [1000, maxTimeoutMs])");
+		}
+		if (checkIntervalMs < 1000 || checkIntervalMs > maxTimeoutMs) {
+			errors.push("checkIntervalMs (in [1000, maxTimeoutMs])");
+		}
+		if (hardTimeoutMs !== 0 && hardTimeoutMs < 1000) {
+			errors.push("hardTimeoutMs (0 or >= 1000)");
 		}
 	}
 	if (!parsed.agents || typeof parsed.agents !== "object") {
@@ -155,6 +167,8 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 		maxQueued: parsed.maxQueued as number,
 		defaultTimeoutMs: parsed.defaultTimeoutMs as number,
 		maxTimeoutMs: parsed.maxTimeoutMs as number,
+		checkIntervalMs: parsed.checkIntervalMs as number,
+		hardTimeoutMs: parsed.hardTimeoutMs as number,
 		maxOutputBytes: parsed.maxOutputBytes as number,
 		agents,
 	};
@@ -191,6 +205,8 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 		maxQueued: extra.maxQueued ?? base.maxQueued,
 		defaultTimeoutMs: extra.defaultTimeoutMs ?? base.defaultTimeoutMs,
 		maxTimeoutMs: extra.maxTimeoutMs ?? base.maxTimeoutMs,
+		checkIntervalMs: extra.checkIntervalMs ?? base.checkIntervalMs,
+		hardTimeoutMs: extra.hardTimeoutMs ?? base.hardTimeoutMs,
 		maxOutputBytes: extra.maxOutputBytes ?? base.maxOutputBytes,
 		agents: { ...base.agents },
 	};

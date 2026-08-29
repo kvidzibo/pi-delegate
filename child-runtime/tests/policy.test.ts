@@ -62,6 +62,7 @@ test("task required and capped", () => {
 test("failed child result covers timeout and empty text", () => {
 	assert.equal(isFailedChildResult({ exitCode: 0, stopReason: "end", text: "ok" }), false);
 	assert.equal(isFailedChildResult({ exitCode: 0, stopReason: "timeout", text: "partial" }), true);
+	assert.equal(isFailedChildResult({ exitCode: 0, stopReason: "hard_timeout", text: "partial" }), true);
 	assert.equal(isFailedChildResult({ exitCode: 0, stopReason: "end", text: "" }), true);
 	assert.equal(isFailedChildResult({ exitCode: 1, stopReason: "end", text: "ok" }), true);
 });

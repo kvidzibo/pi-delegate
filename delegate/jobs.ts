@@ -1,5 +1,5 @@
 import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
-import type { ChildResult } from "../child-runtime/spawn.ts";
+import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { assertKind, type Kind } from "./config.ts";
 import {
 	applyProgress,
@@ -27,6 +27,7 @@ export type JobRun = (
 	job: JobHandle,
 	signal: AbortSignal,
 	onEvent: (event: unknown) => void,
+	onControl: (ctl: ChildControl) => void,
 ) => Promise<ChildResult>;
 
 export type JobSnapshot = {
@@ -47,6 +48,8 @@ export type JobSnapshot = {
 	stopReason?: string;
 	stderrTail?: string;
 	background: boolean;
+	wrapped?: boolean;
+	quietForMs?: number;
 };
 
 export type EnqueueInput = {
@@ -62,6 +65,7 @@ export type EnqueueInput = {
 
 export type WaitInput = {
 	timeoutMs?: number;
+	quietMs?: number;
 	signal?: AbortSignal;
 	onSnapshot?: (snap: JobSnapshot) => void;
 };
@@ -87,6 +91,8 @@ export type ParsedCall =
 			jobId: string;
 			peek: boolean;
 			waitMs?: number;
+			wrap?: boolean;
+			cancel?: boolean;
 	  };
 
 type InternalJob = {
@@ -109,6 +115,11 @@ type InternalJob = {
 	cancelAbort?: { signal: AbortSignal; onAbort: () => void };
 	background: boolean;
 	terminalEmitted: boolean;
+	wrapped: boolean;
+	queuedAt: number;
+	startedAt?: number;
+	lastEventAt?: number;
+	control?: ChildControl;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -129,16 +140,35 @@ export function parseDelegateCall(
 	if (rec.background !== undefined && rec.background !== true && rec.background !== false) {
 		throw new Error("delegate refused: background must be boolean.");
 	}
+	if (rec.wrap !== undefined && rec.wrap !== true && rec.wrap !== false) {
+		throw new Error("delegate refused: wrap must be boolean.");
+	}
+	if (rec.cancel !== undefined && rec.cancel !== true && rec.cancel !== false) {
+		throw new Error("delegate refused: cancel must be boolean.");
+	}
 	const jobId = optionalString(rec.jobId);
+	if ((rec.wrap === true || rec.cancel === true) && !jobId) {
+		throw new Error("delegate refused: wrap/cancel require jobId.");
+	}
 	if (jobId) {
 		if (rec.background === true) throw new Error("delegate refused: jobId cannot combine with background.");
+		if (rec.wrap === true && rec.cancel === true) {
+			throw new Error("delegate refused: wrap cannot combine with cancel.");
+		}
+		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined) {
+			throw new Error("delegate refused: jobId cannot combine with spawn fields.");
+		}
 		const raw = rec.timeoutMs;
-		if (raw === undefined || raw === null) return { mode: "collect", jobId, peek: false };
+		const collect: Extract<ParsedCall, { mode: "collect" }> = { mode: "collect", jobId, peek: false };
+		if (rec.wrap === true) collect.wrap = true;
+		if (rec.cancel === true) collect.cancel = true;
+		if (raw === undefined || raw === null) return collect;
 		if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
 			throw new Error("delegate refused: timeoutMs must be an integer >= 0.");
 		}
-		if (raw === 0) return { mode: "collect", jobId, peek: true, waitMs: 0 };
-		return { mode: "collect", jobId, peek: false, waitMs: raw };
+		collect.waitMs = raw;
+		collect.peek = raw === 0;
+		return collect;
 	}
 	const kind = assertKind(rec.kind);
 	const task = normalizeTask(rec.task, config.maxTaskChars, "delegate");
@@ -200,6 +230,8 @@ export class JobScheduler {
 			listeners: new Set(),
 			background: input.background === true,
 			terminalEmitted: false,
+			wrapped: false,
+			queuedAt: Date.now(),
 		};
 		if (input.cancelOnAbort) {
 			const onAbort = (): void => {
@@ -243,15 +275,28 @@ export class JobScheduler {
 		return new Promise((resolve) => {
 			let settled = false;
 			let timer: ReturnType<typeof setTimeout> | undefined;
+			let quietTimer: ReturnType<typeof setTimeout> | undefined;
 			const finish = (): void => {
 				if (settled) return;
 				settled = true;
 				cleanup();
 				resolve(this.snapshot(job));
 			};
+			const armQuiet = (): void => {
+				if (quietTimer) {
+					clearTimeout(quietTimer);
+					quietTimer = undefined;
+				}
+				if (!input.quietMs || input.quietMs <= 0) return;
+				if (job.status !== "running" && job.status !== "queued") return;
+				const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
+				const remaining = input.quietMs - (Date.now() - last);
+				quietTimer = setTimeout(finish, Math.max(0, remaining));
+			};
 			const onSnap = (next: JobSnapshot): void => {
 				this.safeSnapshot(input.onSnapshot, next);
 				if (next.status === "done" || next.status === "failed") finish();
+				else armQuiet();
 			};
 			const onAbort = (): void => {
 				finish();
@@ -260,6 +305,7 @@ export class JobScheduler {
 				job.listeners.delete(onSnap);
 				input.signal?.removeEventListener("abort", onAbort);
 				if (timer) clearTimeout(timer);
+				if (quietTimer) clearTimeout(quietTimer);
 			};
 			job.listeners.add(onSnap);
 			if (input.signal) {
@@ -272,8 +318,36 @@ export class JobScheduler {
 			if (input.timeoutMs !== undefined && input.timeoutMs > 0) {
 				timer = setTimeout(finish, input.timeoutMs);
 			}
+			armQuiet();
 			if (this.terminal(job)) finish();
 		});
+	}
+
+	promoteBackground(id: string): JobSnapshot {
+		const job = this.find(id);
+		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
+		job.background = true;
+		this.detachAbort(job);
+		this.notify(job);
+		return this.snapshot(job);
+	}
+
+	wrap(id: string, message?: string): JobSnapshot {
+		const job = this.find(id);
+		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
+		if (this.terminal(job)) return this.snapshot(job);
+		if (job.status === "queued") {
+			this.cancel(id);
+			return this.get(id);
+		}
+		job.wrapped = true;
+		try {
+			job.control?.wrap(message ?? DEFAULT_WRAP_MESSAGE);
+		} catch {
+			/* wrap must not break the scheduler */
+		}
+		this.notify(job);
+		return this.snapshot(job);
 	}
 
 	cancel(id: string): void {
@@ -389,6 +463,11 @@ export class JobScheduler {
 			current: job.status === "running" ? job.progress.current : undefined,
 			background: job.background,
 		};
+		if (job.wrapped) snap.wrapped = true;
+		if (job.status === "running" || job.status === "queued") {
+			const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
+			snap.quietForMs = Math.max(0, Date.now() - last);
+		}
 		const reason = this.queueReason(job);
 		if (reason) snap.reason = reason;
 		if (thinking) snap.thinking = thinking;
@@ -463,6 +542,8 @@ export class JobScheduler {
 
 	private start(job: InternalJob): void {
 		job.status = "running";
+		job.startedAt = Date.now();
+		job.lastEventAt = job.startedAt;
 		try {
 			this.notify(job);
 		} finally {
@@ -472,13 +553,21 @@ export class JobScheduler {
 
 	private async execute(job: InternalJob): Promise<void> {
 		try {
-			const result = await job.run(this.handle(job), job.controller.signal, (event) => {
-				if (job.status !== "running") return;
-				const item = parseChildProgress(event);
-				if (item) applyProgress(job.progress, item);
-				if (job.local) applyTgEvent(job.meter, event);
-				this.notify(job);
-			});
+			const result = await job.run(
+				this.handle(job),
+				job.controller.signal,
+				(event) => {
+					if (job.status !== "running") return;
+					job.lastEventAt = Date.now();
+					const item = parseChildProgress(event);
+					if (item) applyProgress(job.progress, item);
+					if (job.local) applyTgEvent(job.meter, event);
+					this.notify(job);
+				},
+				(ctl) => {
+					job.control = ctl;
+				},
+			);
 			if (job.status === "queued") return;
 			job.result = result;
 			job.status = isFailedChildResult(result) ? "failed" : "done";

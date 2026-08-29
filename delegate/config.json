@@ -5,6 +5,8 @@
   "maxQueued": 16,
   "defaultTimeoutMs": 300000,
   "maxTimeoutMs": 900000,
+  "checkIntervalMs": 60000,
+  "hardTimeoutMs": 0,
   "maxOutputBytes": 65536,
   "agents": {
     "recon": {

@@ -65,9 +65,34 @@ test("parse spawn and collect modes", () => {
 	const wait = parseDelegateCall({ jobId: "d0002" }, callConfig);
 	assert.deepEqual(wait, { mode: "collect", jobId: "d0002", peek: false });
 
+	const wrap = parseDelegateCall({ jobId: "d0003", wrap: true }, callConfig);
+	assert.deepEqual(wrap, { mode: "collect", jobId: "d0003", peek: false, wrap: true });
+
+	const cancel = parseDelegateCall({ jobId: "d0004", cancel: true }, callConfig);
+	assert.deepEqual(cancel, { mode: "collect", jobId: "d0004", peek: false, cancel: true });
+
+	const cancelPeek = parseDelegateCall({ jobId: "d0005", cancel: true, timeoutMs: 0 }, callConfig);
+	assert.deepEqual(cancelPeek, { mode: "collect", jobId: "d0005", peek: true, waitMs: 0, cancel: true });
+
+	const cancelWait = parseDelegateCall({ jobId: "d0006", cancel: true, timeoutMs: 50 }, callConfig);
+	assert.deepEqual(cancelWait, { mode: "collect", jobId: "d0006", peek: false, waitMs: 50, cancel: true });
+
 	assert.throws(
 		() => parseDelegateCall({ jobId: "d0001", background: true }, callConfig),
 		/cannot combine/,
+	);
+	assert.throws(
+		() => parseDelegateCall({ jobId: "d0001", wrap: true, cancel: true }, callConfig),
+		/wrap cannot combine/,
+	);
+	assert.throws(() => parseDelegateCall({ wrap: true }, callConfig), /wrap\/cancel require jobId/);
+	assert.throws(
+		() => parseDelegateCall({ jobId: "d0001", cancel: true, timeoutMs: -1 }, callConfig),
+		/timeoutMs must be an integer/,
+	);
+	assert.throws(
+		() => parseDelegateCall({ jobId: "d0001", task: "nope" }, callConfig),
+		/spawn fields/,
 	);
 	assert.throws(() => parseDelegateCall({ kind: "recon" }, callConfig), /task is required/);
 });
@@ -583,5 +608,170 @@ test("onChange throw still starts the next eligible job", async () => {
 	await hostedStarted.promise;
 	assert.equal(scheduler.get(hosted.id).status === "running" || scheduler.get(hosted.id).status === "done", true);
 	localGate.resolve();
+	await scheduler.shutdown();
+});
+
+test("quiet wait returns running; events postpone quiet", async () => {
+	const gate = deferred();
+	const scheduler = new JobScheduler(limits);
+	let onEvent: ((event: unknown) => void) | undefined;
+	const job = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "hold",
+		timeoutMs: 5000,
+		run: async (_handle, _signal, emit) => {
+			onEvent = emit;
+			await gate.promise;
+			return ok;
+		},
+	});
+	await waitUntil(() => scheduler.get(job.id).status === "running" && Boolean(onEvent));
+	const quiet = await scheduler.wait(job.id, { quietMs: 25 });
+	assert.equal(quiet.status, "running");
+	onEvent?.({ type: "tool_execution_start", toolName: "read", args: { path: "a.ts" } });
+	const started = Date.now();
+	const again = await scheduler.wait(job.id, { quietMs: 40 });
+	assert.equal(again.status, "running");
+	assert.ok(Date.now() - started >= 25);
+	gate.resolve();
+	await scheduler.wait(job.id);
+	await scheduler.shutdown();
+});
+
+test("fg wait budget includes queue time", async () => {
+	const gate = deferred();
+	const scheduler = new JobScheduler(limits);
+	scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "hold",
+		timeoutMs: 5000,
+		run: async () => {
+			await gate.promise;
+			return ok;
+		},
+	});
+	const second = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "queued",
+		timeoutMs: 5000,
+		run: runOk(),
+	});
+	assert.equal(second.status, "queued");
+	const timed = await scheduler.wait(second.id, { timeoutMs: 30 });
+	assert.equal(timed.status, "queued");
+	gate.resolve();
+	await scheduler.shutdown();
+});
+
+test("wrap steers running job; queued wrap cancels", async () => {
+	const gate = deferred();
+	const scheduler = new JobScheduler(limits);
+	let wrapped: string | undefined;
+	let ready = false;
+	const running = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "run",
+		timeoutMs: 5000,
+		run: async (_job, _signal, _onEvent, onControl) => {
+			onControl({
+				wrap: (message) => {
+					wrapped = message;
+					return true;
+				},
+			});
+			ready = true;
+			await gate.promise;
+			return ok;
+		},
+	});
+	await waitUntil(() => ready);
+	const queued = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "later",
+		timeoutMs: 5000,
+		run: runOk(),
+	});
+	const steered = scheduler.wrap(running.id, "wrap now");
+	assert.equal(steered.wrapped, true);
+	assert.equal(steered.status, "running");
+	assert.equal(wrapped, "wrap now");
+	const cancelled = scheduler.wrap(queued.id);
+	assert.equal(cancelled.status, "failed");
+	assert.equal(cancelled.stopReason, "aborted");
+	gate.resolve();
+	await scheduler.wait(running.id);
+	await scheduler.shutdown();
+});
+
+test("quiet wait returns queued job without waiting forever", async () => {
+	const gate = deferred();
+	const scheduler = new JobScheduler(limits);
+	scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "hold",
+		timeoutMs: 5000,
+		run: async () => {
+			await gate.promise;
+			return ok;
+		},
+	});
+	const queued = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "later",
+		timeoutMs: 5000,
+		run: runOk(),
+	});
+	assert.equal(queued.status, "queued");
+	assert.ok((queued.quietForMs ?? -1) >= 0);
+	const timed = await scheduler.wait(queued.id, { quietMs: 25 });
+	assert.equal(timed.status, "queued");
+	assert.equal(timed.reason, "gpu");
+	gate.resolve();
+	await scheduler.shutdown();
+});
+
+test("promoteBackground detaches fg abort", async () => {
+	const scheduler = new JobScheduler(limits);
+	const ac = new AbortController();
+	const gate = deferred();
+	let sawAbort = false;
+	const job = scheduler.enqueue({
+		kind: "recon",
+		model: "local-qwen38/qwen38-q4km",
+		local: true,
+		task: "fg",
+		timeoutMs: 5000,
+		cancelOnAbort: ac.signal,
+		run: async (_job, signal) => {
+			signal.addEventListener("abort", () => {
+				sawAbort = true;
+			});
+			await gate.promise;
+			return ok;
+		},
+	});
+	await waitUntil(() => scheduler.get(job.id).status === "running");
+	const bg = scheduler.promoteBackground(job.id);
+	assert.equal(bg.background, true);
+	ac.abort();
+	await sleep(20);
+	assert.equal(sawAbort, false);
+	assert.equal(scheduler.get(job.id).status, "running");
+	gate.resolve();
+	await scheduler.wait(job.id);
 	await scheduler.shutdown();
 });

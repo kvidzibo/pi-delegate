@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -13,7 +13,7 @@ export interface ChildDiag {
 	command: string;
 	args: string[];
 	pid?: number;
-	timeoutMs: number;
+	hardTimeoutMs: number;
 	durationMs: number;
 	eventCount: number;
 	events: string[];
@@ -44,10 +44,27 @@ export interface AssistantState {
 	sawAssistant: boolean;
 }
 
+export type ChildControl = {
+	wrap: (message?: string) => boolean;
+};
+
+export type SpawnFn = (
+	command: string,
+	args: string[],
+	options: {
+		cwd?: string;
+		env?: NodeJS.ProcessEnv;
+		shell?: boolean;
+		stdio?: unknown;
+		detached?: boolean;
+	},
+) => ChildProcess;
+
 export interface RunPiChildInput {
 	cwd: string;
 	model: string;
-	timeoutMs: number;
+	task: string;
+	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
 	tmpPrefix: string;
@@ -56,9 +73,15 @@ export interface RunPiChildInput {
 	signal?: AbortSignal;
 	onEvent?: (event: unknown) => void;
 	onParsed?: (event: unknown) => void;
+	onControl?: (ctl: ChildControl) => void;
+	spawnFn?: SpawnFn;
 }
 
+export const DEFAULT_WRAP_MESSAGE =
+	"Stop starting new work. Finish the current tool if it is already running. Write the remaining answer now.";
+
 const STDERR_TAIL_BYTES = 4096;
+const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 export function jsonlRecordLimit(maxOutputBytes: number): number {
 	return Math.min(Math.max(maxOutputBytes * 4, 262144), 1_048_576);
@@ -88,6 +111,23 @@ export function rememberEventType(events: string[], type: string, limit = EVENT_
 	events.push(type);
 }
 
+export function encodeRpc(command: Record<string, unknown>): string {
+	return `${JSON.stringify(command)}\n`;
+}
+
+export function isAgentSettled(event: unknown): boolean {
+	return jsonlEventType(event) === "agent_settled";
+}
+
+export function uiCancelResponse(event: unknown): string | undefined {
+	if (!event || typeof event !== "object") return undefined;
+	const rec = event as { type?: unknown; id?: unknown; method?: unknown };
+	if (rec.type !== "extension_ui_request") return undefined;
+	if (typeof rec.id !== "string" || rec.id.length === 0) return undefined;
+	if (typeof rec.method !== "string" || !DIALOG_UI_METHODS.has(rec.method)) return undefined;
+	return encodeRpc({ type: "extension_ui_response", id: rec.id, cancelled: true });
+}
+
 export function finalizeChildText(assistantText: string, dump: string, maxBytes: number): string {
 	const source = assistantText.length > 0 ? assistantText : dump;
 	return truncateOutput(source, maxBytes);
@@ -97,7 +137,7 @@ export function summarizeChildRun(input: {
 	command: string;
 	args: string[];
 	pid?: number;
-	timeoutMs: number;
+	hardTimeoutMs: number;
 	durationMs: number;
 	eventCount: number;
 	events: string[];
@@ -113,7 +153,7 @@ export function summarizeChildRun(input: {
 	const stderr = input.stderrTail.trim() ? input.stderrTail.trim() : "(empty)";
 	return [
 		`cmd: ${argv}`,
-		`pid: ${input.pid ?? "none"} timeoutMs: ${input.timeoutMs} durationMs: ${input.durationMs}`,
+		`pid: ${input.pid ?? "none"} hardTimeoutMs: ${input.hardTimeoutMs} durationMs: ${input.durationMs}`,
 		`exit: ${input.exitCode} stop: ${input.stopReason ?? "none"} assistant: ${input.sawAssistant ? "yes" : "no"}`,
 		`events: ${events}`,
 		`stderr: ${stderr}`,
@@ -199,11 +239,12 @@ export function killChildTree(
 		setTimeoutFn?: (fn: () => void, ms: number) => TimeoutHandle;
 	},
 ): void {
-	if (!childStillRunning(proc)) return;
 	const platform = options?.platform ?? process.platform;
 	const killProcess = options?.killProcess ?? process.kill;
 	const pid = proc.pid;
 	const group = platform !== "win32" && typeof pid === "number" && pid > 0;
+	const leaderAlive = childStillRunning(proc);
+	if (!leaderAlive && !group) return;
 	try {
 		if (group) killProcess(-pid, "SIGTERM");
 		else proc.kill("SIGTERM");
@@ -216,10 +257,9 @@ export function killChildTree(
 	}
 	const later = options?.setTimeoutFn ?? setTimeout;
 	const timer = later(() => {
-		if (!childStillRunning(proc)) return;
 		try {
 			if (group) killProcess(-pid, "SIGKILL");
-			else proc.kill("SIGKILL");
+			else if (childStillRunning(proc)) proc.kill("SIGKILL");
 		} catch {
 			try {
 				proc.kill("SIGKILL");
@@ -228,7 +268,6 @@ export function killChildTree(
 			}
 		}
 	}, 5000);
-	timer.unref?.();
 }
 
 export function tailBytes(text: string, maxBytes: number): string {
@@ -250,17 +289,25 @@ function writeTempPrompt(sourcePath: string, tmpPrefix: string): { dir: string; 
 }
 
 function resolveStopReason(input: {
-	aborted: boolean;
-	timedOut: boolean;
+	stopKind?: "aborted" | "hard_timeout";
 	overflow: boolean;
 	state: AssistantState;
 }): string | undefined {
-	if (input.aborted) return "aborted";
-	if (input.timedOut) return "timeout";
+	if (input.stopKind) return input.stopKind;
 	if (input.overflow) return "protocol-error";
 	if (input.state.stopReason === "error") return "error";
 	if (!input.state.sawAssistant || input.state.text.length === 0) return "no-assistant-output";
 	return input.state.stopReason;
+}
+
+function writeStdin(stdin: { write: (chunk: string) => unknown; destroyed?: boolean; writableEnded?: boolean } | null, line: string): boolean {
+	if (!stdin || stdin.destroyed || stdin.writableEnded) return false;
+	try {
+		stdin.write(line);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
@@ -271,65 +318,116 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const invocation = getPiInvocation(args);
 		const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 		const started = Date.now();
+		const spawnFn = input.spawnFn ?? spawn;
 
 		let stderr = "";
 		let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
 		let timedOut = false;
 		let aborted = false;
+		let stopKind: "aborted" | "hard_timeout" | undefined;
 		let overflow = false;
+		let settled = false;
 		let pid: number | undefined;
 		let eventCount = 0;
 		const events: string[] = [];
 		const recordLimit = jsonlRecordLimit(input.maxOutputBytes);
-		const consume = (line: string): void => {
-			if (!line.trim()) return;
-			try {
-				const parsed = JSON.parse(line);
-				const type = jsonlEventType(parsed);
-				if (type) {
-					eventCount += 1;
-					rememberEventType(events, type);
-				}
-				try {
-					input.onParsed?.(parsed);
-				} catch {
-					// ignore session-header callback errors
-				}
-				state = applyAssistantSnapshot(state, parsed);
-				try {
-					input.onEvent?.(parsed);
-				} catch {
-					// ignore progress callback errors
-				}
-			} catch {
-				// ignore non-JSON
-			}
-		};
 
 		const exitCode = await new Promise<number>((resolve, reject) => {
-			const proc = spawn(invocation.command, invocation.args, {
+			const proc = spawnFn(invocation.command, invocation.args, {
 				cwd: input.cwd,
 				env: childEnv,
 				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
+				stdio: ["pipe", "pipe", "pipe"],
 				detached: process.platform !== "win32",
 			});
 			pid = proc.pid;
+			let closed = false;
+			let hardTimer: ReturnType<typeof setTimeout> | undefined;
+			proc.stdin?.on("error", () => {
+				/* EPIPE after exit must not crash the parent */
+			});
 
-			const timer = setTimeout(() => {
-				timedOut = true;
-				killChildTree(proc);
-			}, input.timeoutMs);
-			timer.unref();
+			const finish = (code: number): void => {
+				if (closed) return;
+				closed = true;
+				if (hardTimer) clearTimeout(hardTimer);
+				input.signal?.removeEventListener("abort", onAbort);
+				resolve(code);
+			};
+
+			const send = (command: Record<string, unknown>): boolean => writeStdin(proc.stdin, encodeRpc(command));
+
+			const closeStdin = (): void => {
+				try {
+					proc.stdin?.end();
+				} catch {
+					/* already gone */
+				}
+			};
+
+			const consume = (line: string): void => {
+				if (!line.trim()) return;
+				try {
+					const parsed = JSON.parse(line);
+					const type = jsonlEventType(parsed);
+					if (type) {
+						eventCount += 1;
+						rememberEventType(events, type);
+					}
+					try {
+						input.onParsed?.(parsed);
+					} catch {
+						// ignore session-header callback errors
+					}
+					const cancel = uiCancelResponse(parsed);
+					if (cancel) writeStdin(proc.stdin, cancel);
+					state = applyAssistantSnapshot(state, parsed);
+					if (isAgentSettled(parsed) && !settled) {
+						settled = true;
+						closeStdin();
+					}
+					try {
+						input.onEvent?.(parsed);
+					} catch {
+						// ignore progress callback errors
+					}
+				} catch {
+					// ignore non-JSON
+				}
+			};
 
 			const onAbort = (): void => {
 				aborted = true;
+				if (!stopKind) stopKind = "aborted";
+				send({ type: "abort" });
 				killChildTree(proc);
 			};
+
+			try {
+				input.onControl?.({
+					wrap: (message) => {
+						if (settled || aborted || timedOut || closed) return false;
+						return send({ type: "steer", message: message && message.trim() ? message : DEFAULT_WRAP_MESSAGE });
+					},
+				});
+			} catch {
+				/* control callback must not break the child */
+			}
+
+			if (input.hardTimeoutMs > 0) {
+				hardTimer = setTimeout(() => {
+					timedOut = true;
+					if (!stopKind) stopKind = "hard_timeout";
+					killChildTree(proc);
+				}, input.hardTimeoutMs);
+			}
+
 			if (input.signal) {
 				if (input.signal.aborted) onAbort();
 				else input.signal.addEventListener("abort", onAbort, { once: true });
 			}
+
+			send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
 
 			proc.stdout?.setEncoding("utf8");
 			proc.stderr?.setEncoding("utf8");
@@ -353,24 +451,22 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				}
 			});
 			proc.on("error", (error) => {
-				clearTimeout(timer);
+				if (hardTimer) clearTimeout(hardTimer);
 				input.signal?.removeEventListener("abort", onAbort);
 				reject(error);
 			});
 			proc.on("close", (code) => {
-				clearTimeout(timer);
-				input.signal?.removeEventListener("abort", onAbort);
 				if (buffer.trim() && !overflow) consume(buffer);
-				resolve(code ?? 1);
+				finish(code ?? 1);
 			});
 		});
 
-		const stopReason = resolveStopReason({ aborted, timedOut, overflow, state });
+		const stopReason = resolveStopReason({ stopKind, overflow, state });
 		const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
 		const diag: ChildDiag = {
 			command: invocation.command,
 			args: redactChildArgs(invocation.args),
-			timeoutMs: input.timeoutMs,
+			hardTimeoutMs: input.hardTimeoutMs,
 			durationMs: Date.now() - started,
 			eventCount,
 			events,

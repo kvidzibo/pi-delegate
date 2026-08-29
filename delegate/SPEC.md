@@ -33,22 +33,30 @@ Description must say: named agents, model from config, no nesting.
 | `task` | spawn | non-empty, max `maxTaskChars` |
 | `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` |
 | `cwd` | no | existing directory |
-| `timeoutMs` | no | spawn: child timeout (starts when process starts, not while queued). `jobId`: wait budget. `0` with `jobId` = peek |
+| `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking/offline. |
 | `background` | no | `true` = return `jobId` now; child keeps running. Parent Esc does not kill it. Interactive mode may later inject a short completion notice |
-| `jobId` | collect | wait or peek. Cannot combine with `background`. Terminal collect suppresses the notice |
+| `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with `background`. Terminal collect suppresses the notice |
+| `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
+| `cancel` | no | with `jobId`: abort + kill. Idempotent if already terminal |
 
 No model allowlist. No fallback chain.
 
 `maxConcurrent` = max running children (local + hosted).  
 `maxLocalConcurrent` = max running local children (`isLocalModel`).  
-`maxQueued` = max jobs waiting for a slot. Overflow refuses.
+`maxQueued` = max jobs waiting for a slot. Overflow refuses.  
+`checkIntervalMs` = silent quiet sample inside collect waits (default 60000). Events flowing → keep blocking. Quiet/junk → short check-in.  
+`hardTimeoutMs` = optional process-start kill (default `0` = off). Distinct `hard_timeout`. Overlay only.
 
 Eligible-first FIFO: a hosted job may start while a local job waits on the GPU slot.
 
 One child per call. No nesting (`PI_DELEGATE_CHILD`).
 
 Foreground spawn waits for a slot (parent blocked). Local foreground also takes the local slot.
+
+Foreground `timeoutMs` expiry auto-promotes the job to background, detaches parent Esc, and returns a short nonterminal check-in (`terminal: false`, `jobId`, last tools, `quietForMs`). No thinking tail. Slot remains held. Parent continues with `jobId`, `wrap`, or `cancel`.
+
+Collect waits until terminal, wait budget, or `checkIntervalMs` with no child events. 60s sampling is internal and must not add parent-token receipts while the child is making progress.
 
 `session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts.
 
@@ -72,18 +80,19 @@ Reuse `../child-runtime/` for process/JSONL/truncate.
 Always:
 
 ```
---mode json -p --no-session --no-extensions --no-skills --no-prompt-templates
+--mode rpc --no-session --no-extensions --no-skills --no-prompt-templates
 --no-context-files --model --thinking --tools --system-prompt
-Task: <task>
 ```
 
 `--offline` only when the agent config has `offline: true`.
 
-Never `--session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`.
+Never `-p`, `--session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`. Task is an RPC `prompt` on stdin, not argv.
+
+Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
-Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args with `Task:` redacted, pid, timeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
+Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
 ## Tests
 
@@ -91,7 +100,7 @@ Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`cod
 
 No live child. Factory-load smoke must pass without a user overlay.
 
-Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; child timeout starts at spawn; shutdown drops queue.
+Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 
 Notify tests: exactly-once terminal notice; wait/peek of terminal suppresses; running peek does not; success display false; failure display true; preview clip; no-UI/print no send; shutdown no send; onTerminal throw does not break scheduler.
 
