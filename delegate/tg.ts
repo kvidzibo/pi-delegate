@@ -1,5 +1,4 @@
 export const TG_MIN_MS = 200;
-export const TG_UI_EVERY_MS = 250;
 
 const LOCAL_PROVIDERS = new Set(["local-qwen38", "llama.cpp", "ollama"]);
 

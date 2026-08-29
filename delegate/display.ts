@@ -1,7 +1,5 @@
 import { KINDS, type Kind } from "./config.ts";
 
-export type DelegateModels = Record<Kind, string>;
-
 export type ActivityMark = "→" | "✓" | "✗" | "…";
 
 export type ActivityItem = {
@@ -29,10 +27,6 @@ export function aliasForModel(model: string | undefined): string {
 	if (/(^|[-_])sol$/.test(lower)) return "Sol";
 	if (lower.startsWith("qwen")) return "Qwen";
 	return id;
-}
-
-export function plannedModel(kind: Kind, models: DelegateModels): string {
-	return models[kind];
 }
 
 export function knownKind(value: unknown): Kind | undefined {
@@ -190,12 +184,6 @@ export type ProgressState = {
 
 export function createProgress(): ProgressState {
 	return { done: [], open: new Map() };
-}
-
-export function formatActivityPlain(item: ActivityItem): string {
-	const name = item.name.padEnd(ACTIVITY_NAME_PAD);
-	const args = item.args?.trim() ?? "";
-	return args ? `${item.mark}  ${name}  ${args}` : `${item.mark}  ${name}`.trimEnd();
 }
 
 export function sameActivity(a: ActivityItem, b: ActivityItem): boolean {

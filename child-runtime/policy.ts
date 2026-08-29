@@ -6,10 +6,6 @@ export interface TimeoutDefaults {
 	maxTimeoutMs: number;
 }
 
-export function isInsideChild(env: NodeJS.Dict<string> = process.env): boolean {
-	return env.PI_DELEGATE_CHILD === "1";
-}
-
 export function assertNotNested(env: NodeJS.Dict<string> = process.env, label = "delegate"): void {
 	if (env.PI_DELEGATE_CHILD === "1") {
 		throw new Error(`${label} refused: already inside a delegate child (PI_DELEGATE_CHILD=1). Nesting is forbidden.`);
@@ -24,28 +20,6 @@ export function normalizeTimeoutMs(value: unknown, defaults: TimeoutDefaults, la
 	if (raw < 1000) return 1000;
 	if (raw > defaults.maxTimeoutMs) return defaults.maxTimeoutMs;
 	return raw;
-}
-
-export function normalizeTools(tools: unknown, allowed: string[], fallback: string[], label = "child"): string[] {
-	const source = tools === undefined || tools === null ? fallback : tools;
-	if (!Array.isArray(source)) throw new Error(`${label} refused: tools must be an array of strings.`);
-	const seen = new Set<string>();
-	const allowedSet = new Set(allowed);
-	const result: string[] = [];
-	for (const tool of source) {
-		if (typeof tool !== "string" || tool.trim().length === 0) {
-			throw new Error(`${label} refused: tool names must be non-empty strings.`);
-		}
-		const name = tool.trim();
-		if (!allowedSet.has(name)) {
-			throw new Error(`${label} refused: tool '${name}' is not allowed. Allowed: ${allowed.join(", ")}.`);
-		}
-		if (seen.has(name)) continue;
-		seen.add(name);
-		result.push(name);
-	}
-	if (result.length === 0) throw new Error(`${label} refused: tools must not be empty.`);
-	return result;
 }
 
 export function resolveChildCwd(cwd: string | undefined, parentCwd: string, label = "child"): string {
@@ -123,10 +97,6 @@ export function normalizeTask(task: unknown, maxTaskChars: number, label = "chil
 		throw new Error(`${label} refused: task exceeds ${maxTaskChars} chars.`);
 	}
 	return task;
-}
-
-export function isNonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
 }
 
 export function isNonEmptyStringArray(value: unknown): value is string[] {

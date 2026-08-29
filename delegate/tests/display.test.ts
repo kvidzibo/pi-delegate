@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	ACTIVITY_ARG_MAX,
-	ACTIVITY_NAME_PAD,
 	aliasForModel,
 	appendActivity,
 	applyProgress,
@@ -12,12 +11,10 @@ import {
 	createProgress,
 	delegateHeaderBits,
 	delegateTargetLine,
-	formatActivityPlain,
 	formatDelegateTarget,
 	formatJobBoard,
 	paintHeader,
 	parseChildProgress,
-	plannedModel,
 	summarizeToolArgs,
 	THINKING_TAIL_MAX,
 	type ActivityItem,
@@ -41,13 +38,6 @@ test("aliases known child models", () => {
 	assert.equal(aliasForModel(undefined), "…");
 });
 
-test("planned model follows kind", () => {
-	assert.equal(plannedModel("recon", models), models.recon);
-	assert.equal(plannedModel("implement", models), models.implement);
-	assert.equal(plannedModel("review", models), models.review);
-	assert.equal(plannedModel("oracle", models), models.oracle);
-});
-
 test("header shows kind and model", () => {
 	assert.equal(formatDelegateTarget(undefined, undefined), "…");
 	assert.equal(formatDelegateTarget("nope", undefined), "…");
@@ -69,14 +59,6 @@ test("child progress lines from json events", () => {
 		name: "read",
 		args: "src/foo.ts",
 	});
-	assert.equal(
-		formatActivityPlain({
-			mark: "✓",
-			name: "bash",
-			args: "ls -la",
-		}),
-		`✓  ${"bash".padEnd(ACTIVITY_NAME_PAD)}  ls -la`,
-	);
 	assert.deepEqual(
 		parseChildProgress({ type: "tool_execution_end", toolName: "grep", args: { pattern: "TODO" }, isError: true }),
 		{ mark: "✗", name: "grep", args: "TODO" },
@@ -109,11 +91,6 @@ test("child progress lines from json events", () => {
 	assert.equal(long.length, ACTIVITY_ARG_MAX);
 	assert.equal(long.endsWith("…"), true);
 	assert.equal(clipActivityArg("short"), "short");
-});
-
-test("activity lines align", () => {
-	assert.equal(formatActivityPlain({ mark: "→", name: "read", args: "a.ts" }), `→  ${"read".padEnd(8)}  a.ts`);
-	assert.equal(formatActivityPlain({ mark: "…", name: "writing" }), "…  writing");
 });
 
 test("live activity keeps last 3 and upgrades start to end", () => {

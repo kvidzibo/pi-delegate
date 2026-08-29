@@ -4,7 +4,7 @@ Shared Pi child process helpers. Not loaded as an extension.
 
 `delegate` keeps argv, env, slots, and agent config. This package owns:
 
-- nest / tools / cwd / task / UTF-8 truncate
+- nest / cwd / task / UTF-8 truncate
 - `pi --mode rpc` invocation, temp prompt, JSONL parse, stdin prompt/steer/abort
 - optional `hardTimeoutMs` kill, process-group kill, dialog UI cancel
 - child diag (cmd, pid, JSONL event types); empty assistant text becomes that dump

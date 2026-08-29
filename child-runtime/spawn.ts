@@ -72,7 +72,6 @@ export interface RunPiChildInput {
 	buildArgs: (promptPath: string) => string[];
 	signal?: AbortSignal;
 	onEvent?: (event: unknown) => void;
-	onParsed?: (event: unknown) => void;
 	onControl?: (ctl: ChildControl) => void;
 	spawnFn?: SpawnFn;
 }
@@ -374,11 +373,6 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 						eventCount += 1;
 						rememberEventType(events, type);
 					}
-					try {
-						input.onParsed?.(parsed);
-					} catch {
-						// ignore session-header callback errors
-					}
 					const cancel = uiCancelResponse(parsed);
 					if (cancel) writeStdin(proc.stdin, cancel);
 					state = applyAssistantSnapshot(state, parsed);
@@ -494,8 +488,4 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 
 export function promptSourceFromDir(dir: string, name = "child.md"): string {
 	return join(dir, "prompts", name);
-}
-
-export function configPathFromDir(dir: string): string {
-	return join(dir, "config.json");
 }
