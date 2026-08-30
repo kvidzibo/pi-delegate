@@ -122,6 +122,70 @@ test("terminal wait/peek consume suppresses notice", () => {
 	assert.equal(timers.pending, 0);
 });
 
+test("busy parent defers send until idle", () => {
+	const sent: unknown[] = [];
+	const timers = fakeTimers();
+	let busy = true;
+	const gate = new NotifyGate({
+		send: (payload) => sent.push(payload),
+		isLive: () => true,
+		isBusy: () => busy,
+		timers: timers.api,
+	});
+	gate.schedule(snap());
+	timers.flush();
+	assert.equal(sent.length, 0);
+	assert.equal(timers.pending, 1);
+	timers.flush();
+	assert.equal(sent.length, 0);
+	assert.equal(timers.pending, 1);
+	busy = false;
+	timers.flush();
+	assert.equal(sent.length, 1);
+	assert.equal(timers.pending, 0);
+	gate.schedule(snap());
+	assert.equal(sent.length, 1);
+});
+
+test("collect while parent busy suppresses deferred notice", () => {
+	const sent: unknown[] = [];
+	const timers = fakeTimers();
+	let busy = true;
+	const gate = new NotifyGate({
+		send: (payload) => sent.push(payload),
+		isLive: () => true,
+		isBusy: () => busy,
+		timers: timers.api,
+	});
+	gate.schedule(snap());
+	timers.flush();
+	assert.equal(sent.length, 0);
+	assert.equal(timers.pending, 1);
+	gate.consume("d0001");
+	assert.equal(timers.pending, 0);
+	busy = false;
+	timers.flush();
+	assert.equal(sent.length, 0);
+	gate.schedule(snap());
+	assert.equal(timers.pending, 0);
+});
+
+test("isBusy throw still sends", () => {
+	const sent: unknown[] = [];
+	const timers = fakeTimers();
+	const gate = new NotifyGate({
+		send: (payload) => sent.push(payload),
+		isLive: () => true,
+		isBusy: () => {
+			throw new Error("ctx gone");
+		},
+		timers: timers.api,
+	});
+	gate.schedule(snap());
+	timers.flush();
+	assert.equal(sent.length, 1);
+});
+
 test("pending peek does not consume", () => {
 	assert.equal(shouldConsume(snap({ status: "running" })), false);
 	const sent: unknown[] = [];

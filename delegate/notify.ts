@@ -96,11 +96,19 @@ export class NotifyGate {
 	private readonly holdMs: number;
 	private readonly send: NotifySend;
 	private readonly isLive: () => boolean;
+	private readonly isBusy: () => boolean;
 	private readonly timersApi: NotifyTimers;
 
-	constructor(input: { send: NotifySend; isLive: () => boolean; holdMs?: number; timers?: NotifyTimers }) {
+	constructor(input: {
+		send: NotifySend;
+		isLive: () => boolean;
+		isBusy?: () => boolean;
+		holdMs?: number;
+		timers?: NotifyTimers;
+	}) {
 		this.send = input.send;
 		this.isLive = input.isLive;
+		this.isBusy = input.isBusy ?? (() => false);
 		this.holdMs = input.holdMs ?? NOTIFY_HOLD_MS;
 		this.timersApi = input.timers ?? {
 			setTimeout: (fn, ms) => setTimeout(fn, ms),
@@ -113,14 +121,7 @@ export class NotifyGate {
 		if (!shouldConsume(snap)) return;
 		if (this.consumed.has(snap.id) || this.sent.has(snap.id)) return;
 		if (!this.isLive()) return;
-		this.clearTimer(snap.id);
-		this.timers.set(
-			snap.id,
-			this.timersApi.setTimeout(() => {
-				this.timers.delete(snap.id);
-				this.flush(snap);
-			}, this.holdMs),
-		);
+		this.arm(snap);
 	}
 
 	consume(id: string): void {
@@ -135,11 +136,34 @@ export class NotifyGate {
 	private flush(snap: JobSnapshot): void {
 		if (this.consumed.has(snap.id) || this.sent.has(snap.id)) return;
 		if (!this.isLive()) return;
+		if (this.busy()) {
+			this.arm(snap);
+			return;
+		}
 		this.sent.add(snap.id);
 		try {
 			this.send(buildNotifyPayload(snap));
 		} catch {
 			/* stale session or sendMessage failure must not break the scheduler */
+		}
+	}
+
+	private arm(snap: JobSnapshot): void {
+		this.clearTimer(snap.id);
+		this.timers.set(
+			snap.id,
+			this.timersApi.setTimeout(() => {
+				this.timers.delete(snap.id);
+				this.flush(snap);
+			}, this.holdMs),
+		);
+	}
+
+	private busy(): boolean {
+		try {
+			return this.isBusy();
+		} catch {
+			return false;
 		}
 	}
 
