@@ -143,6 +143,7 @@ export default function delegate(pi: ExtensionAPI) {
 	let ui: WidgetUi | undefined;
 	let hasUI = false;
 	let shuttingDown = false;
+	let sessionCtx: { isIdle?: () => boolean } | undefined;
 
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
@@ -159,6 +160,13 @@ export default function delegate(pi: ExtensionAPI) {
 
 	const gate = new NotifyGate({
 		isLive: () => !shuttingDown && hasUI && typeof pi.sendMessage === "function",
+		isBusy: () => {
+			try {
+				return sessionCtx?.isIdle?.() === false;
+			} catch {
+				return false;
+			}
+		},
 		send: (payload) => {
 			pi.sendMessage(payload, { deliverAs: "followUp", triggerTurn: true });
 		},
@@ -172,9 +180,10 @@ export default function delegate(pi: ExtensionAPI) {
 		onTerminal: (snap) => gate.schedule(snap),
 	});
 
-	const bindUi = (ctx: { ui?: WidgetUi; hasUI?: boolean }): void => {
+	const bindUi = (ctx: { ui?: WidgetUi; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
 		if (typeof ctx.hasUI === "boolean") hasUI = ctx.hasUI;
+		if (typeof ctx.isIdle === "function") sessionCtx = ctx;
 	};
 
 	if (typeof pi.registerMessageRenderer === "function") {
@@ -211,6 +220,7 @@ export default function delegate(pi: ExtensionAPI) {
 		ui?.setWidget("delegate", undefined);
 		ui = undefined;
 		hasUI = false;
+		sessionCtx = undefined;
 		liveTargets.clear();
 	});
 

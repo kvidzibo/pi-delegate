@@ -60,7 +60,7 @@ Collect waits until terminal, wait budget, or `checkIntervalMs` with no child ev
 
 `session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts.
 
-Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms, then `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it.
+Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms. If the parent agent is still running (`ctx.isIdle()` false), keep holding — do not `sendMessage` yet. `sendMessage` queues a follow-up that collect cannot unsend. Once idle and not consumed, `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it, including mid-turn collect after the job already finished.
 
 Header: `delegate  <kind> → <alias>  <model id>` + `bg <jobId> <status>` when background/collect + live `tg n/s` when child model looks local + live thinking tail.
 Under it: last 3 finished tools, then one live row. Expand shows child answer, or task when still queued/running.
@@ -102,7 +102,7 @@ No live child. Factory-load smoke must pass without a user overlay.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 
-Notify tests: exactly-once terminal notice; wait/peek of terminal suppresses; running peek does not; success display false; failure display true; preview clip; no-UI/print no send; shutdown no send; onTerminal throw does not break scheduler.
+Notify tests: exactly-once terminal notice; wait/peek of terminal suppresses; running peek does not; success display false; failure display true; preview clip; no-UI/print no send; shutdown no send; onTerminal throw does not break scheduler; busy parent defers send; collect during busy suppresses; isBusy throw still sends.
 
 ## Stop
 

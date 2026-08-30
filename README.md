@@ -61,7 +61,7 @@ Optional tool argument `model` overrides that call only. Kind keeps tools and pr
 
 `timeoutMs` is a wait budget. It does **not** kill the child. Foreground expiry auto-backgrounds and returns a short check-in (`jobId`, last tools, `quietForMs`). Collect `jobId` again to wait; omit `timeoutMs` to wait until done or 60s quiet (silent inside the wait — no extra parent tokens while events flow). `timeoutMs: 0` peeks. `wrap: true` steers the child to finish (current tool may complete first). `cancel: true` kills. `hardTimeoutMs` in config (default `0`) is the only process-start kill. Local models (`local-qwen*`, `llama.cpp`, `ollama`) never overlap above `maxLocalConcurrent`. A running child keeps its slot. Hosted jobs still run in parallel. `session_shutdown` kills leftovers.
 
-In TUI/RPC, a finished background job injects a short follow-up notice (preview only; full result still via `jobId`). Failures are visible; successes stay quiet in the transcript. Collecting a finished job suppresses the notice. Print/JSON stays pull-only. `session_shutdown` does not notify.
+In TUI/RPC, a finished background job injects a short follow-up notice (preview only; full result still via `jobId`). Failures are visible; successes stay quiet in the transcript. Collecting a finished job suppresses the notice, including when the job finished mid-turn (notice waits until the parent is idle). Print/JSON stays pull-only. `session_shutdown` does not notify.
 
 Background `implement` can race parent file writes.
 
