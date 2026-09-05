@@ -9,7 +9,6 @@ import {
 	clipActivityArg,
 	clipThinkingTail,
 	createProgress,
-	delegateHeaderBits,
 	delegateTargetLine,
 	formatDelegateTarget,
 	formatJobBoard,
@@ -248,44 +247,25 @@ test("thinking does not wipe in-flight tool args", () => {
 	assert.ok((state.done[1]?.args?.length ?? 0) <= ACTIVITY_ARG_MAX);
 });
 
-test("thinking tail sits on header, not live row", () => {
+test("thinking buffer is bounded but the visible header contains only identity", () => {
 	assert.equal(clipThinkingTail("short"), "short");
 	const long = `Need ${"x".repeat(80)} end`;
 	const clipped = clipThinkingTail(long);
 	assert.equal(clipped.length, THINKING_TAIL_MAX);
 	assert.equal(clipped.startsWith("…"), true);
 	assert.equal(clipped.endsWith("end"), true);
-	assert.deepEqual(delegateHeaderBits("implement", models.implement, long), {
-		target: "implement → Luna",
-		model: models.implement,
-		thinking: clipped,
-	});
 	const theme = {
 		fg: (key: string, text: string) => `[${key}]${text}`,
 		bold: (text: string) => `*${text}*`,
 		italic: (text: string) => `/${text}/`,
 	};
 	assert.equal(
-		paintHeader(theme, "delegate", "implement", models.implement, "Need failing test first"),
-		"[toolTitle]*delegate*  [accent]implement → Luna  [dim]openai-codex/gpt-5.6-luna  [thinkingText]/Need failing test first/",
-	);
-	assert.deepEqual(delegateHeaderBits("recon", models.recon, "Need map first", "tg 12.3/s"), {
-		target: "recon → Qwen",
-		model: models.recon,
-		tg: "tg 12.3/s",
-		thinking: "Need map first",
-	});
-	assert.equal(
-		paintHeader(theme, "delegate", "recon", models.recon, "Need map first", "tg 12.3/s"),
-		"[toolTitle]*delegate*  [accent]recon → Qwen  [dim]local-qwen38/qwen38-q4km  [accent]tg 12.3/s  [thinkingText]/Need map first/",
+		paintHeader(theme, "delegate", "implement", models.implement),
+		"[toolTitle]*delegate* · [accent]implement · [dim]openai-codex/gpt-5.6-luna",
 	);
 	assert.equal(
-		paintHeader(theme, "delegate", "recon", models.recon, undefined, undefined, {
-			background: true,
-			jobId: "d0001",
-			status: "queued",
-		}),
-		"[toolTitle]*delegate*  [accent]recon → Qwen  [dim]local-qwen38/qwen38-q4km  [dim]bg  [accent]d0001  [dim]queued",
+		paintHeader(theme, "delegate", "review", "xai/grok-4.6", "d0003"),
+		"[toolTitle]*delegate* · [accent]review · [dim]xai/grok-4.6 · [accent]d0003",
 	);
 	const state = createProgress();
 	applyProgress(state, parseChildProgress({
@@ -299,7 +279,7 @@ test("thinking tail sits on header, not live row", () => {
 	assert.equal(state.current?.name, "writing");
 });
 
-test("job board shows run/wait and gpu reason", () => {
+test("sticky board shows counts without duplicating individual job cards", () => {
 	assert.deepEqual(
 		formatJobBoard(
 			[
@@ -332,9 +312,6 @@ test("job board shows run/wait and gpu reason", () => {
 		),
 		[
 			"delegate  2 run  1 wait  local 1/1",
-			"  run   d0001  recon → Qwen  tg 28.4/s  → bash  rg -n spawn",
-			"  run   d0002  implement → Luna",
-			"  wait  d0003  recon → Qwen  gpu",
 		],
 	);
 });

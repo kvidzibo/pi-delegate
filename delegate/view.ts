@@ -1,122 +1,119 @@
-import { Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import {
-	ACTIVITY_NAME_PAD,
-	asActivityItem,
-	asActivityList,
-	paintHeader,
-	type ActivityItem,
-	type ActivityMark,
-	type ThemeFg,
-} from "./display.ts";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { Markdown, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { activityLabel, asActivityItem, asActivityList, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
+import { isLocalModel } from "./tg.ts";
+import type { CardDetails } from "./cards.ts";
 
-function markColor(mark: ActivityMark): string {
-	if (mark === "✓") return "success";
-	if (mark === "✗") return "error";
-	if (mark === "…") return "dim";
-	return "muted";
-}
-
-export function paintActivity(theme: ThemeFg, item: ActivityItem): string {
-	const name = item.args ? item.name.padEnd(ACTIVITY_NAME_PAD) : item.name;
-	let line = `  ${theme.fg(markColor(item.mark), item.mark)}  ${theme.fg("accent", name)}`;
-	if (item.args) line += `  ${theme.fg("dim", item.args)}`;
-	return line;
-}
-
-export class ChildActions {
-	lines: string[] = [];
-	extra: string[] = [];
-
-	invalidate(): void {}
-
-	render(width: number): string[] {
-		const out = this.lines.map((line) => truncateToWidth(line, width, "…"));
-		for (const block of this.extra) {
-			if (block === "") {
-				out.push("");
-				continue;
-			}
-			out.push(...wrapTextWithAnsi(block, Math.max(1, width)));
-		}
-		return out;
-	}
-}
-
-export function renderChildCall(input: {
-	theme: ThemeFg;
-	title: string;
-	kind?: string;
-	model?: string;
-	thinking?: string;
-	tg?: string;
-	background?: boolean;
-	jobId?: string;
-	status?: string;
-	lastComponent?: unknown;
-}): Text {
-	const text = (input.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-	text.setText(
-		paintHeader(input.theme, input.title, input.kind, input.model, input.thinking, input.tg, {
-			background: input.background,
-			jobId: input.jobId,
-			status: input.status,
-		}),
-	);
-	return text;
-}
-
-export function renderChildResult(input: {
-	theme: ThemeFg;
-	details: Record<string, unknown> | undefined;
+export type RowState = {
+	details: CardDetails;
 	content?: ReadonlyArray<{ type: string; text?: string }>;
 	isError?: boolean;
 	expanded: boolean;
 	isPartial: boolean;
-	lastComponent?: unknown;
-}): ChildActions {
-	const details = input.details ?? {};
-	const done = asActivityList(details.activity).filter((item) => item.name !== "thinking");
-	const current = input.isPartial ? asActivityItem(details.current) : undefined;
-	const panel = (input.lastComponent as ChildActions | undefined) ?? new ChildActions();
-	panel.lines = done.map((item) => paintActivity(input.theme, item));
-	if (current && current.name !== "thinking") panel.lines.push(paintActivity(input.theme, current));
-	panel.extra = [];
-	if (typeof details.recordingError === "string") panel.extra.push(input.theme.fg("warning", displayText(details.recordingError)));
-	if (input.expanded && typeof details.sessionFile === "string") panel.extra.push(input.theme.fg("dim", `Session: ${displayText(details.sessionFile)}`));
-	const contentText = (input.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
-	const answer = typeof details.answer === "string" ? details.answer : contentText;
-	if (!input.isPartial && (input.isError || details.ok === false || details.status === "failed")) {
-		const error = contentText || answer || "delegate failed (no error details)";
-		const lines = error.split("\n");
-		const visible = input.expanded ? lines : lines.filter((line) => line.trim()).slice(0, 3);
-		panel.extra.push(...visible.map((line) => input.theme.fg("error", line)));
-		if (!input.expanded && lines.filter((line) => line.trim()).length > 3) {
-			panel.extra.push(input.theme.fg("dim", "… expand for full error"));
-		}
-		return panel;
-	}
-	if (!input.isPartial && input.expanded) {
-		const task = typeof details.task === "string" ? details.task : "";
-		const status = typeof details.status === "string" ? details.status : "";
-		if (answer) {
-			panel.extra.push("");
-			panel.extra.push(...answer.split("\n"));
-		} else if (task && (status === "queued" || status === "running")) {
-			panel.extra.push("");
-			panel.extra.push(task);
-		}
-	}
-	return panel;
+	collect: boolean;
+};
+type RowInput = { theme: ThemeFg; read: () => RowState; expandHint?: string };
+const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
+const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
+
+function receipt(state: RowState): string {
+	const d = state.details;
+	if (state.isError || d.ok === false || d.status === "failed") return "failure collected";
+	if (d.status === "done") return "result collected";
+	const action = str(d, "operation");
+	if (state.isPartial) return action === "cancel" ? "cancelling" : action === "wrap" ? "wrapping up" : "waiting";
+	if (action === "cancel") return "cancellation requested";
+	if (action === "wrap") return "wrap requested";
+	return d.status === "queued" ? "checked · queued at check" : d.status === "running" ? "checked · running at check" : "checked";
 }
 
-export function renderNotifyMessage(input: {
-	theme: ThemeFg;
-	details: NotifyDetails;
-	expanded: boolean;
-}): Text {
-	const text = new Text("", 0, 0);
-	text.setText(paintNotify(input.theme, input.details, input.expanded));
-	return text;
+function statusLine(state: RowState): { color: string; text: string } {
+	const d = state.details;
+	if (state.isError || d.ok === false || d.status === "failed") {
+		const reason = str(d, "stopReason");
+		return { color: "error", text: reason === "aborted" ? "✗ Cancelled" : `✗ Failed${reason ? ` — ${reason}` : ""}` };
+	}
+	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Finished" };
+	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
+	if (d.status === "queued") return { color: "muted", text: `○ Queued — waiting for ${d.reason === "gpu" ? "GPU" : "slot"}` };
+	if (d.status === "running") {
+		const current = asActivityItem(d.current);
+		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
+		const tg = isLocalModel(str(d, "model")) && d.tg ? ` · ${str(d, "tg")}` : "";
+		return { color: "accent", text: `● Running — ${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
+	}
+	return { color: "muted", text: "○ Preparing" };
+}
+
+function paintActivity(theme: ThemeFg, item: ActivityItem): string {
+	const color = item.mark === "✗" ? "error" : item.mark === "✓" ? "success" : "muted";
+	return `${theme.fg(color, item.mark)} ${theme.fg("accent", displayText(item.name))}${item.args ? `  ${theme.fg("dim", displayText(item.args))}` : ""}`;
+}
+
+// Both slots read at render time, after renderResult has populated shared row state.
+// This also lets an already-returned background spawn show its latest job snapshot.
+export class ChildView {
+	constructor(private readonly draw: (width: number) => string[]) {}
+	invalidate(): void {}
+	render(width: number): string[] {
+		if (width < 1) return [];
+		return this.draw(width).map((line) => truncateToWidth(line, width, "…"));
+	}
+}
+
+export function renderChildCall(input: RowInput): ChildView {
+	return new ChildView((width) => {
+		const state = input.read(); const d = state.details;
+		const header = state.collect
+			? `${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`
+			: paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
+		return wrapTextWithAnsi(header, width);
+	});
+}
+
+export function renderChildResult(input: RowInput): ChildView {
+	return new ChildView((width) => {
+		const state = input.read(); const d = state.details; const theme = input.theme;
+		const lines: string[] = [];
+		const add = (text: string, color?: string) => lines.push(...wrapTextWithAnsi(color ? theme.fg(color, text) : text, width));
+		if (!state.collect) {
+			const task = str(d, "task");
+			if (task) {
+				if (state.expanded) add(`Task: ${cleanBlock(task)}`, "muted");
+				else lines.push(truncateToWidth(theme.fg("muted", `Task: ${displayText(task).replace(/\s+/g, " ").trim()}`), width, "…"));
+			}
+			const status = statusLine(state); add(displayText(status.text), status.color);
+		}
+		for (const key of ["recordingError", "displayWarning"]) if (d[key]) add(displayText(str(d, key)), "warning");
+		const failed = state.isError || d.ok === false || d.status === "failed";
+		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
+		const contentText = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+		const answer = failed
+			? ((d.status === "failed" ? str(d, "answer") : "") || contentText || str(d, "answer") || "delegate failed (no error details)")
+			: (str(d, "answer") || contentText);
+		if ((failed || !pending) && answer && (!state.collect || state.expanded || failed)) {
+			const rendered = new Markdown(cleanBlock(answer), 0, 0, getMarkdownTheme()).render(width);
+			while (rendered.length && !rendered[0].trim()) rendered.shift();
+			while (rendered.length && !rendered.at(-1)!.trim()) rendered.pop();
+			lines.push(...(state.expanded ? rendered : rendered.slice(0, 3)));
+		}
+		if (state.expanded) {
+			if (!state.collect) {
+				const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
+				const current = asActivityItem(d.current);
+				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
+				if (!d.historical && pending && current && current.name !== "thinking") add(paintActivity(theme, current));
+			}
+			if (d.sessionFile) add(`Session: ${displayText(str(d, "sessionFile"))}`, "dim");
+		} else if (!state.collect || failed) {
+			add(input.expandHint || "Expand for full result and tool details", "dim");
+		}
+		return lines;
+	});
+}
+
+export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDetails; expanded: boolean }): Text {
+	return new Text(paintNotify(input.theme, input.details, input.expanded), 0, 0);
 }

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { promptSourceFromDir } from "../child-runtime/spawn.ts";
@@ -18,7 +18,8 @@ import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
-import { renderChildCall, renderChildResult, renderNotifyMessage } from "./view.ts";
+import { renderChildCall, renderChildResult, renderNotifyMessage, type RowState } from "./view.ts";
+import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -34,14 +35,14 @@ function errorResult(message: string) {
 	};
 }
 
-type LiveTarget = {
-	kind: Kind;
-	model: string;
-	thinking?: string;
-	tg?: string;
-	jobId?: string;
-	status?: string;
-	background?: boolean;
+type ViewContext = {
+	toolCallId: string;
+	state: Record<string, unknown>;
+	args?: Record<string, unknown>;
+	isPartial: boolean;
+	expanded: boolean;
+	isError?: boolean;
+	invalidate?: () => void;
 };
 
 function snapshotBoard(snap: JobSnapshot): JobBoardRow | undefined {
@@ -119,7 +120,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.archive) { details.runId = snap.archive.runId; details.sessionFile = snap.archive.sessionFile; }
 	if (snap.recordingError) details.recordingError = snap.recordingError;
 	if (snap.current) details.current = snap.current;
-	if (snap.thinking) details.thinking = snap.thinking;
+	if (snap.thinking) details.phase = "thinking";
 	if (snap.tg) details.tg = snap.tg;
 	if (snap.reason) details.reason = snap.reason;
 	if (snap.exitCode !== undefined) details.exitCode = snap.exitCode;
@@ -132,7 +133,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	return details;
 }
 
-export default function delegate(pi: ExtensionAPI) {
+export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild = runChild) {
 	if (process.env.PI_DELEGATE_CHILD === "1") return;
 
 	const config = loadDelegateConfig({
@@ -143,7 +144,25 @@ export default function delegate(pi: ExtensionAPI) {
 				: join(agentDir(), "delegate.json"),
 	});
 	const accounting = new Accounting(archiveRoot(agentDir()));
-	const liveTargets = new Map<string, LiveTarget>();
+	const cards = new JobCards();
+	const origins = new Map<string, string>();
+	const uiDetails = (snap: JobSnapshot, extra: CardDetails = {}): CardDetails => detailsFromSnap(snap, {
+		originToolCallId: snap.archive ? origins.get(snap.archive.runId) : undefined,
+		background: snap.background, callType: "spawn", ...extra,
+	});
+	const updateCard = (snap: JobSnapshot): void => {
+		const origin = snap.archive ? origins.get(snap.archive.runId) : undefined;
+		if (!origin) return;
+		const wasTerminal = isTerminal(cards.get(origin) ?? {});
+		const terminal = snap.status === "done" || snap.status === "failed";
+		const details = uiDetails(snap, { ok: !snap.failed, displayWarning: cards.get(origin)?.displayWarning,
+			answer: terminal ? receiptText(snap) : undefined });
+		cards.update(origin, details);
+		if (isTerminal(details) && !wasTerminal) {
+			try { pi.appendEntry(CARD_STATE_TYPE, details); }
+			catch { cards.update(origin, { ...details, displayWarning: "Could not save delegate display state; the child archive is separate." }); }
+		}
+	};
 	type WidgetUi = { setWidget: (id: string, lines: string[] | undefined) => void };
 	let ui: WidgetUi | undefined;
 	let hasUI = false;
@@ -181,7 +200,7 @@ export default function delegate(pi: ExtensionAPI) {
 		maxConcurrent: config.maxConcurrent,
 		maxLocalConcurrent: config.maxLocalConcurrent,
 		maxQueued: config.maxQueued,
-		onChange: paintBoard,
+		onChange: (snap) => { if (snap) updateCard(snap); paintBoard(); },
 		onTerminal: (snap) => gate.schedule(snap),
 		onSettled: (snap) => accounting.terminal(snap.archive?.runId, snap.id, {
 			status: snap.failed ? "failed" : "done", stopReason: snap.stopReason, exitCode: snap.exitCode,
@@ -202,26 +221,30 @@ export default function delegate(pi: ExtensionAPI) {
 		});
 	}
 
-	const liveFromSnap = (toolCallId: string, snap: JobSnapshot, background: boolean): LiveTarget => {
-		const live: LiveTarget = { kind: snap.kind, model: snap.model };
-		if (snap.thinking) live.thinking = snap.thinking;
-		if (snap.tg && isLocalModel(snap.model)) live.tg = snap.tg;
-		if (background) {
-			live.background = true;
-			live.jobId = snap.id;
-			live.status = snap.status;
-		} else if (snap.status === "queued") {
-			live.status = snap.status;
-		}
-		liveTargets.set(toolCallId, live);
-		return live;
+	const readRow = (context: ViewContext): RowState => {
+		const args = context.args ?? (context.state.delegateArgs as Record<string, unknown> | undefined) ?? {};
+		const saved = context.state.delegateResult as { details?: CardDetails; content?: RowState["content"] } | undefined;
+		const collect = typeof args.jobId === "string" || saved?.details?.callType === "collect";
+		const snapshot = !collect && !context.isError && saved?.details?.ok !== false ? cards.get(context.toolCallId) : undefined;
+		const details: CardDetails = { ...saved?.details, ...snapshot };
+		const kind = knownKind(details.kind) ?? knownKind(args.kind);
+		details.kind ??= kind;
+		details.model ??= args.model ?? (kind ? config.agents[kind].model : undefined);
+		details.task ??= args.task;
+		details.jobId ??= args.jobId;
+		details.operation ??= args.cancel ? "cancel" : args.wrap ? "wrap" : args.timeoutMs === 0 ? "peek" : "wait";
+		if (!snapshot && !collect && !context.isPartial && (details.status === "queued" || details.status === "running")) details.historical = true;
+		return { details, content: snapshot ? undefined : saved?.content, collect, expanded: context.expanded,
+			isPartial: snapshot ? !isTerminal(snapshot) : context.isPartial, isError: context.isError };
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
 		bindUi(ctx);
+		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
+	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
 	pi.registerCommand("delegate-stats", {
 		description: "Recorded child usage: session (default), today, all, or rebuild the export ledger. No model calls.",
 		getArgumentCompletions: (prefix) => ["session", "today", "all", "rebuild"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
@@ -246,16 +269,18 @@ export default function delegate(pi: ExtensionAPI) {
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();
-		ui?.setWidget("delegate", undefined);
+		try { ui?.setWidget("delegate", undefined); } catch { /* UI may already be gone. */ }
 		ui = undefined;
 		hasUI = false;
 		sessionCtx = undefined;
-		liveTargets.clear();
+		cards.clear();
+		origins.clear();
 	});
 
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
+		renderShell: "self",
 		description:
 			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
@@ -306,13 +331,14 @@ export default function delegate(pi: ExtensionAPI) {
 				assertNotNested(process.env, "delegate");
 				bindUi(ctx);
 				const parsed = parseDelegateCall(params, config);
+				const operation = params.cancel ? "cancel" : params.wrap ? "wrap" : params.timeoutMs === 0 ? "peek" : "wait";
 
 				const publish = (snap: JobSnapshot, background: boolean, pending: boolean): void => {
-					liveFromSnap(toolCallId, snap, background);
+					updateCard(snap);
 					onUpdate?.({
 						content: [{ type: "text" as const, text: delegateTargetLine(snap.kind, snap.model) }],
 						details: {
-							...detailsFromSnap(snap, { pending, background }),
+							...uiDetails(snap, { pending, background, callType: parsed.mode, operation }),
 						},
 					});
 				};
@@ -332,7 +358,7 @@ export default function delegate(pi: ExtensionAPI) {
 					const pending = snap.status === "queued" || snap.status === "running";
 					const failed = !pending && snap.failed;
 					const text = receiptText(snap);
-					liveFromSnap(toolCallId, snap, true);
+					updateCard(snap);
 					if (shouldConsume(snap)) gate.consume(snap.id);
 					return formatOutput({
 						text,
@@ -342,8 +368,8 @@ export default function delegate(pi: ExtensionAPI) {
 						maxBytes: config.maxOutputBytes,
 						kind: snap.kind,
 						model: snap.model,
-						details: detailsFromSnap(snap, {
-							background: true,
+						details: uiDetails(snap, {
+							callType: "collect", operation, background: true,
 							pending,
 							answer: snap.status === "done" || snap.status === "failed" ? text : snap.answer,
 						}),
@@ -354,23 +380,24 @@ export default function delegate(pi: ExtensionAPI) {
 				const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
 				const resolved = resolveAgent(kind, parsed.modelOverride, config);
 				const local = isLocalModel(resolved.model);
-				liveTargets.set(toolCallId, { kind, model: resolved.model, background: parsed.background });
 				onUpdate?.({
 					content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
-					details: { kind, model: resolved.model, pending: true, background: parsed.background },
+					details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
 				});
 
 				const archive = accounting.create({
 					parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 					toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
 				}, parsed.task, promptSourceFromDir(EXTENSION_DIR, `${kind}.md`));
+				origins.set(archive.data.runId, toolCallId);
+				cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued" });
 				let snap: JobSnapshot;
 				try {
 					snap = scheduler.enqueue({
 						archive: { runId: archive.data.runId, sessionFile: archive.paths.session },
 						kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
 						background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
-						run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => runChild({
+						run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
 							task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
 							tools: resolved.agent.tools, offline: resolved.agent.offline,
 							hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
@@ -393,7 +420,7 @@ export default function delegate(pi: ExtensionAPI) {
 						maxBytes: config.maxOutputBytes,
 						kind,
 						model: resolved.model,
-						details: detailsFromSnap(snap, { background: true, pending: true }),
+						details: uiDetails(snap, { background: true, pending: true }),
 					});
 				}
 
@@ -407,7 +434,7 @@ export default function delegate(pi: ExtensionAPI) {
 				}
 				if (done.status === "queued" || done.status === "running") {
 					const text = receiptText(done);
-					liveFromSnap(toolCallId, done, true);
+					updateCard(done);
 					return formatOutput({
 						text,
 						failed: false,
@@ -415,14 +442,13 @@ export default function delegate(pi: ExtensionAPI) {
 						maxBytes: config.maxOutputBytes,
 						kind,
 						model: done.model || resolved.model,
-						details: detailsFromSnap(done, { background: true, pending: true }),
+						details: uiDetails(done, { background: true, pending: true }),
 					});
 				}
 				const model = done.model || resolved.model;
 				const text = truncateOutput(done.answer || done.stderrTail || "(no output)", config.maxOutputBytes);
 				const failed = done.failed;
-				liveFromSnap(toolCallId, { ...done, model }, false);
-				liveTargets.set(toolCallId, { kind, model, tg: done.tg });
+				updateCard(done);
 				return formatOutput({
 					text,
 					failed,
@@ -431,66 +457,26 @@ export default function delegate(pi: ExtensionAPI) {
 					maxBytes: config.maxOutputBytes,
 					kind,
 					model,
-					details: detailsFromSnap(done, {
+					details: uiDetails(done, {
 						exitCode: done.exitCode ?? (failed ? 1 : 0),
 						answer: text,
 					}),
 				});
 			} catch (error) {
+				cards.forget(toolCallId);
 				const message = error instanceof Error ? error.message : String(error);
 				return errorResult(message);
 			}
 		},
 		renderCall(args, theme, context) {
-			const live = liveTargets.get(context.toolCallId);
-			const kind = live?.kind ?? knownKind(args?.kind) ?? knownKind(context.state.kind);
-			const model =
-				live?.model ??
-				(typeof context.state.model === "string" ? context.state.model : undefined) ??
-				(kind ? config.agents[kind].model : undefined);
-			const tg = live?.tg ?? (typeof context.state.tg === "string" ? context.state.tg : undefined);
-			const jobId = live?.jobId ?? (typeof context.state.jobId === "string" ? context.state.jobId : undefined);
-			const status = live?.status ?? (typeof context.state.status === "string" ? context.state.status : undefined);
-			const background = Boolean(
-				live?.background || args?.background === true || context.state.background === true,
-			);
-			if (kind) context.state.kind = kind;
-			if (model) context.state.model = model;
-			if (tg && isLocalModel(model)) context.state.tg = tg;
-			else if (!isLocalModel(model)) delete context.state.tg;
-			if (jobId) context.state.jobId = jobId;
-			if (status) context.state.status = status;
-			if (background) context.state.background = true;
-			return renderChildCall({
-				theme,
-				title: "delegate",
-				kind,
-				model,
-				thinking: live?.thinking,
-				tg: isLocalModel(model) ? tg : undefined,
-				background,
-				jobId,
-				status,
-				lastComponent: context.lastComponent,
-			});
+			context.state.delegateArgs = args;
+			cards.watch(context.toolCallId, context.invalidate);
+			return renderChildCall({ theme, read: () => readRow(context) });
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			const details = (result.details ?? {}) as Record<string, unknown>;
-			if (typeof details.kind === "string") context.state.kind = details.kind;
-			if (typeof details.model === "string") context.state.model = details.model;
-			if (typeof details.tg === "string" && isLocalModel(details.model)) context.state.tg = details.tg;
-			if (typeof details.jobId === "string") context.state.jobId = details.jobId;
-			if (typeof details.status === "string") context.state.status = details.status;
-			if (details.background === true) context.state.background = true;
-			return renderChildResult({
-				theme,
-				details,
-				content: result.content,
-				isError: context.isError,
-				expanded,
-				isPartial,
-				lastComponent: context.lastComponent,
-			});
+			context.state.delegateResult = result;
+			return renderChildResult({ theme, read: () => readRow({ ...context, expanded, isPartial }),
+				expandHint: keyHint("app.tools.expand", "full result and tool details") });
 		},
 	});
 }

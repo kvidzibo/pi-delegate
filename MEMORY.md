@@ -1,5 +1,7 @@
 # Validated lessons
 
+- A background job's launch row outlives its tool call: update it from scheduler snapshots keyed by the origin tool-call ID, and test completion without collect plus reused short IDs after reload. Release its invalidation callback at terminal.
+
 - A queued archive is still unfinished after a parent crash: flag it incomplete on recovery without declaring the owner dead or changing its queued status.
 
 - Archive corruption without a readable parent ID cannot safely be attributed to a session; display global archive health separately from session usage completeness.
