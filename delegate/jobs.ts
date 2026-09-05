@@ -30,7 +30,11 @@ export type JobRun = (
 	onControl: (ctl: ChildControl) => void,
 ) => Promise<ChildResult>;
 
+export type ArchiveRef = { runId: string; sessionFile: string };
+
 export type JobSnapshot = {
+	archive?: ArchiveRef;
+	recordingError?: string;
 	id: string;
 	kind: Kind;
 	model: string;
@@ -53,6 +57,7 @@ export type JobSnapshot = {
 };
 
 export type EnqueueInput = {
+	archive?: ArchiveRef;
 	kind: Kind;
 	model: string;
 	local: boolean;
@@ -96,6 +101,7 @@ export type ParsedCall =
 	  };
 
 type InternalJob = {
+	archive?: ArchiveRef;
 	id: string;
 	kind: Kind;
 	model: string;
@@ -115,6 +121,8 @@ type InternalJob = {
 	cancelAbort?: { signal: AbortSignal; onAbort: () => void };
 	background: boolean;
 	terminalEmitted: boolean;
+	accountingSettled: boolean;
+	recordingError?: string;
 	wrapped: boolean;
 	queuedAt: number;
 	startedAt?: number;
@@ -196,8 +204,9 @@ export class JobScheduler {
 	private readonly limits: SchedulerLimits;
 	private readonly onChange?: () => void;
 	private readonly onTerminal?: (snap: JobSnapshot) => void;
+	private readonly onSettled?: (snap: JobSnapshot) => string | void;
 
-	constructor(input: SchedulerLimits & { onChange?: () => void; onTerminal?: (snap: JobSnapshot) => void }) {
+	constructor(input: SchedulerLimits & { onChange?: () => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
 			maxLocalConcurrent: input.maxLocalConcurrent,
@@ -205,6 +214,7 @@ export class JobScheduler {
 		};
 		this.onChange = input.onChange;
 		this.onTerminal = input.onTerminal;
+		this.onSettled = input.onSettled;
 	}
 
 	enqueue(input: EnqueueInput): JobSnapshot {
@@ -216,6 +226,7 @@ export class JobScheduler {
 		}
 		this.seq += 1;
 		const job: InternalJob = {
+			archive: input.archive,
 			id: `d${this.seq.toString(16).padStart(4, "0")}`,
 			kind: input.kind,
 			model: input.model,
@@ -230,6 +241,7 @@ export class JobScheduler {
 			listeners: new Set(),
 			background: input.background === true,
 			terminalEmitted: false,
+			accountingSettled: false,
 			wrapped: false,
 			queuedAt: Date.now(),
 		};
@@ -452,6 +464,7 @@ export class JobScheduler {
 				? visibleChildTg(job.model, job.meter, undefined)
 				: undefined;
 		const snap: JobSnapshot = {
+			...(job.archive ? { archive: { ...job.archive } } : {}),
 			id: job.id,
 			kind: job.kind,
 			model: job.model,
@@ -463,6 +476,7 @@ export class JobScheduler {
 			current: job.status === "running" ? job.progress.current : undefined,
 			background: job.background,
 		};
+		if (job.recordingError) snap.recordingError = job.recordingError;
 		if (job.wrapped) snap.wrapped = true;
 		if (job.status === "running" || job.status === "queued") {
 			const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
@@ -477,6 +491,7 @@ export class JobScheduler {
 			snap.exitCode = job.result.exitCode;
 			snap.stopReason = job.result.stopReason;
 			snap.stderrTail = job.result.stderrTail;
+			if (job.result.recordingError) snap.recordingError = job.result.recordingError;
 		} else if (job.status === "failed") {
 			snap.exitCode = job.exitCode ?? 1;
 			snap.stopReason = job.stopReason;
@@ -497,6 +512,11 @@ export class JobScheduler {
 	}
 
 	private notify(job?: InternalJob): void {
+		if (job && this.terminal(job) && !job.accountingSettled) {
+			job.accountingSettled = true;
+			try { job.recordingError = this.onSettled?.(this.snapshot(job)) || undefined; }
+			catch { job.recordingError = "Delegate recording incomplete: terminal accounting callback failed."; }
+		}
 		if (job) this.emit(job);
 		try {
 			this.onChange?.();
@@ -603,11 +623,10 @@ export class JobScheduler {
 	}
 
 	private emitTerminal(job: InternalJob): void {
-		if (this.closed) return;
 		if (job.terminalEmitted) return;
 		if (!this.terminal(job)) return;
 		job.terminalEmitted = true;
-		if (!this.onTerminal) return;
+		if (this.closed || !this.onTerminal) return;
 		try {
 			this.onTerminal(this.snapshot(job));
 		} catch {
