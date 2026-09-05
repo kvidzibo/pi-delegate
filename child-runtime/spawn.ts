@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
+import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
 
 export interface PiInvocation {
 	command: string;
@@ -74,6 +75,7 @@ export interface RunPiChildInput {
 	onEvent?: (event: unknown) => void;
 	onControl?: (ctl: ChildControl) => void;
 	spawnFn?: SpawnFn;
+	killTree?: (proc: ChildProcess) => void;
 }
 
 export const DEFAULT_WRAP_MESSAGE =
@@ -81,10 +83,6 @@ export const DEFAULT_WRAP_MESSAGE =
 
 const STDERR_TAIL_BYTES = 4096;
 const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
-
-export function jsonlRecordLimit(maxOutputBytes: number): number {
-	return Math.min(Math.max(maxOutputBytes * 4, 262144), 1_048_576);
-}
 
 const EVENT_TYPE_LIMIT = 20;
 
@@ -185,19 +183,16 @@ export function extractAssistantText(event: unknown): AssistantSnapshot {
 		content?: unknown;
 	};
 	if (message.role !== "assistant") return empty;
-	let text = "";
+	const blocks: string[] = [];
 	if (Array.isArray(message.content)) {
-		for (let i = message.content.length - 1; i >= 0; i--) {
-			const part = message.content[i];
+		for (const part of message.content) {
 			if (part && typeof part === "object" && (part as { type?: unknown }).type === "text") {
 				const value = (part as { text?: unknown }).text;
-				if (typeof value === "string" && value.length > 0) {
-					text = value;
-					break;
-				}
+				if (typeof value === "string" && value.length > 0) blocks.push(value);
 			}
 		}
 	}
+	const text = blocks.join("\n");
 	const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 	return {
 		assistant: true,
@@ -289,11 +284,11 @@ function writeTempPrompt(sourcePath: string, tmpPrefix: string): { dir: string; 
 
 function resolveStopReason(input: {
 	stopKind?: "aborted" | "hard_timeout";
-	overflow: boolean;
+	failure?: { reason: "error" | "protocol-error"; text: string };
 	state: AssistantState;
 }): string | undefined {
 	if (input.stopKind) return input.stopKind;
-	if (input.overflow) return "protocol-error";
+	if (input.failure) return input.failure.reason;
 	if (input.state.stopReason === "error") return "error";
 	if (!input.state.sawAssistant || input.state.text.length === 0) return "no-assistant-output";
 	return input.state.stopReason;
@@ -318,18 +313,18 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 		const started = Date.now();
 		const spawnFn = input.spawnFn ?? spawn;
+		const terminate = input.killTree ?? killChildTree;
 
 		let stderr = "";
 		let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
 		let timedOut = false;
 		let aborted = false;
 		let stopKind: "aborted" | "hard_timeout" | undefined;
-		let overflow = false;
+		let failure: { reason: "error" | "protocol-error"; text: string } | undefined;
 		let settled = false;
 		let pid: number | undefined;
 		let eventCount = 0;
 		const events: string[] = [];
-		const recordLimit = jsonlRecordLimit(input.maxOutputBytes);
 
 		const exitCode = await new Promise<number>((resolve, reject) => {
 			const proc = spawnFn(invocation.command, invocation.args, {
@@ -364,14 +359,25 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				}
 			};
 
+			const fail = (reason: "error" | "protocol-error", text: string): void => {
+				if (closed || stopKind || failure) return;
+				failure = { reason, text };
+				closeStdin();
+				terminate(proc);
+			};
+
 			const consume = (line: string): void => {
-				if (!line.trim()) return;
+				if (closed || stopKind || failure || !line.trim()) return;
 				try {
 					const parsed = JSON.parse(line);
 					const type = jsonlEventType(parsed);
 					if (type) {
 						eventCount += 1;
 						rememberEventType(events, type);
+					}
+					if (type === "response" && parsed.id === "p1" && parsed.command === "prompt" && parsed.success === false) {
+						fail("error", typeof parsed.error === "string" && parsed.error.trim() ? parsed.error : "Child rejected the RPC prompt.");
+						return;
 					}
 					const cancel = uiCancelResponse(parsed);
 					if (cancel) writeStdin(proc.stdin, cancel);
@@ -391,16 +397,17 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			};
 
 			const onAbort = (): void => {
+				if (closed || failure || stopKind) return;
 				aborted = true;
 				if (!stopKind) stopKind = "aborted";
 				send({ type: "abort" });
-				killChildTree(proc);
+				terminate(proc);
 			};
 
 			try {
 				input.onControl?.({
 					wrap: (message) => {
-						if (settled || aborted || timedOut || closed) return false;
+						if (settled || aborted || timedOut || closed || failure) return false;
 						return send({ type: "steer", message: message && message.trim() ? message : DEFAULT_WRAP_MESSAGE });
 					},
 				});
@@ -410,9 +417,10 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 
 			if (input.hardTimeoutMs > 0) {
 				hardTimer = setTimeout(() => {
+					if (closed || failure || stopKind) return;
 					timedOut = true;
 					if (!stopKind) stopKind = "hard_timeout";
-					killChildTree(proc);
+					terminate(proc);
 				}, input.hardTimeoutMs);
 			}
 
@@ -421,22 +429,21 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				else input.signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
-
 			proc.stdout?.setEncoding("utf8");
 			proc.stderr?.setEncoding("utf8");
-			let buffer = "";
+			const reader = new JsonlReader({
+				maxBytes: RPC_RECORD_LIMIT_BYTES,
+				onLine: consume,
+				onOversized: (prefix) => {
+					if (canDiscardOversizedEvent(prefix)) {
+						consume('{"type":"oversized_event_skipped"}');
+					} else {
+						fail("protocol-error", `Child RPC record exceeds the ${RPC_RECORD_LIMIT_BYTES}-byte transport limit.`);
+					}
+				},
+			});
 			proc.stdout?.on("data", (chunk: string) => {
-				buffer += chunk;
-				if (Buffer.byteLength(buffer, "utf8") > recordLimit) {
-					overflow = true;
-					buffer = "";
-					killChildTree(proc);
-					return;
-				}
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) consume(line);
+				if (!closed && !stopKind && !failure) reader.write(chunk);
 			});
 			proc.stderr?.on("data", (chunk: string) => {
 				stderr += chunk;
@@ -445,17 +452,19 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				}
 			});
 			proc.on("error", (error) => {
+				closed = true;
 				if (hardTimer) clearTimeout(hardTimer);
 				input.signal?.removeEventListener("abort", onAbort);
 				reject(error);
 			});
 			proc.on("close", (code) => {
-				if (buffer.trim() && !overflow) consume(buffer);
+				reader.end();
 				finish(code ?? 1);
 			});
+			if (!stopKind && !failure) send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
 		});
 
-		const stopReason = resolveStopReason({ stopKind, overflow, state });
+		const stopReason = resolveStopReason({ stopKind, failure, state });
 		const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
 		const diag: ChildDiag = {
 			command: invocation.command,
@@ -474,7 +483,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			stderrTail,
 		});
 		return {
-			text: finalizeChildText(state.text, dump, input.maxOutputBytes),
+			text: finalizeChildText(failure?.text ?? state.text, dump, input.maxOutputBytes),
 			exitCode,
 			stderrTail,
 			model: state.model,

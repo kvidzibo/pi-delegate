@@ -63,7 +63,7 @@ Collect waits until terminal, wait budget, or `checkIntervalMs` with no child ev
 Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms. If the parent agent is still running (`ctx.isIdle()` false), keep holding — do not `sendMessage` yet. `sendMessage` queues a follow-up that collect cannot unsend. Once idle and not consumed, `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it, including mid-turn collect after the job already finished.
 
 Header: `delegate  <kind> → <alias>  <model id>` + `bg <jobId> <status>` when background/collect + live `tg n/s` when child model looks local + live thinking tail.
-Under it: last 3 finished tools, then one live row. Expand shows child answer, or task when still queued/running.
+Under it: last 3 finished tools, then one live row. Expand shows child answer, or task when still queued/running. Final errors show up to three non-empty explanation lines even when collapsed, with the full error on expansion. Fall back to result content for host/validation errors without details. A `tool_result` hook marks this tool's `details.ok: false` as `isError: true`, preserving structured results (Pi ignores `isError` returned directly by `execute`).
 
 Sticky widget while jobs are queued or running:
 
@@ -90,15 +90,21 @@ Never `-p`, `--session`, `--continue`, `--fork`, `--extension`, `--append-system
 
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
+Correlated rejection of the initial RPC prompt (`id: p1`, `success: false`) is a terminal error: preserve its message, close stdin, terminate the child, and release the slot. Unrelated responses do not terminate the run. Keep the first terminal cause when errors, timeout, or abort race.
+
+The stdout reader bounds each LF-delimited record to 8 MiB, independently of `maxOutputBytes` and pipe chunk boundaries. Discard recognized oversized non-answer events (including cumulative transcripts and tool-result images); never silently discard an oversized assistant/control record or unknown layout. Those fail as `protocol-error` with an explicit limit message. Log discarded records as `oversized_event_skipped`. Final answer extraction joins all text blocks of the last assistant message in source order, excluding thinking/tools.
+
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
 Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
 ## Tests
 
-`npm test` (unit + factory load). `npm run test:unit` does not need Pi.
+`xvfb-run -a npm test` (unit + offline CLI load/UI checks on Linux). `npm run test:unit` does not need Pi.
 
-No live child. Factory-load smoke must pass without a user overlay.
+Unit children and termination are mocked; never send OS signals for fake PIDs. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
+
+Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, and explicit bounded failure for oversized useful/junk records.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 

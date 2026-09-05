@@ -213,6 +213,13 @@ export default function delegate(pi: ExtensionAPI) {
 		shuttingDown = false;
 		bindUi(ctx);
 	});
+	// Pi ignores isError on execute() return values. Keep our structured details
+	// and mark failed results through the supported result-event hook instead.
+	pi.on("tool_result", (event) => {
+		if (event.toolName === "delegate" && (event.details as { ok?: boolean } | undefined)?.ok === false) {
+			return { isError: true };
+		}
+	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
 		gate.shutdown();
@@ -458,6 +465,8 @@ export default function delegate(pi: ExtensionAPI) {
 			return renderChildResult({
 				theme,
 				details,
+				content: result.content,
+				isError: context.isError,
 				expanded,
 				isPartial,
 				lastComponent: context.lastComponent,
