@@ -10,7 +10,6 @@ export type ActivityItem = {
 };
 
 export const LIVE_ACTIVITY_MAX = 3;
-export const ACTIVITY_NAME_PAD = 8;
 export const ACTIVITY_ARG_MAX = 40;
 export const THINKING_TAIL_MAX = ACTIVITY_ARG_MAX;
 const THINKING_BUF_MAX = 200;
@@ -152,8 +151,12 @@ export function createProgress(): ProgressState {
 	return { done: [], open: new Map() };
 }
 
+function sameToolCall(a: ActivityItem, b: ActivityItem): boolean {
+	return a.id && b.id ? a.id === b.id : a.name === b.name;
+}
+
 export function sameActivity(a: ActivityItem, b: ActivityItem): boolean {
-	return a.mark === b.mark && a.name === b.name && (a.args ?? "") === (b.args ?? "");
+	return a.id === b.id && a.mark === b.mark && a.name === b.name && (a.args ?? "") === (b.args ?? "");
 }
 
 function mergeActivity(prev: ActivityItem, next: ActivityItem): ActivityItem {
@@ -183,7 +186,7 @@ export function appendActivity(items: ActivityItem[], item: ActivityItem, max = 
 	if (item.mark === "✓" || item.mark === "✗") {
 		for (let i = items.length - 1; i >= 0; i--) {
 			const entry = items[i];
-			if (entry.mark === "→" && entry.name === item.name) {
+			if (entry.mark === "→" && sameToolCall(entry, item)) {
 				items[i] = mergeActivity(entry, item);
 				return true;
 			}
@@ -238,22 +241,12 @@ export function applyProgress(state: ProgressState, item: ActivityItem): boolean
 		return true;
 	}
 	const remembered = item.id ? state.open.get(item.id) : undefined;
-	if (item.id) state.open.delete(item.id);
-	const base =
-		remembered ??
-		(item.id && state.current?.id === item.id
-			? state.current
-			: state.current?.mark === "→" && state.current.name === item.name
-				? state.current
-				: undefined);
+	const base = remembered ?? (state.current?.mark === "→" && sameToolCall(state.current, item) ? state.current : undefined);
 	const completed = base ? mergeActivity(base, item) : item;
+	if (completed.id) state.open.delete(completed.id);
 	appendActivity(state.done, completed);
-	if (
-		state.current &&
-		((completed.id && state.current.id === completed.id) ||
-			(state.current.mark === "→" && state.current.name === completed.name))
-	) {
-		state.current = undefined;
+	if (state.current && sameToolCall(state.current, completed)) {
+		state.current = [...state.open.values()].at(-1);
 	}
 	return true;
 }
@@ -278,16 +271,7 @@ export function asActivityList(value: unknown): ActivityItem[] {
 	return out;
 }
 
-export type JobBoardRow = {
-	id: string;
-	kind: string;
-	model?: string;
-	local: boolean;
-	status: "queued" | "running";
-	reason?: "gpu" | "slot";
-	tg?: string;
-	current?: ActivityItem;
-};
+export type JobBoardRow = { local: boolean; status: string };
 
 export function formatJobBoard(jobs: JobBoardRow[], limits: { maxLocalConcurrent: number }): string[] {
 	const run = jobs.filter((job) => job.status === "running");

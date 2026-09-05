@@ -279,34 +279,45 @@ test("thinking buffer is bounded but the visible header contains only identity",
 	assert.equal(state.current?.name, "writing");
 });
 
+test("distinct identical calls keep their IDs and parallel completions keep current activity", () => {
+	const state = createProgress();
+	for (const id of ["A", "B"]) {
+		applyProgress(state, { mark: "→", name: "read", args: "same.ts", id });
+		applyProgress(state, { mark: "✓", name: "read", id });
+	}
+	assert.deepEqual(state.done.map((item) => item.id), ["A", "B"]);
+	applyProgress(state, { mark: "→", name: "read", args: "a.ts", id: "C" });
+	applyProgress(state, { mark: "→", name: "read", args: "b.ts", id: "D" });
+	applyProgress(state, { mark: "✓", name: "read", id: "unknown" });
+	assert.equal(state.current?.id, "D");
+	assert.equal(state.done.at(-1)?.args, undefined, "unmatched IDs cannot borrow arguments");
+	applyProgress(state, { mark: "✓", name: "read", id: "C" });
+	assert.equal(state.current?.id, "D");
+	applyProgress(state, { mark: "✓", name: "read", id: "D" });
+	assert.equal(state.current, undefined);
+	assert.equal(state.open.size, 0);
+	assert.equal(state.done.length, 3);
+});
+
+test("finishing current tool reveals another open tool; ID-less completions still merge", () => {
+	const state = createProgress();
+	applyProgress(state, { mark: "→", name: "read", args: "a", id: "A" });
+	applyProgress(state, { mark: "→", name: "read", args: "b", id: "B" });
+	applyProgress(state, { mark: "✓", name: "read", id: "B" });
+	assert.equal(state.current?.id, "A");
+	applyProgress(state, { mark: "✓", name: "read" });
+	assert.equal(state.current, undefined);
+	assert.equal(state.open.size, 0);
+	assert.equal(state.done.at(-1)?.args, "a");
+});
+
 test("sticky board shows counts without duplicating individual job cards", () => {
 	assert.deepEqual(
 		formatJobBoard(
 			[
-				{
-					id: "d0001",
-					kind: "recon",
-					model: models.recon,
-					local: true,
-					status: "running",
-					tg: "tg 28.4/s",
-					current: { mark: "→", name: "bash", args: "rg -n spawn" },
-				},
-				{
-					id: "d0002",
-					kind: "implement",
-					model: models.implement,
-					local: false,
-					status: "running",
-				},
-				{
-					id: "d0003",
-					kind: "recon",
-					model: models.recon,
-					local: true,
-					status: "queued",
-					reason: "gpu",
-				},
+				{ local: true, status: "running" },
+				{ local: false, status: "running" },
+				{ local: true, status: "queued" },
 			],
 			{ maxLocalConcurrent: 1 },
 		),

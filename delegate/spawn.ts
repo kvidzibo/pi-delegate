@@ -106,7 +106,6 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		hardTimeoutMs: input.hardTimeoutMs,
 		maxOutputBytes: input.maxOutputBytes,
 		promptSourcePath: input.promptSourcePath,
-		tmpPrefix: "pi-delegate-",
 		env: buildChildEnv(input.env),
 		buildArgs: (promptPath) =>
 			buildChildArgs({
