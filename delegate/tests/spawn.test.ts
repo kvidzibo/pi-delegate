@@ -10,13 +10,15 @@ const base = {
 	thinking: "off",
 	tools: ["read", "grep", "find", "ls", "bash"],
 	promptPath: "/tmp/prompt.md",
+	sessionFile: "/private/archive/run/session.jsonl",
 };
 
 test("argv includes isolation flags", () => {
 	const args = buildChildArgs(base);
 	assert.equal(args[args.indexOf("--mode") + 1], "rpc");
 	assert.equal(args.includes("-p"), false);
-	assert.ok(args.includes("--no-session"));
+	assert.equal(args.includes("--no-session"), false);
+	assert.equal(args[args.indexOf("--session") + 1], base.sessionFile);
 	assert.ok(args.includes("--no-extensions"));
 	assert.ok(args.includes("--no-skills"));
 	assert.ok(args.includes("--no-prompt-templates"));
@@ -35,9 +37,10 @@ test("offline flag only when requested", () => {
 	assert.equal(buildChildArgs({ ...base, offline: false }).includes("--offline"), false);
 });
 
-test("argv never includes session or extension flags", () => {
+test("argv never inherits or forks parent sessions, or loads extensions", () => {
 	const args = buildChildArgs(base);
-	assert.equal(args.includes("--session"), false);
+	assert.equal(args.includes("--continue"), false);
+	assert.equal(args.includes("--fork"), false);
 	assert.equal(args.includes("--extension"), false);
 	assert.equal(args.includes("-e"), false);
 });

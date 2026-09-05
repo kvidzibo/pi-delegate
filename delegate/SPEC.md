@@ -14,6 +14,7 @@ Background spawn returns `jobId` immediately. Local/GPU children share `maxLocal
 delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts tg.ts jobs.ts notify.ts
+  archive.ts usage.ts accounting.ts stats.ts
   prompts/{recon,implement,review,oracle}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
@@ -80,13 +81,13 @@ Reuse `../child-runtime/` for process/JSONL/truncate.
 Always:
 
 ```
---mode rpc --no-session --no-extensions --no-skills --no-prompt-templates
+--mode rpc --session <unique-private-run-file> --no-extensions --no-skills --no-prompt-templates
 --no-context-files --model --thinking --tools --system-prompt
 ```
 
 `--offline` only when the agent config has `offline: true`.
 
-Never `-p`, `--session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`. Task is an RPC `prompt` on stdin, not argv.
+Never `-p`, `--no-session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
 
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
@@ -102,6 +103,18 @@ Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
 Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
+## Durable accounting
+
+Archive all accepted kinds, local and hosted, before queueing. Use private UUID directories under `<agent-dir>/delegate/runs` (`PI_DELEGATE_ARCHIVE_DIR` override). Keep native session JSONL, custom prompt, task, and atomic versioned metadata linking the original parent session and tool call. No automatic expiry, pruning, or storage-size eviction. Never store provider credentials/environment dumps. Refuse launches when recording cannot be established; surface later failures without hiding child outcomes.
+
+Finalize once on every terminal path, including queued cancellation, thrown runners, and shutdown. Accounting's scheduler `onSettled` hook runs during shutdown even though notification `onTerminal` remains suppressed. Drop live meters when runs finish. Partial/unfinished provider usage remains flagged as a lower bound. Queued and running statuses are unfinished in reports/infobar; recovered queued records also carry incomplete usage, without marking the owner dead or changing its queued status. Do not infer that another process's unfinished run is dead, or modify its metadata during recovery.
+
+Use normalized provider input/output/cache buckets, not character estimates. Streaming usage replaces the current pending turn; only finalized records add turns. Native entry IDs deduplicate reconstruction. Include reported failed attempts and compaction/branch-summary usage; never recount retainedTail copies or reasoning already included in output. Missing/all-zero usage is unknown, not free. Per-run metadata/native entries are authoritative; the append-only `usage.jsonl` export contains revisioned per-run snapshots and can be rebuilt without deleting old rows. Consumers choose the highest revision per run (last row on ties), so a delayed rebuild cannot supersede newer terminal state.
+
+Use a separate `ctx.ui.setStatus("delegate-usage", ...)` entry: `delegated N · local N · saved —`, plus `!partial` for session-attributable gaps or `!archive` for errors whose session cannot be identified. Known other-parent errors must not contaminate session counters/reports. Totals are scoped to the originating parent session UUID, not active branch or short job ID. Restore on resume/reload, reset for a different session, clear on shutdown. Do not attach child usage to the parent's standard `usage` field. `saved` stays unavailable without a comparable baseline; local offload is not net savings.
+
+`/delegate-stats [session|today|all|rebuild]` displays a UI-only report with totals, runtime, outcomes, incomplete records and latest ten transcript paths. Today groups by creation time in local time. No model calls, transcript injection, or automatic continuation. Expanded tool results show archive paths; recording warnings remain visible when collapsed.
+
 ## Tests
 
 `xvfb-run -a npm test` (unit + offline CLI load/UI checks on Linux). `npm run test:unit` does not need Pi.
@@ -110,7 +123,7 @@ Unit children and termination are mocked; never send OS signals for fake PIDs. C
 
 Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, explicit bounded failure for oversized useful/junk records, provider errors ahead of partial output, token-limit failures, and qualified model identities.
 
-Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible.
+Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible. Accounting regressions cover native session compatibility, live/footer and resume behavior, multi-turn/cached/retry/compaction totals, missing usage, duplicate collects, crash tails, queued cancellation, concurrent processes, private permissions, write failures and non-expiring retention. CLI probes keep RPC stdin open until asynchronous command completion, then close it.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 

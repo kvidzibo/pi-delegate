@@ -8,6 +8,7 @@ export interface ChildArgsInput {
 	thinking: string;
 	tools: string[];
 	promptPath: string;
+	sessionFile: string;
 	offline?: boolean;
 }
 
@@ -21,6 +22,7 @@ export interface RunChildInput {
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
+	sessionFile: string;
 	signal?: AbortSignal;
 	env?: NodeJS.Dict<string>;
 	onEvent?: (event: unknown) => void;
@@ -31,7 +33,8 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 	const args = [
 		"--mode",
 		"rpc",
-		"--no-session",
+		"--session",
+		input.sessionFile,
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",
@@ -111,6 +114,7 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 				thinking: input.thinking,
 				tools: input.tools,
 				promptPath,
+				sessionFile: input.sessionFile,
 				offline: input.offline,
 			}),
 		signal: input.signal,

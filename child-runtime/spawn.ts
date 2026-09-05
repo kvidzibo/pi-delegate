@@ -28,6 +28,7 @@ export interface ChildResult {
 	model?: string;
 	stopReason?: string;
 	diag?: ChildDiag;
+	recordingError?: string;
 }
 
 export interface AssistantSnapshot {

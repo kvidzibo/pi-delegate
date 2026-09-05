@@ -15,6 +15,8 @@ import {
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
+import { Accounting } from "./accounting.ts";
+import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderNotifyMessage } from "./view.ts";
 
@@ -114,6 +116,8 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 		task: snap.task,
 		...extra,
 	};
+	if (snap.archive) { details.runId = snap.archive.runId; details.sessionFile = snap.archive.sessionFile; }
+	if (snap.recordingError) details.recordingError = snap.recordingError;
 	if (snap.current) details.current = snap.current;
 	if (snap.thinking) details.thinking = snap.thinking;
 	if (snap.tg) details.tg = snap.tg;
@@ -138,6 +142,7 @@ export default function delegate(pi: ExtensionAPI) {
 				? undefined
 				: join(agentDir(), "delegate.json"),
 	});
+	const accounting = new Accounting(archiveRoot(agentDir()));
 	const liveTargets = new Map<string, LiveTarget>();
 	type WidgetUi = { setWidget: (id: string, lines: string[] | undefined) => void };
 	let ui: WidgetUi | undefined;
@@ -178,6 +183,9 @@ export default function delegate(pi: ExtensionAPI) {
 		maxQueued: config.maxQueued,
 		onChange: paintBoard,
 		onTerminal: (snap) => gate.schedule(snap),
+		onSettled: (snap) => accounting.terminal(snap.archive?.runId, snap.id, {
+			status: snap.failed ? "failed" : "done", stopReason: snap.stopReason, exitCode: snap.exitCode,
+		}),
 	});
 
 	const bindUi = (ctx: { ui?: WidgetUi; hasUI?: boolean; isIdle?: () => boolean }): void => {
@@ -209,9 +217,22 @@ export default function delegate(pi: ExtensionAPI) {
 		return live;
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
 		bindUi(ctx);
+		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
+	});
+	pi.registerCommand("delegate-stats", {
+		description: "Recorded child usage: session (default), today, all, or rebuild the export ledger. No model calls.",
+		getArgumentCompletions: (prefix) => ["session", "today", "all", "rebuild"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+		handler: async (args, ctx) => {
+			const scope = args.trim() || "session";
+			if (scope !== "session" && scope !== "today" && scope !== "all" && scope !== "rebuild") {
+				ctx.ui.notify("Usage: /delegate-stats [session|today|all|rebuild]", "warning"); return;
+			}
+			const report = await accounting.report(scope === "rebuild" ? "all" : scope, ctx.sessionManager.getSessionId(), scope === "rebuild");
+			ctx.ui.notify(report, "info");
+		},
 	});
 	// Pi ignores isError on execute() return values. Keep our structured details
 	// and mark failed results through the supported result-event hook instead.
@@ -224,6 +245,7 @@ export default function delegate(pi: ExtensionAPI) {
 		shuttingDown = true;
 		gate.shutdown();
 		await scheduler.shutdown();
+		accounting.close();
 		ui?.setWidget("delegate", undefined);
 		ui = undefined;
 		hasUI = false;
@@ -338,31 +360,29 @@ export default function delegate(pi: ExtensionAPI) {
 					details: { kind, model: resolved.model, pending: true, background: parsed.background },
 				});
 
-				const snap = scheduler.enqueue({
-					kind,
-					model: resolved.model,
-					local,
-					task: parsed.task,
-					timeoutMs: parsed.timeoutMs,
-					background: parsed.background,
-					cancelOnAbort: parsed.background ? undefined : signal,
-					run: (_handle, childSignal, onEvent, onControl) =>
-						runChild({
-							task: parsed.task,
-							cwd,
-							model: resolved.model,
-							thinking: resolved.agent.thinking,
-							tools: resolved.agent.tools,
-							offline: resolved.agent.offline,
-							hardTimeoutMs: config.hardTimeoutMs,
-							maxOutputBytes: config.maxOutputBytes,
-							promptSourcePath: promptSourceFromDir(EXTENSION_DIR, `${kind}.md`),
-							signal: childSignal,
-							env: process.env,
-							onEvent,
-							onControl,
-						}),
-				});
+				const archive = accounting.create({
+					parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
+					toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
+				}, parsed.task, promptSourceFromDir(EXTENSION_DIR, `${kind}.md`));
+				let snap: JobSnapshot;
+				try {
+					snap = scheduler.enqueue({
+						archive: { runId: archive.data.runId, sessionFile: archive.paths.session },
+						kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
+						background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
+						run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => runChild({
+							task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
+							tools: resolved.agent.tools, offline: resolved.agent.offline,
+							hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
+							promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
+							signal: childSignal, env: process.env,
+							onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
+						})),
+					});
+				} catch (error) {
+					accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });
+					throw error;
+				}
 				publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
 
 				if (parsed.background) {

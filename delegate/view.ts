@@ -9,6 +9,7 @@ import {
 	type ThemeFg,
 } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
+import { displayText } from "./stats.ts";
 
 function markColor(mark: ActivityMark): string {
 	if (mark === "✓") return "success";
@@ -82,6 +83,8 @@ export function renderChildResult(input: {
 	panel.lines = done.map((item) => paintActivity(input.theme, item));
 	if (current && current.name !== "thinking") panel.lines.push(paintActivity(input.theme, current));
 	panel.extra = [];
+	if (typeof details.recordingError === "string") panel.extra.push(input.theme.fg("warning", displayText(details.recordingError)));
+	if (input.expanded && typeof details.sessionFile === "string") panel.extra.push(input.theme.fg("dim", `Session: ${displayText(details.sessionFile)}`));
 	const contentText = (input.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
 	const answer = typeof details.answer === "string" ? details.answer : contentText;
 	if (!input.isPartial && (input.isError || details.ok === false || details.status === "failed")) {
