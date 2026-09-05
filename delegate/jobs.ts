@@ -202,11 +202,11 @@ export class JobScheduler {
 	private pumpAgain = false;
 	private readonly jobs: InternalJob[] = [];
 	private readonly limits: SchedulerLimits;
-	private readonly onChange?: () => void;
+	private readonly onChange?: (snap?: JobSnapshot) => void;
 	private readonly onTerminal?: (snap: JobSnapshot) => void;
 	private readonly onSettled?: (snap: JobSnapshot) => string | void;
 
-	constructor(input: SchedulerLimits & { onChange?: () => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
+	constructor(input: SchedulerLimits & { onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
 			maxLocalConcurrent: input.maxLocalConcurrent,
@@ -519,7 +519,7 @@ export class JobScheduler {
 		}
 		if (job) this.emit(job);
 		try {
-			this.onChange?.();
+			this.onChange?.(job ? this.snapshot(job) : undefined);
 		} catch {
 			/* widget errors must not break the scheduler */
 		}

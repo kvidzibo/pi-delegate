@@ -64,41 +64,6 @@ function appendThinking(prev: string | undefined, delta: string): string {
 	return next.length > THINKING_BUF_MAX ? next.slice(-THINKING_BUF_MAX) : next;
 }
 
-export type HeaderExtras = {
-	background?: boolean;
-	jobId?: string;
-	status?: string;
-};
-
-export function delegateHeaderBits(
-	kind: string | undefined,
-	model: string | undefined,
-	thinking?: string,
-	tg?: string,
-	extras?: HeaderExtras,
-): { target: string; model?: string; tg?: string; thinking?: string; background?: boolean; jobId?: string; status?: string } {
-	const shownKind = kind && kind.length > 0 ? kind : "…";
-	const bits: {
-		target: string;
-		model?: string;
-		tg?: string;
-		thinking?: string;
-		background?: boolean;
-		jobId?: string;
-		status?: string;
-	} = {
-		target: `${shownKind} → ${aliasForModel(model)}`,
-	};
-	if (model) bits.model = model;
-	if (extras?.background) bits.background = true;
-	if (extras?.jobId) bits.jobId = extras.jobId;
-	if (extras?.status) bits.status = extras.status;
-	if (tg) bits.tg = tg;
-	const snippet = clipThinkingTail(thinking ?? "");
-	if (snippet) bits.thinking = snippet;
-	return bits;
-}
-
 export type ThemeFg = {
 	fg: (key: string, text: string) => string;
 	bold: (text: string) => string;
@@ -110,24 +75,25 @@ export function paintHeader(
 	title: string,
 	kind: string | undefined,
 	model: string | undefined,
-	thinking?: string,
-	tg?: string,
-	extras?: HeaderExtras,
+	jobId?: string,
 ): string {
-	const bits = delegateHeaderBits(kind, model, thinking, tg, extras);
-	let line = theme.fg("toolTitle", theme.bold(title));
-	line += "  ";
-	line += theme.fg("accent", bits.target);
-	if (bits.model) line += `  ${theme.fg("dim", bits.model)}`;
-	if (bits.background) line += `  ${theme.fg("dim", "bg")}`;
-	if (bits.jobId) line += `  ${theme.fg("accent", bits.jobId)}`;
-	if (bits.status) {
-		const color = bits.status === "running" || bits.status === "done" ? "accent" : "dim";
-		line += `  ${theme.fg(color, bits.status)}`;
-	}
-	if (bits.tg) line += `  ${theme.fg("accent", bits.tg)}`;
-	if (bits.thinking) line += `  ${theme.fg("thinkingText", theme.italic(bits.thinking))}`;
-	return line;
+	return [
+		theme.fg("toolTitle", theme.bold(title)),
+		theme.fg("accent", kind || "…"),
+		theme.fg("dim", model || "…"),
+		...(jobId ? [theme.fg("accent", jobId)] : []),
+	].join(" · ");
+}
+
+export function activityLabel(current: ActivityItem | undefined): string {
+	if (!current) return "working";
+	if (current.name === "writing") return "writing result";
+	if (current.name === "thinking") return "thinking";
+	const labels: Record<string, string> = {
+		bash: "executing command", read: "reading file", write: "writing file", edit: "editing file",
+		grep: "searching files", find: "finding files", ls: "listing files",
+	};
+	return labels[current.name] ?? `using ${current.name}`;
 }
 
 export function summarizeToolArgs(name: string, args: unknown): string {
@@ -327,18 +293,5 @@ export function formatJobBoard(jobs: JobBoardRow[], limits: { maxLocalConcurrent
 	const run = jobs.filter((job) => job.status === "running");
 	const wait = jobs.filter((job) => job.status === "queued");
 	const localRun = run.filter((job) => job.local).length;
-	const lines = [`delegate  ${run.length} run  ${wait.length} wait  local ${localRun}/${limits.maxLocalConcurrent}`];
-	for (const job of [...run, ...wait]) {
-		const tag = job.status === "running" ? "run " : "wait";
-		let line = `  ${tag}  ${job.id}  ${job.kind} → ${aliasForModel(job.model)}`;
-		if (job.status === "running" && job.tg) line += `  ${job.tg}`;
-		if (job.status === "queued" && job.reason === "gpu") line += "  gpu";
-		const current = job.status === "running" ? job.current : undefined;
-		if (current && current.name !== "thinking") {
-			line += `  ${current.mark} ${current.name}`;
-			if (current.args) line += `  ${current.args}`;
-		}
-		lines.push(line);
-	}
-	return lines;
+	return [`delegate  ${run.length} run  ${wait.length} wait  local ${localRun}/${limits.maxLocalConcurrent}`];
 }

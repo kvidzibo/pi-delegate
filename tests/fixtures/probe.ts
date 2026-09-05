@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
+import { cardProbe } from "./cards.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	const register = (name: string, run: (ctx: ExtensionCommandContext) => unknown | Promise<unknown>) => {
@@ -20,6 +21,7 @@ export default function probe(pi: ExtensionAPI) {
 			},
 		});
 	};
+	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
 	register("delegate-load-probe", () => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
@@ -89,7 +91,7 @@ export default function probe(pi: ExtensionAPI) {
 		}
 		const success = { content: [{ type: "text", text: "answer" }], details: { ok: true, answer: "answer" } };
 		const panel = tool.renderResult(success, { expanded: false, isPartial: false }, theme, { state: {}, isError: false });
-		assert.equal(panel.render(100).join("\n").includes("answer"), false, "success stays compact");
+		assert.equal(panel.render(100).join("\n").includes("answer"), true, "collapsed success must show an answer preview");
 		const expanded = tool.renderResult(success, { expanded: true, isPartial: false }, theme, { state: {}, lastComponent: panel, isError: false });
 		assert.ok(expanded.render(100).join("\n").includes("answer"));
 		const archived = tool.renderResult({ details: { ok: true, sessionFile: "/private/session.jsonl", recordingError: "Recording incomplete" } }, { expanded: true, isPartial: false }, theme, { state: {}, isError: false });
