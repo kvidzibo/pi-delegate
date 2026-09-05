@@ -1,6 +1,8 @@
 # pi-delegate
 
-Pi package. One parent tool, four agents. Child model is config — any id `pi` already knows.
+Delegate a focused coding task to a separate AI agent, keep working in the parent session, then collect the result. Built for the [Pi coding agent](https://github.com/earendil-works/pi), with configurable local or hosted models and bounded concurrency.
+
+One parent tool, four agents. Child model is config — any id `pi` already knows.
 
 | kind | job |
 |---|---|
@@ -13,7 +15,39 @@ One child per call. No nesting. `background: true` returns `jobId` now. Local/GP
 
 > **Security:** Pi packages run with your full system permissions. This one spawns child `pi` processes with `bash`. There is **no sandbox**. `offline` only skips Pi startup network; child `bash` can still use the network, write files, and read credentials. “Read-only” kinds are prompt policy only. Install only from a source you trust.
 
+## Quick example
+
+After [installing](#install) and [configuring](#config) a child model you can run, ask Pi:
+
+```text
+Use delegate to find this repository's test files and test commands.
+Run a recon child in the background. Do not edit files.
+Collect its result when it finishes.
+```
+
+The corresponding `delegate` tool arguments are:
+
+```json
+{
+  "kind": "recon",
+  "task": "Find this repository's test files and test commands. Report paths and commands; do not edit files.",
+  "background": true
+}
+```
+
+The launch returns a `jobId`. Collect it with another `delegate` call:
+
+```json
+{ "jobId": "d0001" }
+```
+
+`d0001` is illustrative: use the ID actually returned. Add `"timeoutMs": 0` to peek without waiting, or `"cancel": true` to cancel. These are tool-call examples, not a recorded run; model access and credentials must already be configured. A recon child's read-only instruction is not an enforced filesystem boundary.
+
+**Design trade-off:** separate global and local concurrency caps let hosted work run alongside a limited number of local workers. When capacity is busy, accepted work queues rather than starting another worker; a full queue rejects new work. This bounds concurrent child jobs at the cost of waiting. See the [scheduler](delegate/jobs.ts) and [scheduler tests](delegate/tests/jobs.test.ts).
+
 ## Install
+
+This README tracks repository source. npm packages and Git tags may be behind it; check the version you install before relying on newer features.
 
 ```bash
 pi install npm:@kvidzibo/pi-delegate
