@@ -102,7 +102,7 @@ type InternalJob = {
 	local: boolean;
 	task: string;
 	timeoutMs: number;
-	run: JobRun;
+	run?: JobRun;
 	status: JobStatus;
 	controller: AbortController;
 	progress: ProgressState;
@@ -357,7 +357,7 @@ export class JobScheduler {
 			job.status = "failed";
 			job.stopReason = "aborted";
 			job.exitCode = 1;
-			this.detachAbort(job);
+			this.releaseRuntime(job);
 			try {
 				this.notify(job);
 			} finally {
@@ -520,6 +520,13 @@ export class JobScheduler {
 		job.cancelAbort = undefined;
 	}
 
+	private releaseRuntime(job: InternalJob): void {
+		this.detachAbort(job);
+		// Keep collectible snapshots, not closures retaining the process and uncapped RPC state.
+		job.control = undefined;
+		job.run = undefined;
+	}
+
 	private pump(): void {
 		if (this.pumping) {
 			this.pumpAgain = true;
@@ -553,7 +560,9 @@ export class JobScheduler {
 
 	private async execute(job: InternalJob): Promise<void> {
 		try {
-			const result = await job.run(
+			const run = job.run;
+			if (!run) throw new Error("delegate job has no runner.");
+			const result = await run(
 				this.handle(job),
 				job.controller.signal,
 				(event) => {
@@ -565,7 +574,7 @@ export class JobScheduler {
 					this.notify(job);
 				},
 				(ctl) => {
-					job.control = ctl;
+					if (job.status === "running") job.control = ctl;
 				},
 			);
 			if (job.status === "queued") return;
@@ -580,7 +589,7 @@ export class JobScheduler {
 				job.exitCode = 1;
 			}
 		} finally {
-			this.detachAbort(job);
+			this.releaseRuntime(job);
 			try {
 				this.notify(job);
 			} finally {

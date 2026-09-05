@@ -6,7 +6,8 @@ Shared Pi child process helpers. Not loaded as an extension.
 
 - nest / cwd / task / UTF-8 truncate
 - `pi --mode rpc` invocation, temp prompt, bounded LF-only JSONL framing (`jsonl.ts`), stdin prompt/steer/abort
-- prompt-rejection cleanup and error preservation; all text blocks in the final assistant message
+- prompt-rejection cleanup; provider errors before partial answers; explicit failed/incomplete output on model token limits
+- all text blocks in the final assistant message; canonical `provider/id` from Pi's separate provider/model metadata
 - optional `hardTimeoutMs` kill, process-group kill (injectable in tests), dialog UI cancel
 - child diag (cmd, pid, JSONL event types); empty assistant text becomes that dump
 

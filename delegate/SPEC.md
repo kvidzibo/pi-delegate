@@ -15,7 +15,7 @@ delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts tg.ts jobs.ts notify.ts
   prompts/{recon,implement,review,oracle}.md
-  tests/{config,spawn,display,tg,jobs,notify}.test.ts
+  tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
 
 Repo root has `package.json` (`pi.extensions: ["./delegate"]`). This directory has no package.json.
@@ -58,7 +58,7 @@ Foreground `timeoutMs` expiry auto-promotes the job to background, detaches pare
 
 Collect waits until terminal, wait budget, or `checkIntervalMs` with no child events. 60s sampling is internal and must not add parent-token receipts while the child is making progress.
 
-`session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts.
+`session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts. Terminal jobs (including queued cancellation and thrown runners) drop runner/control references, retaining only collectible snapshots rather than subprocess closures and uncapped RPC state. Late control callbacks cannot reattach to terminal jobs.
 
 Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms. If the parent agent is still running (`ctx.isIdle()` false), keep holding — do not `sendMessage` yet. `sendMessage` queues a follow-up that collect cannot unsend. Once idle and not consumed, `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it, including mid-turn collect after the job already finished.
 
@@ -92,6 +92,10 @@ Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (
 
 Correlated rejection of the initial RPC prompt (`id: p1`, `success: false`) is a terminal error: preserve its message, close stdin, terminate the child, and release the slot. Unrelated responses do not terminate the run. Keep the first terminal cause when errors, timeout, or abort race.
 
+Preserve the last assistant message's provider error separately from its text and return the error before any partial answer. A successful retry replaces earlier errors. Model token-limit termination (`stopReason: "length"`) is a failure with an explicit incomplete-answer explanation, including thinking-only/empty answers. The explanation precedes partial text and is subject to the normal output cap. A natural completion shortened only by `maxOutputBytes` remains successful.
+
+Build the completed model identifier from Pi's separate `message.provider` and `message.model` fields, without stripping slashes from a namespaced model ID. If either field is missing or empty, retain the last known identifier (initially the configured model).
+
 The stdout reader bounds each LF-delimited record to 8 MiB, independently of `maxOutputBytes` and pipe chunk boundaries. Discard recognized oversized non-answer events (including cumulative transcripts and tool-result images); never silently discard an oversized assistant/control record or unknown layout. Those fail as `protocol-error` with an explicit limit message. Log discarded records as `oversized_event_skipped`. Final answer extraction joins all text blocks of the last assistant message in source order, excluding thinking/tools.
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
@@ -104,7 +108,9 @@ Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`cod
 
 Unit children and termination are mocked; never send OS signals for fake PIDs. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
 
-Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, and explicit bounded failure for oversized useful/junk records.
+Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, explicit bounded failure for oversized useful/junk records, provider errors ahead of partial output, token-limit failures, and qualified model identities.
+
+Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 
