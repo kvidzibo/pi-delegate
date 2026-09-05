@@ -15,7 +15,7 @@ function start(t: TestContext, overrides: Partial<RunPiChildInput> = {}) {
 	const pending = runMockPiChild({
 		cwd: process.cwd(), model: "ollama/qwen3:8b", task: "mock-only outcome regression",
 		hardTimeoutMs: 0, maxOutputBytes: 65536, promptSourcePath: PROMPT,
-		tmpPrefix: "pi-delegate-outcomes-", env: {}, buildArgs: () => [], spawnFn: () => proc,
+		env: {}, buildArgs: () => [], spawnFn: () => proc,
 		...overrides,
 	});
 	t.after(async () => { proc.close(1); await pending; });

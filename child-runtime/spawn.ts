@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
@@ -71,7 +70,6 @@ export interface RunPiChildInput {
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
-	tmpPrefix: string;
 	env: NodeJS.Dict<string>;
 	buildArgs: (promptPath: string) => string[];
 	signal?: AbortSignal;
@@ -277,18 +275,6 @@ export function tailBytes(text: string, maxBytes: number): string {
 	return truncateToUtf8Bytes(buf.subarray(buf.byteLength - maxBytes).toString("utf8"), maxBytes);
 }
 
-function writeTempPrompt(sourcePath: string, tmpPrefix: string): { dir: string; filePath: string } {
-	const dir = mkdtempSync(join(tmpdir(), tmpPrefix));
-	try {
-		const filePath = join(dir, "prompt.md");
-		writeFileSync(filePath, readFileSync(sourcePath), { encoding: "utf8", mode: 0o600 });
-		return { dir, filePath };
-	} catch (error) {
-		rmSync(dir, { recursive: true, force: true });
-		throw error;
-	}
-}
-
 function resolveStopReason(input: {
 	stopKind?: "aborted" | "hard_timeout";
 	failure?: { reason: "error" | "protocol-error"; text: string };
@@ -312,201 +298,197 @@ function writeStdin(stdin: { write: (chunk: string) => unknown; destroyed?: bool
 }
 
 export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
-	let tmp: { dir: string; filePath: string } | undefined;
-	try {
-		tmp = writeTempPrompt(input.promptSourcePath, input.tmpPrefix);
-		const args = input.buildArgs(tmp.filePath);
-		const invocation = getPiInvocation(args);
-		const childEnv = { ...input.env } as NodeJS.ProcessEnv;
-		const started = Date.now();
-		const spawnFn = input.spawnFn ?? spawn;
-		const terminate = input.killTree ?? killChildTree;
+	// The caller owns the private, per-run archive snapshot. Fail before spawning if unreadable.
+	readFileSync(input.promptSourcePath);
+	const args = input.buildArgs(input.promptSourcePath);
+	const invocation = getPiInvocation(args);
+	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
+	const started = Date.now();
+	const spawnFn = input.spawnFn ?? spawn;
+	const terminate = input.killTree ?? killChildTree;
 
-		let stderr = "";
-		let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
-		let timedOut = false;
-		let aborted = false;
-		let stopKind: "aborted" | "hard_timeout" | undefined;
-		let failure: { reason: "error" | "protocol-error"; text: string } | undefined;
-		let settled = false;
-		let pid: number | undefined;
-		let eventCount = 0;
-		const events: string[] = [];
+	let stderr = "";
+	let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
+	let timedOut = false;
+	let aborted = false;
+	let stopKind: "aborted" | "hard_timeout" | undefined;
+	let failure: { reason: "error" | "protocol-error"; text: string } | undefined;
+	let settled = false;
+	let pid: number | undefined;
+	let eventCount = 0;
+	const events: string[] = [];
 
-		const exitCode = await new Promise<number>((resolve, reject) => {
-			const proc = spawnFn(invocation.command, invocation.args, {
-				cwd: input.cwd,
-				env: childEnv,
-				shell: false,
-				stdio: ["pipe", "pipe", "pipe"],
-				detached: process.platform !== "win32",
-			});
-			pid = proc.pid;
-			let closed = false;
-			let hardTimer: ReturnType<typeof setTimeout> | undefined;
-			proc.stdin?.on("error", () => {
-				/* EPIPE after exit must not crash the parent */
-			});
+	const exitCode = await new Promise<number>((resolve, reject) => {
+		const proc = spawnFn(invocation.command, invocation.args, {
+			cwd: input.cwd,
+			env: childEnv,
+			shell: false,
+			stdio: ["pipe", "pipe", "pipe"],
+			detached: process.platform !== "win32",
+		});
+		pid = proc.pid;
+		let closed = false;
+		let hardTimer: ReturnType<typeof setTimeout> | undefined;
+		proc.stdin?.on("error", () => {
+			/* EPIPE after exit must not crash the parent */
+		});
 
-			const finish = (code: number): void => {
-				if (closed) return;
-				closed = true;
-				if (hardTimer) clearTimeout(hardTimer);
-				input.signal?.removeEventListener("abort", onAbort);
-				resolve(code);
-			};
+		const finish = (code: number): void => {
+			if (closed) return;
+			closed = true;
+			if (hardTimer) clearTimeout(hardTimer);
+			input.signal?.removeEventListener("abort", onAbort);
+			resolve(code);
+		};
 
-			const send = (command: Record<string, unknown>): boolean => writeStdin(proc.stdin, encodeRpc(command));
+		const send = (command: Record<string, unknown>): boolean => writeStdin(proc.stdin, encodeRpc(command));
 
-			const closeStdin = (): void => {
-				try {
-					proc.stdin?.end();
-				} catch {
-					/* already gone */
-				}
-			};
-
-			const fail = (reason: "error" | "protocol-error", text: string): void => {
-				if (closed || stopKind || failure) return;
-				failure = { reason, text };
-				closeStdin();
-				terminate(proc);
-			};
-
-			const consume = (line: string): void => {
-				if (closed || stopKind || failure || !line.trim()) return;
-				try {
-					const parsed = JSON.parse(line);
-					const type = jsonlEventType(parsed);
-					if (type) {
-						eventCount += 1;
-						rememberEventType(events, type);
-					}
-					if (type === "response" && parsed.id === "p1" && parsed.command === "prompt" && parsed.success === false) {
-						fail("error", typeof parsed.error === "string" && parsed.error.trim() ? parsed.error : "Child rejected the RPC prompt.");
-						return;
-					}
-					const cancel = uiCancelResponse(parsed);
-					if (cancel) writeStdin(proc.stdin, cancel);
-					state = applyAssistantSnapshot(state, parsed);
-					if (isAgentSettled(parsed) && !settled) {
-						settled = true;
-						closeStdin();
-					}
-					try {
-						input.onEvent?.(parsed);
-					} catch {
-						// ignore progress callback errors
-					}
-				} catch {
-					// ignore non-JSON
-				}
-			};
-
-			const onAbort = (): void => {
-				if (closed || failure || stopKind) return;
-				aborted = true;
-				if (!stopKind) stopKind = "aborted";
-				send({ type: "abort" });
-				terminate(proc);
-			};
-
+		const closeStdin = (): void => {
 			try {
-				input.onControl?.({
-					wrap: (message) => {
-						if (settled || aborted || timedOut || closed || failure) return false;
-						return send({ type: "steer", message: message && message.trim() ? message : DEFAULT_WRAP_MESSAGE });
-					},
-				});
+				proc.stdin?.end();
 			} catch {
-				/* control callback must not break the child */
+				/* already gone */
 			}
+		};
 
-			if (input.hardTimeoutMs > 0) {
-				hardTimer = setTimeout(() => {
-					if (closed || failure || stopKind) return;
-					timedOut = true;
-					if (!stopKind) stopKind = "hard_timeout";
-					terminate(proc);
-				}, input.hardTimeoutMs);
+		const fail = (reason: "error" | "protocol-error", text: string): void => {
+			if (closed || stopKind || failure) return;
+			failure = { reason, text };
+			closeStdin();
+			terminate(proc);
+		};
+
+		const consume = (line: string): void => {
+			if (closed || stopKind || failure || !line.trim()) return;
+			try {
+				const parsed = JSON.parse(line);
+				const type = jsonlEventType(parsed);
+				if (type) {
+					eventCount += 1;
+					rememberEventType(events, type);
+				}
+				if (type === "response" && parsed.id === "p1" && parsed.command === "prompt" && parsed.success === false) {
+					fail("error", typeof parsed.error === "string" && parsed.error.trim() ? parsed.error : "Child rejected the RPC prompt.");
+					return;
+				}
+				const cancel = uiCancelResponse(parsed);
+				if (cancel) writeStdin(proc.stdin, cancel);
+				state = applyAssistantSnapshot(state, parsed);
+				if (isAgentSettled(parsed) && !settled) {
+					settled = true;
+					closeStdin();
+				}
+				try {
+					input.onEvent?.(parsed);
+				} catch {
+					// ignore progress callback errors
+				}
+			} catch {
+				// ignore non-JSON
 			}
+		};
 
-			if (input.signal) {
-				if (input.signal.aborted) onAbort();
-				else input.signal.addEventListener("abort", onAbort, { once: true });
-			}
+		const onAbort = (): void => {
+			if (closed || failure || stopKind) return;
+			aborted = true;
+			if (!stopKind) stopKind = "aborted";
+			send({ type: "abort" });
+			terminate(proc);
+		};
 
-			proc.stdout?.setEncoding("utf8");
-			proc.stderr?.setEncoding("utf8");
-			const reader = new JsonlReader({
-				maxBytes: RPC_RECORD_LIMIT_BYTES,
-				onLine: consume,
-				onOversized: (prefix) => {
-					if (canDiscardOversizedEvent(prefix)) {
-						consume('{"type":"oversized_event_skipped"}');
-					} else {
-						fail("protocol-error", `Child RPC record exceeds the ${RPC_RECORD_LIMIT_BYTES}-byte transport limit.`);
-					}
+		try {
+			input.onControl?.({
+				wrap: (message) => {
+					if (settled || aborted || timedOut || closed || failure) return false;
+					return send({ type: "steer", message: message && message.trim() ? message : DEFAULT_WRAP_MESSAGE });
 				},
 			});
-			proc.stdout?.on("data", (chunk: string) => {
-				if (!closed && !stopKind && !failure) reader.write(chunk);
-			});
-			proc.stderr?.on("data", (chunk: string) => {
-				stderr += chunk;
-				if (Buffer.byteLength(stderr, "utf8") > STDERR_TAIL_BYTES * 4) {
-					stderr = tailBytes(stderr, STDERR_TAIL_BYTES);
-				}
-			});
-			proc.on("error", (error) => {
-				closed = true;
-				if (hardTimer) clearTimeout(hardTimer);
-				input.signal?.removeEventListener("abort", onAbort);
-				reject(error);
-			});
-			proc.on("close", (code) => {
-				reader.end();
-				finish(code ?? 1);
-			});
-			if (!stopKind && !failure) send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
-		});
+		} catch {
+			/* control callback must not break the child */
+		}
 
-		const stopReason = resolveStopReason({ stopKind, failure, state });
-		// Put the cause before partial output so the answer cap cannot hide it.
-		const explanation = stopReason === "length"
-			? "Child response reached the model output token limit; the answer is incomplete."
-			: stopReason === "error" ? state.errorMessage : undefined;
-		const assistantText = explanation
-			? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
-			: state.text || state.errorMessage || "";
-		const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
-		const diag: ChildDiag = {
-			command: invocation.command,
-			args: redactChildArgs(invocation.args),
-			hardTimeoutMs: input.hardTimeoutMs,
-			durationMs: Date.now() - started,
-			eventCount,
-			events,
-			sawAssistant: state.sawAssistant,
-		};
-		if (pid !== undefined) diag.pid = pid;
-		const dump = summarizeChildRun({
-			...diag,
-			exitCode,
-			stopReason,
-			stderrTail,
+		if (input.hardTimeoutMs > 0) {
+			hardTimer = setTimeout(() => {
+				if (closed || failure || stopKind) return;
+				timedOut = true;
+				if (!stopKind) stopKind = "hard_timeout";
+				terminate(proc);
+			}, input.hardTimeoutMs);
+		}
+
+		if (input.signal) {
+			if (input.signal.aborted) onAbort();
+			else input.signal.addEventListener("abort", onAbort, { once: true });
+		}
+
+		proc.stdout?.setEncoding("utf8");
+		proc.stderr?.setEncoding("utf8");
+		const reader = new JsonlReader({
+			maxBytes: RPC_RECORD_LIMIT_BYTES,
+			onLine: consume,
+			onOversized: (prefix) => {
+				if (canDiscardOversizedEvent(prefix)) {
+					consume('{"type":"oversized_event_skipped"}');
+				} else {
+					fail("protocol-error", `Child RPC record exceeds the ${RPC_RECORD_LIMIT_BYTES}-byte transport limit.`);
+				}
+			},
 		});
-		return {
-			text: finalizeChildText(failure?.text ?? assistantText, dump, input.maxOutputBytes),
-			exitCode,
-			stderrTail,
-			model: state.model,
-			stopReason,
-			diag,
-		};
-	} finally {
-		if (tmp) rmSync(tmp.dir, { recursive: true, force: true });
-	}
+		proc.stdout?.on("data", (chunk: string) => {
+			if (!closed && !stopKind && !failure) reader.write(chunk);
+		});
+		proc.stderr?.on("data", (chunk: string) => {
+			stderr += chunk;
+			if (Buffer.byteLength(stderr, "utf8") > STDERR_TAIL_BYTES * 4) {
+				stderr = tailBytes(stderr, STDERR_TAIL_BYTES);
+			}
+		});
+		proc.on("error", (error) => {
+			closed = true;
+			if (hardTimer) clearTimeout(hardTimer);
+			input.signal?.removeEventListener("abort", onAbort);
+			reject(error);
+		});
+		proc.on("close", (code) => {
+			reader.end();
+			finish(code ?? 1);
+		});
+		if (!stopKind && !failure) send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
+	});
+
+	const stopReason = resolveStopReason({ stopKind, failure, state });
+	// Put the cause before partial output so the answer cap cannot hide it.
+	const explanation = stopReason === "length"
+		? "Child response reached the model output token limit; the answer is incomplete."
+		: stopReason === "error" ? state.errorMessage : undefined;
+	const assistantText = explanation
+		? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
+		: state.text || state.errorMessage || "";
+	const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
+	const diag: ChildDiag = {
+		command: invocation.command,
+		args: redactChildArgs(invocation.args),
+		hardTimeoutMs: input.hardTimeoutMs,
+		durationMs: Date.now() - started,
+		eventCount,
+		events,
+		sawAssistant: state.sawAssistant,
+	};
+	if (pid !== undefined) diag.pid = pid;
+	const dump = summarizeChildRun({
+		...diag,
+		exitCode,
+		stopReason,
+		stderrTail,
+	});
+	return {
+		text: finalizeChildText(failure?.text ?? assistantText, dump, input.maxOutputBytes),
+		exitCode,
+		stderrTail,
+		model: state.model,
+		stopReason,
+		diag,
+	};
 }
 
 export function promptSourceFromDir(dir: string, name = "child.md"): string {

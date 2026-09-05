@@ -13,7 +13,7 @@ function childInput(overrides: Partial<RunPiChildInput> = {}): RunPiChildInput {
 	return {
 		cwd: process.cwd(), model: "test/model", task: "mock-only regression",
 		hardTimeoutMs: 0, maxOutputBytes: 65536, promptSourcePath: PROMPT,
-		tmpPrefix: "pi-delegate-regression-", env: {}, buildArgs: () => [], ...overrides,
+		env: {}, buildArgs: () => [], ...overrides,
 	};
 }
 

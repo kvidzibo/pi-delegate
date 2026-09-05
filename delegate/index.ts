@@ -10,7 +10,6 @@ import {
 	delegateTargetLine,
 	formatJobBoard,
 	knownKind,
-	type JobBoardRow,
 } from "./display.ts";
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
@@ -44,21 +43,6 @@ type ViewContext = {
 	isError?: boolean;
 	invalidate?: () => void;
 };
-
-function snapshotBoard(snap: JobSnapshot): JobBoardRow | undefined {
-	if (snap.status !== "queued" && snap.status !== "running") return undefined;
-	const row: JobBoardRow = {
-		id: snap.id,
-		kind: snap.kind,
-		model: snap.model,
-		local: snap.local,
-		status: snap.status,
-	};
-	if (snap.reason) row.reason = snap.reason;
-	if (snap.tg) row.tg = snap.tg;
-	if (snap.current) row.current = snap.current;
-	return row;
-}
 
 function receiptText(snap: JobSnapshot): string {
 	if (snap.status === "queued") {
@@ -171,10 +155,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
-		const rows = scheduler
-			.active()
-			.map(snapshotBoard)
-			.filter((row): row is JobBoardRow => Boolean(row));
+		const rows = scheduler.active();
 		if (rows.length === 0) {
 			ui.setWidget("delegate", undefined);
 			return;
@@ -327,6 +308,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			cancel: Type.Optional(Type.Boolean({ description: "With jobId: abort and kill the child." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const update = (result: Parameters<NonNullable<typeof onUpdate>>[0]): void => {
+				try { onUpdate?.(result); }
+				catch { /* Progress observers must never change job acceptance or outcomes. */ }
+			};
 			try {
 				assertNotNested(process.env, "delegate");
 				bindUi(ctx);
@@ -335,7 +320,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 
 				const publish = (snap: JobSnapshot, background: boolean, pending: boolean): void => {
 					updateCard(snap);
-					onUpdate?.({
+					update({
 						content: [{ type: "text" as const, text: delegateTargetLine(snap.kind, snap.model) }],
 						details: {
 							...uiDetails(snap, { pending, background, callType: parsed.mode, operation }),
@@ -380,7 +365,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
 				const resolved = resolveAgent(kind, parsed.modelOverride, config);
 				const local = isLocalModel(resolved.model);
-				onUpdate?.({
+				update({
 					content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
 					details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
 				});

@@ -56,12 +56,30 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		entries.push({ type: "message", message: { role: "toolResult", toolName: "delegate", toolCallId: id, details: result.details } });
 		return { row: r, result };
 	};
+	// A dead progress observer must not hide an accepted job or strand its archive.
+	for (const throwAt of [1, 2]) {
+		let updates = 0;
+		const beforeRuns = runs.length;
+		const accepted = await first.tool.execute(`throwing-${throwAt}`, {
+			kind: "review", task: "mock observer", model: "xai/grok-4.6", background: true,
+		}, undefined, () => { if (++updates === throwAt) throw new Error("dead observer"); }, testCtx);
+		assert.equal(accepted.details.ok, true);
+		assert.ok(accepted.details.jobId);
+		assert.equal(runs.length, beforeRuns + 1);
+		runs.at(-1)!.resolve(success);
+		const collected = await first.tool.execute(`throwing-collect-${throwAt}`, { jobId: accepted.details.jobId }, undefined,
+			() => { throw new Error("dead collector"); }, testCtx);
+		assert.equal(collected.details.ok, true);
+		assert.match(collected.content[0].text, /Review complete/);
+		assert.ok(entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === `throwing-${throwAt}`));
+	}
+	const completedBeforeOriginal = entries.filter((e) => e.customType === CARD_STATE_TYPE).length;
 	const original = await launch(first.tool, "origin");
 	const jobId = original.result.details.jobId;
 	assert.match(original.row.render(), /Task: Review timeout and abort handling/);
 	assert.match(original.row.render(), /Running/);
 	assert.equal((original.row.render().match(/grok-4.6/g) ?? []).length, 1);
-	const child = runs[0];
+	const child = runs.at(-1)!;
 	child.input.onEvent?.({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "SECRET raw **File/line:** reasoning" } });
 	assert.doesNotMatch(original.row.render(), /SECRET|File\/line/);
 	child.input.onEvent?.({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "cat > /tmp/test.mjs << 'EOF'" } });
@@ -76,8 +94,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const before = original.row.invalidations();
 	child.resolve(success);
 	// Wait through the real scheduler/accounting, but do not collect through the tool yet.
-	for (let attempt = 0; attempt < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE); attempt++) await new Promise((r) => setTimeout(r, 5));
-	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, 1);
+	for (let attempt = 0; attempt < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "origin"); attempt++) await new Promise((r) => setTimeout(r, 5));
+	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1);
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
 	const completed = original.row.render();
 	assert.match(completed, /✓ Finished/); assert.match(completed, /Review complete/);
@@ -89,13 +107,18 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const collectArgs = { jobId }; const collectRow = row(first.tool, "collect", collectArgs);
 	const collected = await first.tool.execute("collect", collectArgs, undefined, collectRow.update, testCtx); collectRow.update(collected, false);
 	assert.match(collectRow.render(), /result collected/); assert.doesNotMatch(collectRow.render(), /Review complete|test.mjs/);
-	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, 1, "collect must not persist a duplicate card");
+	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1, "collect must not persist a duplicate card");
 	assert.match(collected.content[0].text, /Last detail/, "parent still receives the full result");
 	await first.handlers.get("session_shutdown")?.();
 
 	const restored = make(); await restored.handlers.get("session_start")?.({}, testCtx);
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
 	assert.match(oldRow.render(), /✓ Finished/); assert.doesNotMatch(oldRow.render(), /Running/);
+	for (const id of ["seed-1", "seed-2"]) {
+		const seed = await launch(restored.tool, id);
+		runs.at(-1)!.resolve(success);
+		await restored.tool.execute(`${id}-collect`, { jobId: seed.result.details.jobId }, undefined, undefined, testCtx);
+	}
 	const next = await launch(restored.tool, "new-origin");
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
 	assert.match(oldRow.render(), /✓ Finished/); assert.match(next.row.render(), /Running/);

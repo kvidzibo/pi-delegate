@@ -63,7 +63,7 @@ Optional tool argument `model` overrides that call only. Kind keeps tools and pr
 
 In TUI/RPC, a finished background job injects a short follow-up notice (preview only; full result still via `jobId`). Failures are visible; successes stay quiet in the transcript. Collecting a finished job suppresses the notice, including when the job finished mid-turn (notice waits until the parent is idle). Print/JSON stays pull-only. `session_shutdown` does not notify.
 
-Background `implement` can race parent file writes.
+Background `implement` can race parent file writes. Progress callback failures do not invalidate accepted jobs or hide their collection receipts. Tool activity is correlated by tool-call ID, so identical or overlapping calls remain distinct; ID-less legacy events retain name-based matching.
 
 Child is always a `pi` process (`--mode rpc --model <id>`). Codex/Anthropic/Ollama are providers behind that model id, not a separate CLI. Task goes on stdin as an RPC prompt. Each child end appends one JSON line to `~/.pi/agent/delegate.log` (cmd, pid, exit, JSONL event types, stderr). Task text is not on argv. `PI_DELEGATE_LOG=0` disables. `PI_DELEGATE_LOG=/path` overrides. Empty-answer tool results include the same dump so the parent is not blind.
 
@@ -126,6 +126,8 @@ Live cumulative usage is replaced, not repeatedly added; final assistant/tool/su
 ```
 
 Reports separate local/hosted token buckets, outcomes, completed runtime and incomplete usage, and list the latest ten transcript paths. Expand a delegate result to see its transcript path. Inspect without model calls using `pi --export /path/to/session.jsonl /tmp/child.html`. To continue a child conversation, **fork it into a normal session** rather than modifying the archive in place.
+
+The runtime passes the already-private archived `system-prompt.md` directly to Pi after a readability check, rather than creating a second temporary copy. The archive owns its lifetime; completion, cancellation, and failure do not delete it.
 
 The per-run native transcript and metadata are the source of truth. Reports never sum repeated `jobId` collections or duplicated export rows. Export consumers must take the **highest `revision` per `runId`** (last row breaks equal-revision ties), not sum all rows. A delayed rebuild cannot supersede a newer terminal revision; `rebuild` appends corrections and never deletes historical rows. Atomic per-run metadata and separate UUID directories avoid cross-process lost updates. Unfinished runs are recovered as incomplete, without assuming another Pi process is dead or resuming its work. Missing/corrupt usage summaries can be reconstructed from native entries when identifying metadata remains intact; unreadable records are reported, not silently treated as zero.
 

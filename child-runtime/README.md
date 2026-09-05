@@ -5,7 +5,7 @@ Shared Pi child process helpers. Not loaded as an extension.
 `delegate` keeps argv, env, slots, and agent config. This package owns:
 
 - nest / cwd / task / UTF-8 truncate
-- `pi --mode rpc` invocation, temp prompt, bounded LF-only JSONL framing (`jsonl.ts`), stdin prompt/steer/abort
+- `pi --mode rpc` invocation, readability-checked caller-owned archived prompt, bounded LF-only JSONL framing (`jsonl.ts`), stdin prompt/steer/abort
 - prompt-rejection cleanup; provider errors before partial answers; explicit failed/incomplete output on model token limits
 - all text blocks in the final assistant message; canonical `provider/id` from Pi's separate provider/model metadata
 - optional `hardTimeoutMs` kill, process-group kill (injectable in tests), dialog UI cancel
