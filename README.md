@@ -69,13 +69,21 @@ Child is always a `pi` process (`--mode rpc --model <id>`). Codex/Anthropic/Olla
 
 Then `/reload` (or restart Pi) so the overlay is picked up.
 
+## Errors and output limits
+
+Rejected RPC prompts (for example, missing credentials) fail immediately with the child's error, clean up the process, and release its slot. Validation and child failures are marked as errors in Pi and show a short explanation even when collapsed; expand for the full error.
+
+The final answer includes every text block from the last assistant message, in order. `maxOutputBytes` (default 65536) caps the returned text with a truncation notice. This is separate from the 8-MiB per-record RPC transport limit. Oversized, recognized non-answer events (such as cumulative transcripts and image tool results) are discarded without killing the child; their progress detail may be absent. Oversized assistant/control events or unknown layouts fail explicitly rather than silently returning an earlier answer. Discards appear as `oversized_event_skipped` in diagnostic event types.
+
 ## Tests
 
 ```bash
-npm test          # unit + factory load (needs `pi` on PATH)
-npm run test:unit # no Pi required; this is what CI runs
+npm run test:unit       # no Pi required; this is what CI runs
+xvfb-run -a npm test    # unit + CLI load/UI checks (Linux; needs `pi` and Xvfb)
 ```
 
-No live child. Factory load is omitted from GitHub Actions because runners have no `pi`.
+Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models or start delegate workers. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
+
+CLI load/UI checks are omitted from GitHub Actions because runners have no `pi`.
 
 See `delegate/SPEC.md`.

@@ -69,6 +69,8 @@ export function renderChildCall(input: {
 export function renderChildResult(input: {
 	theme: ThemeFg;
 	details: Record<string, unknown> | undefined;
+	content?: ReadonlyArray<{ type: string; text?: string }>;
+	isError?: boolean;
 	expanded: boolean;
 	isPartial: boolean;
 	lastComponent?: unknown;
@@ -80,8 +82,19 @@ export function renderChildResult(input: {
 	panel.lines = done.map((item) => paintActivity(input.theme, item));
 	if (current && current.name !== "thinking") panel.lines.push(paintActivity(input.theme, current));
 	panel.extra = [];
+	const contentText = (input.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+	const answer = typeof details.answer === "string" ? details.answer : contentText;
+	if (!input.isPartial && (input.isError || details.ok === false || details.status === "failed")) {
+		const error = contentText || answer || "delegate failed (no error details)";
+		const lines = error.split("\n");
+		const visible = input.expanded ? lines : lines.filter((line) => line.trim()).slice(0, 3);
+		panel.extra.push(...visible.map((line) => input.theme.fg("error", line)));
+		if (!input.expanded && lines.filter((line) => line.trim()).length > 3) {
+			panel.extra.push(input.theme.fg("dim", "… expand for full error"));
+		}
+		return panel;
+	}
 	if (!input.isPartial && input.expanded) {
-		const answer = typeof details.answer === "string" ? details.answer : "";
 		const task = typeof details.task === "string" ? details.task : "";
 		const status = typeof details.status === "string" ? details.status : "";
 		if (answer) {

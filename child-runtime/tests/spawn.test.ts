@@ -5,14 +5,13 @@ import {
 	extractAssistantText,
 	finalizeChildText,
 	jsonlEventType,
-	jsonlRecordLimit,
 	killChildTree,
 	redactChildArgs,
 	rememberEventType,
 	summarizeChildRun,
 } from "../spawn.ts";
 
-test("extracts last assistant text from message_end", () => {
+test("extracts all assistant text blocks from message_end", () => {
 	const extracted = extractAssistantText({
 		type: "message_end",
 		message: {
@@ -27,7 +26,7 @@ test("extracts last assistant text from message_end", () => {
 		},
 	});
 	assert.equal(extracted.assistant, true);
-	assert.equal(extracted.text, "final answer");
+	assert.equal(extracted.text, "first\nfinal answer");
 	assert.equal(extracted.model, "local-qwen38/qwen38-q4km");
 	assert.equal(extracted.stopReason, "end");
 	assert.deepEqual(extractAssistantText({ type: "agent_end" }), { assistant: false, text: "" });
@@ -118,11 +117,6 @@ test("finalizeChildText keeps assistant text and caps dump", () => {
 	const tiny = finalizeChildText("héllo", dump, 8);
 	assert.ok(Buffer.byteLength(tiny, "utf8") <= 8);
 	assert.equal(tiny.includes("cmd:"), false);
-});
-
-test("jsonl record limit stays bounded", () => {
-	assert.ok(jsonlRecordLimit(65536) <= 1_048_576);
-	assert.ok(jsonlRecordLimit(100) >= 262144);
 });
 
 test("SIGKILL still fires after SIGTERM even if killed is true", () => {

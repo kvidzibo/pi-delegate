@@ -1,20 +1,17 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import type { ChildProcess } from "node:child_process";
 import {
 	DEFAULT_WRAP_MESSAGE,
 	encodeRpc,
 	isAgentSettled,
-	runPiChild,
 	uiCancelResponse,
 	type ChildControl,
 	type SpawnFn,
 } from "../spawn.ts";
+import { mockChild, runMockPiChild as runPiChild } from "./helpers.ts";
 
 test("rpc helpers", () => {
 	assert.equal(encodeRpc({ type: "abort" }), '{"type":"abort"}\n');
@@ -27,35 +24,6 @@ test("rpc helpers", () => {
 	assert.equal(uiCancelResponse({ type: "extension_ui_request", id: "u1", method: "notify" }), undefined);
 	assert.ok(DEFAULT_WRAP_MESSAGE.includes("Write the remaining answer"));
 });
-
-function mockChild(): ChildProcess & { stdinBytes: string } {
-	const stdin = new PassThrough();
-	const stdout = new PassThrough();
-	const stderr = new PassThrough();
-	const proc = new EventEmitter() as EventEmitter & ChildProcess & { stdinBytes: string };
-	proc.stdin = stdin;
-	proc.stdout = stdout;
-	proc.stderr = stderr;
-	proc.pid = 4242;
-	proc.exitCode = null;
-	proc.signalCode = null;
-	proc.stdinBytes = "";
-	stdin.on("data", (chunk: Buffer | string) => {
-		proc.stdinBytes += chunk.toString();
-	});
-	stdin.on("end", () => {
-		if (proc.exitCode !== null) return;
-		proc.exitCode = 0;
-		queueMicrotask(() => proc.emit("close", 0));
-	});
-	proc.kill = () => {
-		if (proc.exitCode !== null) return true;
-		proc.exitCode = 1;
-		queueMicrotask(() => proc.emit("close", 1));
-		return true;
-	};
-	return proc;
-}
 
 test("rpc child prompts, settles, closes stdin, returns assistant text", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-rpc-"));
