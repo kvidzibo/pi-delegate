@@ -71,7 +71,9 @@ Then `/reload` (or restart Pi) so the overlay is picked up.
 
 ## Errors and output limits
 
-Rejected RPC prompts (for example, missing credentials) fail immediately with the child's error, clean up the process, and release its slot. Validation and child failures are marked as errors in Pi and show a short explanation even when collapsed; expand for the full error.
+Rejected RPC prompts (for example, missing credentials) fail immediately with the child's error, clean up the process, and release its slot. Provider errors appear before any partial answer so output truncation cannot hide the cause. A model output-token cutoff (`stopReason: "length"`) is a failed job with an explicit incomplete-answer warning, even if no answer text was produced. Any partial answer remains available within the output cap. Validation and child failures are marked as errors in Pi and show a short explanation even when collapsed; expand for the full error.
+
+Completed jobs retain capped results for later `jobId` collection within the session, but release runner/control references that would otherwise retain the subprocess and uncapped RPC state. Completed model identifiers preserve Pi's separate provider and model fields as `provider/id`; incomplete model metadata leaves the last known identifier unchanged (initially the configured model).
 
 The final answer includes every text block from the last assistant message, in order. `maxOutputBytes` (default 65536) caps the returned text with a truncation notice. This is separate from the 8-MiB per-record RPC transport limit. Oversized, recognized non-answer events (such as cumulative transcripts and image tool results) are discarded without killing the child; their progress detail may be absent. Oversized assistant/control events or unknown layouts fail explicitly rather than silently returning an earlier answer. Discards appear as `oversized_event_skipped` in diagnostic event types.
 

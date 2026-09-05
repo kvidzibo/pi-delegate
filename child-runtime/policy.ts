@@ -78,6 +78,7 @@ export function isFailedChildResult(result: { exitCode: number; stopReason?: str
 	const stop = result.stopReason;
 	if (
 		stop === "error" ||
+		stop === "length" ||
 		stop === "aborted" ||
 		stop === "timeout" ||
 		stop === "hard_timeout" ||

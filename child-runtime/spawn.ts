@@ -33,6 +33,7 @@ export interface ChildResult {
 export interface AssistantSnapshot {
 	assistant: boolean;
 	text: string;
+	provider?: string;
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
@@ -42,6 +43,7 @@ export interface AssistantState {
 	text: string;
 	model: string;
 	stopReason?: string;
+	errorMessage?: string;
 	sawAssistant: boolean;
 }
 
@@ -177,6 +179,7 @@ export function extractAssistantText(event: unknown): AssistantSnapshot {
 	if (record.type !== "message_end" || !record.message || typeof record.message !== "object") return empty;
 	const message = record.message as {
 		role?: unknown;
+		provider?: unknown;
 		model?: unknown;
 		stopReason?: unknown;
 		errorMessage?: unknown;
@@ -196,8 +199,9 @@ export function extractAssistantText(event: unknown): AssistantSnapshot {
 	const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 	return {
 		assistant: true,
-		text: text || errorMessage || "",
-		model: typeof message.model === "string" ? message.model : undefined,
+		text,
+		provider: typeof message.provider === "string" ? message.provider.trim() || undefined : undefined,
+		model: typeof message.model === "string" ? message.model.trim() || undefined : undefined,
 		stopReason: typeof message.stopReason === "string" ? message.stopReason : undefined,
 		errorMessage,
 	};
@@ -208,8 +212,10 @@ export function applyAssistantSnapshot(current: AssistantState, event: unknown):
 	if (!snap.assistant) return current;
 	return {
 		text: snap.text,
-		model: snap.model ?? current.model,
+		// Pi sends provider and model ID separately; IDs may themselves contain slashes.
+		model: snap.provider && snap.model ? `${snap.provider}/${snap.model}` : current.model,
 		stopReason: snap.stopReason,
+		errorMessage: snap.errorMessage,
 		sawAssistant: true,
 	};
 }
@@ -289,7 +295,7 @@ function resolveStopReason(input: {
 }): string | undefined {
 	if (input.stopKind) return input.stopKind;
 	if (input.failure) return input.failure.reason;
-	if (input.state.stopReason === "error") return "error";
+	if (input.state.stopReason === "error" || input.state.stopReason === "length") return input.state.stopReason;
 	if (!input.state.sawAssistant || input.state.text.length === 0) return "no-assistant-output";
 	return input.state.stopReason;
 }
@@ -465,6 +471,13 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		});
 
 		const stopReason = resolveStopReason({ stopKind, failure, state });
+		// Put the cause before partial output so the answer cap cannot hide it.
+		const explanation = stopReason === "length"
+			? "Child response reached the model output token limit; the answer is incomplete."
+			: stopReason === "error" ? state.errorMessage : undefined;
+		const assistantText = explanation
+			? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
+			: state.text || state.errorMessage || "";
 		const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
 		const diag: ChildDiag = {
 			command: invocation.command,
@@ -483,7 +496,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			stderrTail,
 		});
 		return {
-			text: finalizeChildText(failure?.text ?? state.text, dump, input.maxOutputBytes),
+			text: finalizeChildText(failure?.text ?? assistantText, dump, input.maxOutputBytes),
 			exitCode,
 			stderrTail,
 			model: state.model,
