@@ -14,7 +14,7 @@ Background spawn returns `jobId` immediately. Local/GPU children share `maxLocal
 delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts cards.ts tg.ts jobs.ts notify.ts
-  archive.ts usage.ts accounting.ts stats.ts
+  archive.ts usage.ts accounting.ts stats.ts calibration.ts
   prompts/{recon,implement,review,oracle}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
@@ -116,9 +116,15 @@ Finalize once on every terminal path, including queued cancellation, thrown runn
 
 Use normalized provider input/output/cache buckets, not character estimates. Streaming usage replaces the current pending turn; only finalized records add turns. Native entry IDs deduplicate reconstruction. Include reported failed attempts and compaction/branch-summary usage; never recount retainedTail copies or reasoning already included in output. Missing/all-zero usage is unknown, not free. Per-run metadata/native entries are authoritative; the append-only `usage.jsonl` export contains revisioned per-run snapshots and can be rebuilt without deleting old rows. Consumers choose the highest revision per run (last row on ties), so a delayed rebuild cannot supersede newer terminal state.
 
-Use a separate `ctx.ui.setStatus("delegate-usage", ...)` entry: `delegated N · local N · saved —`, plus `!partial` for session-attributable gaps or `!archive` for errors whose session cannot be identified. Known other-parent errors must not contaminate session counters/reports. Totals are scoped to the originating parent session UUID, not active branch or short job ID. Restore on resume/reload, reset for a different session, clear on shutdown. Do not attach child usage to the parent's standard `usage` field. `saved` stays unavailable without a comparable baseline; local offload is not net savings.
+Use a separate `ctx.ui.setStatus("delegate-usage", ...)` entry: `delegated N · local N · saved —`, plus `!partial` for session-attributable gaps or `!archive` for errors whose session cannot be identified. Known other-parent errors must not contaminate session counters/reports. Totals are scoped to the originating parent session UUID, not active branch or short job ID. Restore on resume/reload, reset for a different session, clear on shutdown. Do not attach child usage to the parent's standard `usage` field. `saved` stays unavailable without matching calibration and known reference rates. Complete successful local runs may show `saved ~$X`, their calibrated hosted-child API-equivalent value; never claim measured net savings. `!estimate` marks partial coverage, separate from token/archive health. A local provider/model maps to a hosted reference and thinking level, never an automatic fallback. Snapshot validated profile and public rates per run; do not reprice history or backfill legacy records. Match both model IDs, kind, thinking levels, tools and custom prompt hash; reject newly selected profiles older than 90 days. Price each projected request using prompt/output ratios and alternative cache shares, including request-wide pricing tiers. Do not equate local KV hits with hosted cached input.
 
 `/delegate-stats [session|today|all|rebuild]` displays a UI-only report with totals, runtime, outcomes, incomplete records and latest ten transcript paths. Today groups by creation time in local time. No model calls, transcript injection, or automatic continuation. Expanded tool results show archive paths; recording warnings remain visible when collapsed.
+
+## Opt-in calibration runner
+
+`bench/index.ts` is a separate, manually loaded extension, not a package entrypoint or parent tool. It runs fresh paired synthetic recon fixtures with explicit output path/spend approval, isolated copies, alternating order and strict outcome/scope scoring. No pre-existing results are imported. Preserve raw events, native sessions, public model/settings manifest, guard receipts and failed/partial evidence. Fit only mutually successful complete pairs (at least four distinct tasks) and publish no profile for an interrupted campaign; retain all failure/incompleteness diagnostics.
+
+Only benchmark children explicitly load `bench/guard.ts`. They require a successful startup handshake before any prompt, conservative per-request API-metadata reservation, finalized usage accounting, request/time limits, no compaction and fail-closed termination on guard refusal. Ordinary hook exceptions are not a request veto. Unknown usage/spend stops the campaign; do not promise an invoice cap or a filesystem sandbox. Never toggle servers/fans or silently spend on calibration from normal delegation/stats. Document profile settings, failure rates, sample count, observed variation, API cache assumptions and coverage.
 
 ## Tests
 

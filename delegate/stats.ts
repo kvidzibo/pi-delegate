@@ -1,5 +1,7 @@
 import { addTokens, emptyUsage, totalTokens, type UsageSummary } from "./usage.ts";
 import { runPaths, type RunRecord } from "./archive.ts";
+import { validSnapshot, validEstimate } from "./calibration.ts";
+import { isLocalModel } from "./tg.ts";
 
 export type StatsScope = "session" | "today" | "all";
 export const displayText = (text: string): string => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
@@ -30,12 +32,27 @@ export function summarize(runs: RunRecord[]): UsageSummary {
 	}
 	return summary;
 }
+export function savingsTotals(runs: RunRecord[]): { usd: number; priced: number; eligible: number } {
+	let usd = 0, priced = 0, eligible = 0;
+	for (const run of latestRuns(runs)) {
+		if (run.status !== "done" || !(run.usage.local.total > 0 || isLocalModel(run.requestedModel))) continue;
+		eligible++;
+		const estimate = run.usage.estimate;
+		if (run.status !== "done" || run.usage.incomplete || run.recordingError || !validSnapshot(run.savings)
+			|| !validEstimate(estimate) || estimate.requests < 1 || estimate.unpriced) continue;
+		usd += estimate.usd; priced++;
+	}
+	return { usd, priced, eligible };
+}
+export const formatUsd = (usd: number): string => usd > 0 && usd < 0.001 ? "<$0.001" : `$${usd.toFixed(usd < 1 ? 3 : 2)}`;
 export function infobar(runs: RunRecord[], warning = false, archiveWarning = false): string {
-	const usage = summarize(runs);
-	return `delegated ${formatTokens(totalTokens(usage))} · local ${formatTokens(usage.local.total)} · saved —${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
+	const usage = summarize(runs), savings = savingsTotals(runs);
+	const saved = savings.priced ? `~${formatUsd(savings.usd)}${savings.priced < savings.eligible ? " · !estimate" : ""}` : "—";
+	return `delegated ${formatTokens(totalTokens(usage))} · local ${formatTokens(usage.local.total)} · saved ${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
 }
 export function statsReport(runs: RunRecord[], root: string, scope: string, warnings: string[] = []): string {
-	const usage = summarize(runs);
+	runs = latestRuns(runs);
+	const usage = summarize(runs), savings = savingsTotals(runs);
 	const counts = (bucket: UsageSummary["local"]) => `${bucket.total.toLocaleString("en-US")} (input ${bucket.input}, output ${bucket.output}, cache read ${bucket.cacheRead}, cache write ${bucket.cacheWrite})`;
 	const pending = runs.filter((run) => run.status === "queued" || run.status === "running").length;
 	const incomplete = runs.filter((run) => run.usage.incomplete || run.recordingError || run.status === "running" || run.status === "queued").length;
@@ -45,7 +62,10 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 		`Local: ${counts(usage.local)}`, `Hosted: ${counts(usage.hosted)}`,
 		`Runs: ${runs.length}; done ${runs.filter((r) => r.status === "done").length}; failed ${runs.filter((r) => r.status === "failed").length}; queued/running ${pending}; incomplete ${incomplete}`,
 		`Reported usage records: ${usage.reported}; missing usage records: ${usage.missing}; completed runtime: ${(runs.reduce((n, r) => n + r.durationMs, 0) / 1000).toFixed(1)}s`,
-		"Saved: unavailable — requires a comparable cloud-only baseline. Local tokens are offloaded work, not net savings.",
+		savings.priced ? `Saved: ~${formatUsd(savings.usd)} API-equivalent estimate; ${savings.priced}/${savings.eligible} eligible local runs priced.`
+			: "Saved: unavailable — requires matching calibration and known alternative API prices.",
+		"Savings price a calibrated cloud-child alternative, not parent-only execution or a subscription refund. Only complete successful local runs count; failures remain in usage/outcomes. !estimate means partial estimate coverage, not a confidence bound.",
+		"Calibration is a successful-pair heuristic; model behavior, cache use and request-size tiers may differ in production. No electricity/hardware costs are subtracted.",
 		"Input/output/cache buckets are summed once; reasoning is included in output. Unfinished/incomplete figures are known lower bounds.",
 		"Today groups runs by launch date in local time. Recorded runs only; pre-install usage cannot be recovered.",
 		`Archive: ${root} (retained indefinitely; no automatic deletion)`,
@@ -57,6 +77,12 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 		lines.push(`${run.jobId ?? "queued"} ${run.kind} ${run.actualModel ?? run.requestedModel} ${run.status} ${totalTokens(run.usage)} tokens${run.usage.incomplete ? " (partial)" : ""}`);
 		lines.push(`  ${runPaths(root, run.runId).session}`);
 		if (run.recordingError) lines.push(`  ${run.recordingError}`);
+		if (run.savingsUnavailable) lines.push(`  Savings unavailable: ${run.savingsUnavailable}`);
+		if (validSnapshot(run.savings)) {
+			const p = run.savings.profile;
+			lines.push(`  Reference: ${p.key.alternativeModel} (${p.key.alternativeThinking}); calibration ${p.createdAt}, ${p.acceptedPairs}/${p.pairs} pairs, failures local/alternative ${p.localFailures}/${p.alternativeFailures}, incomplete ${p.incompletePairs}`);
+			lines.push(`  Prompt/output ratios ${p.promptRatio.toFixed(3)}/${p.outputRatio.toFixed(3)}; observed total-ratio range ${p.totalRatioRange.map(n => n.toFixed(3)).join("–")}; API cache-read/write shares ${p.cacheReadShare.toFixed(3)}/${p.cacheWriteShare.toFixed(3)}; rates captured ${run.savings.pricedAt}`);
+		}
 	}
 	return lines.map(displayText).join("\n");
 }

@@ -11,7 +11,7 @@ One routing tool. Four agents. Model from config.
 
 Child is a nested `pi --mode rpc` with `--no-extensions`. `offline: true` adds `--offline`. Wrap uses RPC `steer`. After `agent_settled`, stdin closes.
 
-The session infobar shows `delegated N · local N · saved —` (`!partial` for incomplete accounting). `/delegate-stats [session|today|all|rebuild]` reports usage without model calls. Native child sessions and metadata are retained indefinitely outside parent `/resume`; see the root README for storage, privacy, recovery, and metric definitions.
+The session infobar shows `delegated N · local N · saved —`, or `saved ~$X` for calibrated API-equivalent local offload (`!estimate` for partial estimate coverage, `!partial` for incomplete accounting). Configure `localAlternatives` and absolute `calibrationProfiles` paths; benchmarking is separate and explicitly budget-gated via `bench/index.ts`. No profiles or historical guesses are shipped. `/delegate-stats [session|today|all|rebuild]` reports usage without model calls. Native child sessions and metadata are retained indefinitely outside parent `/resume`; see the root README for storage, privacy, recovery, and metric definitions.
 
 One live card per launch shows the task, one model identifier, status, and a collapsed Markdown result preview. Local running status may include `tg n/s`. Wait/collect calls are compact historical receipts; they do not repeat the job's tool list. Expand for the full result, recent tools and native transcript path. Raw thinking is not displayed. The sticky widget shows only counts (`N run  M wait  local x/y`). UI-only terminal snapshots restore cards on reload; unfinished historical jobs are labelled status unavailable rather than running.
 

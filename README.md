@@ -83,7 +83,11 @@ Shipped `delegate/config.json` is **example models** (they become active default
     "implement": { "model": "openai-codex/gpt-5.6-luna" },
     "review": { "model": "anthropic/claude-sonnet-4-6" },
     "oracle": { "model": "openai-codex/gpt-5.6-sol" }
-  }
+  },
+  "localAlternatives": {
+    "ollama/qwen3:8b": { "model": "openai-codex/gpt-5.6-luna", "thinking": "low" }
+  },
+  "calibrationProfiles": []
 }
 ```
 
@@ -146,7 +150,8 @@ delegated 184k · local 162k · saved —
 
 - **delegated:** recorded input + output + cache-read + cache-write tokens for all children of this parent session.
 - **local:** the local subset, classified using the actual provider/model when available. This is offloaded work, **not net cloud savings**.
-- **saved —:** no defensible cloud-only comparison baseline exists. This version deliberately does not invent a savings estimate or equate local tokens with tokens saved.
+- **saved ~$X:** calibrated API-equivalent value of complete, successful local runs versus their configured hosted-child alternative. It is not measured net savings, parent-only execution cost, or a subscription refund. Failed/pending/incompletely recorded runs do not earn savings, but their usage still counts. Without matching calibration and known prices, this stays **saved —**.
+- **!estimate:** only some eligible local runs have a monetary estimate (for example, older runs lack calibration). This marks coverage, not a confidence interval or guaranteed lower bound.
 - **!partial:** unfinished, missing, or failed accounting attributable to this session; shown totals are known lower bounds. Reported usage from failed attempts counts too. All-zero provider placeholders are treated as missing, not as free work.
 - **!archive:** archive errors that cannot be attributed to a parent session. This is separate from known partial usage; totals may be incomplete. `/delegate-stats all` shows the archive diagnostics. Errors known to belong to another parent do not mark this session partial.
 
@@ -167,6 +172,51 @@ The per-run native transcript and metadata are the source of truth. Reports neve
 
 Run `/reload` (or restart Pi) to activate these changes in existing sessions.
 
+## Calibrated API-equivalent savings
+
+Each `localAlternatives` entry maps a local **provider/model** to a hosted pricing reference and its thinking level. A string value is shorthand for `{ "model": "provider/model", "thinking": "low" }`. The shipped Qwen38 example references Luna. This is **not a fallback**: normal delegation and stats never call the alternative. An overlay replaces the whole map; `{}` disables it. `calibrationProfiles` is a replacement list of absolute JSON file paths (empty by default). No old benchmark results or guessed ratios are shipped.
+
+At launch the extension selects a profile matching **both model IDs, kind, both thinking levels, tool set and exact custom prompt hash**. Newly selected profiles must be no older than 90 days. A model/settings change requires a new matching profile; a provider changing a model behind the same ID cannot be detected automatically. Profiles are trusted local data, limited to 256 KiB each, with schema validation. Missing, stale or invalid calibration never blocks work; `/delegate-stats` explains why savings are unavailable.
+
+The profile contains successful-pair prompt/output ratios, the alternative's observed cache-read/write shares, sample counts, observed total-token ratio range and failed/incomplete-pair counts. At least four distinct mutually successful, fully recorded tasks are required. This is **provisional calibration conditional on success**, not a success-adjusted economic guarantee; a small or unrepresentative fixture set can give poor predictions. An observed range is not a confidence interval.
+
+For each recorded local inference request:
+
+```text
+predicted prompt = (input + cacheRead + cacheWrite) × calibrated prompt ratio
+predicted output = output × calibrated output ratio
+predicted prompt buckets = predicted prompt × alternative's calibrated cache shares
+estimated USD = sum(predicted buckets × reference API rates) / 1,000,000
+```
+
+Local KV-cache hits are not reused as API cache hits. Reasoning is already included in output. Request-wide pricing tiers apply to each **projected request**, not the session total; a real alternative may use a different number/shape of requests or different caching. Known positive input/output pricing is required; all-zero registry placeholders are unavailable. Rates come from Pi's model registry (not live invoice lookup). Electricity, hardware costs and parent coordination are not subtracted: the baseline is the same delegated task on the alternative model, not the parent solving everything directly.
+
+Calibration and public rates are snapshotted in each run's metadata. Historical reports and rebuild use those snapshots, not today's prices/profiles; legacy runs are never retroactively assigned calibration. No provider credentials enter the snapshot. Per-request estimates follow the same replacement/deduplication/reconstruction rules as token accounting. The footer updates when a complete successful local run finalizes; `/delegate-stats` shows coverage and the latest runs' reference, ratios, sample diagnostics and capture dates.
+
+### Run fresh comparison benchmarks (explicit opt-in)
+
+The separate benchmark extension is **not auto-loaded** by the package. From a local checkout, with models and credentials already configured:
+
+```bash
+pi -e ./bench/index.ts
+```
+
+Then explicitly authorize a campaign via JSON command arguments, for example:
+
+```text
+/delegate-calibrate {"out":"/tmp/delegate-calibration-new","budgetUsd":5,"localThinking":"low"}
+```
+
+This example authorizes up to a **$5 API-metadata budget**, not an actual provider billing cap. No benchmark runs occur until this command is invoked. The output directory must be absolute, have an existing parent, and **not exist yet**. Artifacts are private and retained until you remove them; keep `calibration.json` somewhere persistent before adding its absolute path to `calibrationProfiles`. Do not put it in an installed package clone. Then `/reload`.
+
+Defaults: 8 synthetic recon tasks × 2 repeats × 2 models = 32 sequential children, Qwen/current configured recon model at `low`, mapped alternative at its configured thinking level (default `low`), production recon tools and custom prompt. Optional JSON keys: `localModel`, `alternativeModel`, `localThinking`, `alternativeThinking`, `repeats` (1–10), `maxRequests` (1–100, default 12 per child), `timeoutMs` (1000–900000, default 120000 per child). To calibrate shipped production Qwen `off`, explicitly pass `"localThinking":"off"`; a low-thinking profile intentionally will not match off-thinking production runs.
+
+Both arms get fresh copies of identical fixtures, tasks and strict expected results. They choose their own tool sequence; any fixture mutation fails scoring. Order alternates between arms. Raw RPC JSONL, native sessions, task results, budget receipts, a frozen manifest/prompt, and all failed evidence stay in the output directory. A profile is published only after the full campaign completes with enough usable pairs. Interrupted/unpaired arms remain in individual artifacts, not silently counted as completed pairs. The suite is a **small recon pilot**, not proof of general coding/review quality; broader workloads need separate profiles/suites.
+
+**Budget safety:** each dedicated child loads a guard before receiving its task; absent guard acknowledgement means no task is sent. Before each provider request the guard reserves a conservative amount from declared context/output limits and the largest configured rates (including tiers). Finalized usage refunds unused reservation; missing usage retains it and stops further requests. Budget receipts must reconcile with the raw request count and priced usage before another arm can start; malformed or stale receipts stop the campaign. Changed thinking/tools or larger model limits/different prices also refuse before dispatch. Request limits, timeouts, recording failures and unresolved spend stop the campaign. Guard refusals terminate the dedicated process, since Pi logs ordinary hook exceptions and continues. Compaction is disabled for comparisons. Receipts distinguish known charges/reservations from unknown spend. Metadata inaccuracies and provider-internal retries/billing rules cannot provide an invoice-level guarantee; use provider-side limits as well. A budget too small for even one worst-case request refuses before spawning.
+
+`/delegate-calibrate-cancel` or closing the benchmark session cancels work and retains evidence. The runner never starts/stops local servers, changes GPU fans or imports old comparisons. Run it when your configured local server is ready and other local work is idle; it does not coordinate with other Pi sessions' local slots. **Separate fixture directories are not a sandbox:** configured tools (including `bash`) and child processes retain your system permissions and provider access. Use only trusted prompts/models/configuration. The synthetic fixtures contain no user source code, but tools are not filesystem-confined.
+
 ## Errors and output limits
 
 Rejected RPC prompts (for example, missing credentials) fail immediately with the child's error, clean up the process, and release its slot. Provider errors appear before any partial answer so output truncation cannot hide the cause. A model output-token cutoff (`stopReason: "length"`) is a failed job with an explicit incomplete-answer warning, even if no answer text was produced. Any partial answer remains available within the output cap. Validation and child failures are marked as errors in Pi and show a short explanation even when collapsed; expand for the full error.
@@ -182,7 +232,7 @@ npm run test:unit       # no Pi required; this is what CI runs
 xvfb-run -a npm test    # unit + CLI load/UI checks (Linux; needs `pi` and Xvfb)
 ```
 
-Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models or start real delegate workers. Job-card lifecycle probes inject a mocked child runner. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
+Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models. The budget-guard startup probe also launches an isolated Pi child and terminates it after readiness, before sending any task. Job-card lifecycle probes inject a mocked child runner. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
 
 CLI load/UI checks are omitted from GitHub Actions because runners have no `pi`.
 

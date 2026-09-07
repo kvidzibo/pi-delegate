@@ -1,4 +1,6 @@
 import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
+import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -370,10 +372,25 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
 				});
 
+				const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
+				let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
+				if (local) {
+					const alternative = config.localAlternatives[resolved.model];
+					try {
+						const slash = alternative?.model.indexOf("/") ?? -1;
+						const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
+						savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
+							key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
+								alternativeThinking: alternative.thinking, tools: resolved.agent.tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
+							files: config.calibrationProfiles, pricing: pricedModel?.cost,
+						}) : { reason: "No hosted alternative configured for this local model" };
+					} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
+				}
 				const archive = accounting.create({
 					parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 					toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
-				}, parsed.task, promptSourceFromDir(EXTENSION_DIR, `${kind}.md`));
+					savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
+				}, parsed.task, promptPath);
 				origins.set(archive.data.runId, toolCallId);
 				cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued" });
 				let snap: JobSnapshot;

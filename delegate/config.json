@@ -8,6 +8,10 @@
   "checkIntervalMs": 60000,
   "hardTimeoutMs": 0,
   "maxOutputBytes": 65536,
+  "localAlternatives": {
+    "local-qwen38/qwen38-q4km": { "model": "openai-codex/gpt-5.6-luna", "thinking": "low" }
+  },
+  "calibrationProfiles": [],
   "agents": {
     "recon": {
       "model": "local-qwen38/qwen38-q4km",

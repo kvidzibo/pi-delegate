@@ -1,4 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import type { Alternative } from "./calibration.ts";
+import { isLocalModel } from "./tg.ts";
 import { isNonEmptyStringArray } from "../child-runtime/policy.ts";
 
 export const KINDS = ["recon", "implement", "review", "oracle"] as const;
@@ -25,6 +28,8 @@ export interface DelegateConfig {
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	agents: Record<Kind, AgentConfig>;
+	localAlternatives: Record<string, Alternative>;
+	calibrationProfiles: string[];
 }
 
 export function assertKind(value: unknown): Kind {
@@ -137,12 +142,32 @@ function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 	return errors;
 }
 
+function parseAlternatives(value: unknown): Record<string, Alternative> {
+	if (value === undefined) return {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("localAlternatives must be an object");
+	const modelId = (v: unknown): v is string => typeof v === "string" && /^[^/\s]+\/[^\s]+$/.test(v) && v.length <= 512;
+	const result: Record<string, Alternative> = Object.create(null);
+	for (const [local, raw] of Object.entries(value)) {
+		const entry = typeof raw === "string" ? { model: raw, thinking: "low" } : raw as Alternative;
+		if (!modelId(local) || !entry || !modelId(entry.model) || !isThinkingLevel(entry.thinking) || !isLocalModel(local) || isLocalModel(entry.model)) {
+			throw new Error("localAlternatives entries need provider/model IDs and a supported thinking level");
+		}
+		result[local] = { model: entry.model, thinking: entry.thinking };
+	}
+	return result;
+}
+
 export function parseDelegateConfig(value: unknown, path: string): DelegateConfig {
 	if (!value || typeof value !== "object") {
 		throw new Error(`Invalid delegate config: ${path}`);
 	}
 	const parsed = value as Record<string, unknown>;
 	const errors = collectConfigErrors(parsed);
+	const alternatives = parseAlternatives(parsed.localAlternatives);
+	const profiles = parsed.calibrationProfiles ?? [];
+	if (!Array.isArray(profiles) || profiles.length > 100 || !profiles.every(p => typeof p === "string" && isAbsolute(p))) {
+		errors.push("calibrationProfiles (up to 100 absolute file paths)");
+	}
 	const agents = {} as Record<Kind, AgentConfig>;
 	if (parsed.agents && typeof parsed.agents === "object") {
 		const rawAgents = parsed.agents as Record<string, unknown>;
@@ -171,6 +196,8 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 		hardTimeoutMs: parsed.hardTimeoutMs as number,
 		maxOutputBytes: parsed.maxOutputBytes as number,
 		agents,
+		localAlternatives: alternatives,
+		calibrationProfiles: [...profiles],
 	};
 }
 
@@ -209,6 +236,8 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 		hardTimeoutMs: extra.hardTimeoutMs ?? base.hardTimeoutMs,
 		maxOutputBytes: extra.maxOutputBytes ?? base.maxOutputBytes,
 		agents: { ...base.agents },
+		localAlternatives: extra.localAlternatives ?? base.localAlternatives,
+		calibrationProfiles: extra.calibrationProfiles ?? base.calibrationProfiles,
 	};
 	if (extra.agents !== undefined) {
 		if (!extra.agents || typeof extra.agents !== "object" || Array.isArray(extra.agents)) {

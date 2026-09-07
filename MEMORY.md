@@ -12,3 +12,4 @@
 - Pi's bundled CLI can work while private unbundled loader imports fail on undeclared experimental dependencies. Smoke-test packages through an isolated offline CLI; use RPC UI notifications for probe results because Pi redirects extension console output to stderr.
 - Release terminal scheduler control/runner callbacks even when keeping capped results: closures can retain the subprocess and uncapped RPC state. Verify ownership cleanup deterministically in unit tests, then confirm collection with a separate forced-GC probe.
 - Correlate tool activity by call ID before comparing names or arguments: distinct identical calls and overlapping same-name calls need separate history and in-flight state.
+- A cancelled child may resolve normally: recheck the abort signal after persisting its evidence and before publishing a campaign result, especially on the final iteration. Test cancellation on the last child, not only between jobs.

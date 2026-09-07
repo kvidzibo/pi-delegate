@@ -6,6 +6,7 @@ import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { cardProbe } from "./cards.ts";
+import { savingsProbe, guardStartupProbe } from "./savings.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	const register = (name: string, run: (ctx: ExtensionCommandContext) => unknown | Promise<unknown>) => {
@@ -21,6 +22,8 @@ export default function probe(pi: ExtensionAPI) {
 			},
 		});
 	};
+	register("delegate-guard-startup-probe", guardStartupProbe);
+	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));
 	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
 	register("delegate-load-probe", () => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
