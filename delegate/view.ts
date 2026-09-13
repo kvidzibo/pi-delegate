@@ -13,6 +13,7 @@ export type RowState = {
 	expanded: boolean;
 	isPartial: boolean;
 	collect: boolean;
+	live: boolean;
 };
 type RowInput = { theme: ThemeFg; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
@@ -37,6 +38,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 	}
 	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Finished" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
+	if (state.live) return { color: "muted", text: "○ Accepted — live progress above editor" };
 	if (d.status === "queued") return { color: "muted", text: `○ Queued — waiting for ${d.reason === "gpu" ? "GPU" : "slot"}` };
 	if (d.status === "running") {
 		const current = asActivityItem(d.current);
@@ -100,7 +102,7 @@ export function renderChildResult(input: RowInput): ChildView {
 			lines.push(...(state.expanded ? rendered : rendered.slice(0, 3)));
 		}
 		if (state.expanded) {
-			if (!state.collect) {
+			if (!state.collect && !state.live) {
 				const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
 				const current = asActivityItem(d.current);
 				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
@@ -112,6 +114,10 @@ export function renderChildResult(input: RowInput): ChildView {
 		}
 		return lines;
 	});
+}
+
+export function renderJobBoardLine(line: string, width: number): string[] {
+	return width < 1 ? [] : [truncateToWidth(` ${line}`, width, "…")];
 }
 
 export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDetails; expanded: boolean }): Text {

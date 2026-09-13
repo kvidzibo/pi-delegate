@@ -311,7 +311,7 @@ test("finishing current tool reveals another open tool; ID-less completions stil
 	assert.equal(state.done.at(-1)?.args, "a");
 });
 
-test("sticky board shows counts without duplicating individual job cards", () => {
+test("sticky board shows counts when job identities are unavailable", () => {
 	assert.deepEqual(
 		formatJobBoard(
 			[
@@ -325,4 +325,17 @@ test("sticky board shows counts without duplicating individual job cards", () =>
 			"delegate  2 run  1 wait  local 1/1",
 		],
 	);
+});
+
+test("board carries live activity in acceptance order without raw thinking or control sequences", () => {
+	const jobs = [
+		{ id: "d0001", local: true, status: "running", thinking: "PRIVATE", current: { mark: "→" as const, name: "read" }, tg: "tg 40/s" },
+		{ id: "d0002", local: true, status: "queued", reason: "gpu" },
+		{ id: "d0003", local: false, status: "running", thinking: "SECRET", wrapped: true },
+	];
+	const line = formatJobBoard(jobs, { maxLocalConcurrent: 1 });
+	assert.deepEqual(line, ["delegate  2 run  1 wait  local 1/1  ·  d0001 reading file · tg 40/s  ·  d0002 queued (GPU)  ·  d0003 thinking · wrap requested"]);
+	assert.doesNotMatch(line[0], /PRIVATE|SECRET/);
+	const unsafe = formatJobBoard([{ id: "d0001", local: false, status: "running", current: { mark: "→", name: "bad\u001b[2J\nname" } }], { maxLocalConcurrent: 1 });
+	assert.equal(unsafe.length, 1); assert.doesNotMatch(unsafe[0], /[\x00-\x1f\x7f-\x9f]/);
 });

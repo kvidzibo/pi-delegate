@@ -19,8 +19,9 @@ import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
-import { renderChildCall, renderChildResult, renderNotifyMessage, type RowState } from "./view.ts";
+import { renderChildCall, renderChildResult, renderJobBoardLine, renderNotifyMessage, type RowState } from "./view.ts";
 import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
+import { JobBoard, type BoardUi } from "./board.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -149,8 +150,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			catch { cards.update(origin, { ...details, displayWarning: "Could not save delegate display state; the child archive is separate." }); }
 		}
 	};
-	type WidgetUi = { setWidget: (id: string, lines: string[] | undefined) => void };
-	let ui: WidgetUi | undefined;
+	const board = new JobBoard(renderJobBoardLine);
+	let ui: BoardUi | undefined;
+	let mode: string | undefined;
 	let hasUI = false;
 	let shuttingDown = false;
 	let sessionCtx: { isIdle?: () => boolean } | undefined;
@@ -158,11 +160,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
 		const rows = scheduler.active();
-		if (rows.length === 0) {
-			ui.setWidget("delegate", undefined);
-			return;
-		}
-		ui.setWidget("delegate", formatJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent }));
+		board.paint(ui, mode, rows.length ? formatJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent })[0] : undefined);
 	};
 
 	const gate = new NotifyGate({
@@ -190,8 +188,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		}),
 	});
 
-	const bindUi = (ctx: { ui?: WidgetUi; hasUI?: boolean; isIdle?: () => boolean }): void => {
+	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
+		if (ctx.mode) mode = ctx.mode;
 		if (typeof ctx.hasUI === "boolean") hasUI = ctx.hasUI;
 		if (typeof ctx.isIdle === "function") sessionCtx = ctx;
 	};
@@ -218,6 +217,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		details.operation ??= args.cancel ? "cancel" : args.wrap ? "wrap" : args.timeoutMs === 0 ? "peek" : "wait";
 		if (!snapshot && !collect && !context.isPartial && (details.status === "queued" || details.status === "running")) details.historical = true;
 		return { details, content: snapshot ? undefined : saved?.content, collect, expanded: context.expanded,
+			live: Boolean(snapshot && cards.isLive(context.toolCallId)),
 			isPartial: snapshot ? !isTerminal(snapshot) : context.isPartial, isError: context.isError };
 	};
 
@@ -252,8 +252,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();
-		try { ui?.setWidget("delegate", undefined); } catch { /* UI may already be gone. */ }
+		board.close(ui);
 		ui = undefined;
+		mode = undefined;
 		hasUI = false;
 		sessionCtx = undefined;
 		cards.clear();

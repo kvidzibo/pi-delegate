@@ -271,11 +271,21 @@ export function asActivityList(value: unknown): ActivityItem[] {
 	return out;
 }
 
-export type JobBoardRow = { local: boolean; status: string };
+export type JobBoardRow = {
+	local: boolean; status: string; id?: string; current?: ActivityItem;
+	thinking?: string; tg?: string; wrapped?: boolean; reason?: string;
+};
 
 export function formatJobBoard(jobs: JobBoardRow[], limits: { maxLocalConcurrent: number }): string[] {
 	const run = jobs.filter((job) => job.status === "running");
 	const wait = jobs.filter((job) => job.status === "queued");
 	const localRun = run.filter((job) => job.local).length;
-	return [`delegate  ${run.length} run  ${wait.length} wait  local ${localRun}/${limits.maxLocalConcurrent}`];
+	const counts = `delegate  ${run.length} run  ${wait.length} wait  local ${localRun}/${limits.maxLocalConcurrent}`;
+	const activity = jobs.filter((job) => job.id && (job.status === "running" || job.status === "queued")).map((job) => {
+		const phase = job.status === "queued" ? `queued (${job.reason === "gpu" ? "GPU" : "slot"})`
+			: job.current?.mark === "→" ? activityLabel(job.current) : job.thinking ? "thinking" : activityLabel(job.current);
+		return `${job.id} ${clipActivityArg(phase)}${job.local && job.tg ? ` · ${job.tg}` : ""}${job.wrapped ? " · wrap requested" : ""}`;
+	});
+	// A single physical widget row, with job order inherited from scheduler acceptance.
+	return [[counts, ...activity].join("  ·  ").replace(/[\x00-\x1f\x7f-\x9f]/g, " ")];
 }

@@ -27,7 +27,13 @@ export class JobCards {
 
 	update(origin: string, details: CardDetails): void {
 		// A fast completion can precede the initial pending tool result.
-		if (isTerminal(this.snapshots.get(origin) ?? {}) && !isTerminal(details)) return;
+		const previous = this.snapshots.get(origin);
+		if (!isTerminal(details)) {
+			if (isTerminal(previous ?? {})) return;
+			// After acceptance, freeze the transcript until completion. Merely suppressing
+			// invalidate is insufficient: other widgets can repaint and read this snapshot.
+			if (this.live.has(origin) && previous?.jobId) return;
+		}
 		this.snapshots.set(origin, { ...details, originToolCallId: origin });
 		const invalidate = this.observers.get(origin);
 		if (isTerminal(details)) {

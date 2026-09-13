@@ -14,11 +14,26 @@ test("origin card updates without collection and releases its UI observer at ter
 	cards.update("spawn", done);
 	assert.equal(cards.get("spawn")?.answer, done.answer);
 	assert.equal(cards.isLive("spawn"), false);
-	assert.equal(renders, 2);
+	assert.equal(renders, 1, "only terminal completion invalidates the accepted row");
 	cards.update("spawn", done);
-	assert.equal(renders, 2, "terminal cards must not retain row callbacks");
+	assert.equal(renders, 1, "terminal cards must not retain row callbacks");
 	cards.update("spawn", running);
 	assert.equal(cards.get("spawn")?.status, "done", "late pending receipt cannot downgrade completion");
+});
+
+test("accepted live transcript snapshots stay unchanged until terminal, even on unrelated repaints", () => {
+	const cards = new JobCards(); let invalidations = 0;
+	cards.begin("spawn", { ...running, status: "queued" });
+	cards.watch("spawn", () => { invalidations++; });
+	const accepted = cards.get("spawn");
+	for (const current of [{ name: "read", mark: "→" }, { name: "bash", mark: "→" }]) {
+		cards.update("spawn", { ...running, current, thinking: "private thought", tg: "tg 40/s", wrapped: true });
+		assert.deepEqual(cards.get("spawn"), accepted, "a mounted row must not read changing live details");
+	}
+	assert.equal(invalidations, 0, "live updates belong in the widget, not scrollback");
+	cards.update("spawn", done);
+	assert.equal(invalidations, 1, "finalize the launch card once, without requiring collection");
+	assert.equal(cards.get("spawn")?.answer, done.answer);
 });
 
 test("dead observers and shutdown do not retain UI or change child state", () => {

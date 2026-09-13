@@ -28,7 +28,13 @@ test("real tool renderer displays errors and propagates failure to Pi", async ()
 	assert.deepEqual((await runPiProbe("delegate-view-probe")).result, { errorsVisible: true, hostErrorsMarked: true });
 });
 
-test("job cards update without collection, restore safely and render compact receipts", async () => {
+test("live progress keeps off-screen transcript cards and the mounted widget stable", async () => {
+	assert.deepEqual((await runPiProbe("delegate-panel-probe")).result, {
+		stableScrollback: true, terminalWithoutCollect: true, queuedAndPromoted: true, singleMount: true, noModelCalls: true,
+	});
+});
+
+test("job cards finalize without collection, restore safely and render compact receipts", async () => {
 	assert.deepEqual((await runPiProbe("delegate-card-probe")).result, {
 		liveCard: true, receipts: true, previews: true, restoration: true, cancellation: true, emptyFailures: true, noModelCalls: true,
 	});

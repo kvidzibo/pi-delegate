@@ -77,13 +77,13 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const original = await launch(first.tool, "origin");
 	const jobId = original.result.details.jobId;
 	assert.match(original.row.render(), /Task: Review timeout and abort handling/);
-	assert.match(original.row.render(), /Running/);
+	assert.match(original.row.render(), /Accepted — live progress above editor/);
 	assert.equal((original.row.render().match(/grok-4.6/g) ?? []).length, 1);
 	const child = runs.at(-1)!;
 	child.input.onEvent?.({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "SECRET raw **File/line:** reasoning" } });
 	assert.doesNotMatch(original.row.render(), /SECRET|File\/line/);
 	child.input.onEvent?.({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "cat > /tmp/test.mjs << 'EOF'" } });
-	assert.match(original.row.render(), /executing command/);
+	assert.doesNotMatch(original.row.render(), /executing command/, "live activity must not mutate transcript history");
 	child.input.onEvent?.({ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: true });
 	assert.doesNotMatch(original.row.render(), /test.mjs/);
 	const peekArgs = { jobId, timeoutMs: 0 };
@@ -121,7 +121,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	}
 	const next = await launch(restored.tool, "new-origin");
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
-	assert.match(oldRow.render(), /✓ Finished/); assert.match(next.row.render(), /Running/);
+	assert.match(oldRow.render(), /✓ Finished/); assert.match(next.row.render(), /Accepted — live progress above editor/);
 	const cancelledArgs = { jobId, cancel: true }; const cancelledRow = row(restored.tool, "cancel", cancelledArgs);
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
 	assert.match(next.row.render(), /Cancelled/); assert.match(cancelledRow.render(), /Cancelled by user/);
@@ -134,7 +134,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	for (const action of ["cancel", "wrap"]) {
 		const id = `queued-${action}`;
 		const queued = await launch(restored.tool, id, local);
-		assert.match(queued.row.render(), /Queued — waiting for GPU/);
+		assert.match(queued.row.render(), /Accepted — live progress above editor/);
 		const stopped = await restored.tool.execute(`${id}-control`, { jobId: queued.result.details.jobId, [action]: true }, undefined, undefined, testCtx);
 		assert.equal(stopped.details.ok, false);
 		assert.match(queued.row.render(), /Cancelled/);
@@ -177,7 +177,15 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.match(noSave.row.render(), /Could not save delegate display state/);
 	failPersistence = false;
 	await restored.handlers.get("session_shutdown")?.();
+	const unfinished = { ...original.result.details, originToolCallId: "unfinished-history", status: "running",
+		activity: [{ mark: "✓", name: "read", args: "recorded-file.ts" }], current: { mark: "→", name: "bash", args: "unfinished-command" } };
+	entries.push({ type: "message", message: { role: "toolResult", toolName: "delegate", details: unfinished } });
 	const reloaded = make(); await reloaded.handlers.get("session_start")?.({}, testCtx);
+	const historical = row(reloaded.tool, "unfinished-history", original.row.context.args);
+	historical.update({ details: unfinished }, false); historical.context.expanded = true;
+	assert.match(historical.render(), /Historical job — live status unavailable/);
+	assert.match(historical.render(), /✓ read.*recorded-file.ts/, "restored history retains recorded tools; only live cards suppress activity");
+	assert.doesNotMatch(historical.render(), /unfinished-command/);
 	for (const failed of failedCards) {
 		const r = row(reloaded.tool, failed.id, failed.row.context.args); r.update(failed.result, false);
 		assert.match(r.render(), /Cancelled|Failed/);
