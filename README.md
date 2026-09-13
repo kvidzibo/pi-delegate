@@ -109,7 +109,7 @@ Then `/reload` (or restart Pi) so the overlay is picked up.
 
 ## Job display
 
-Each launch has one updating job card: kind, model identifier (once), job ID, task, and current status. It keeps updating after a background return or foreground timeout, including when the child finishes without a collection call. Running/queued cards use neutral framing; only the job status marks success or failure. Raw child thinking is never printed in the header.
+Each launch has one job card: kind, model identifier (once), job ID, task, and status. While active, the card stays at **Accepted — live progress above editor**; it is finalized once when the child finishes, even without a collection call. This also applies after a foreground timeout. Continuous activity belongs in the widget, not old transcript rows: changing an off-screen row makes Pi's regular terminal renderer clear and rebuild scrollback. Completion can still cause one redraw. Running/queued cards use neutral framing; only the final job status marks success or failure. Raw child thinking is never displayed.
 
 ```text
 delegate · review · xai/grok-4.6 · d0003
@@ -120,7 +120,7 @@ Task: Review timeout and abort handling
 
 Collapsed cards show up to three rendered lines of the result. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned result, the last three tool actions, and the native session path for the complete recorded history. Individual command failures are shown in tool details, not confused with overall job failure. Recording warnings and job errors remain visible when collapsed.
 
-Wait/peek/wrap/cancel calls are compact transcript receipts, not duplicate job cards. For example, `d0003 · result collected` or `d0003 · checked · running at check`. These are historical events, while the launch card shows the current job state. The sticky widget shows only running/queued/local-slot counts. The parent model still receives the same full tool results; this is a TUI presentation change.
+Wait/peek/wrap/cancel calls are compact transcript receipts, not duplicate job cards. For example, `d0003 · result collected` or `d0003 · checked · running at check`. These are historical events, while the launch card is finalized with the result. The sticky widget shows running/queued/local-slot counts and each active job's ID, activity, optional local generation rate, and wrap request in acceptance order. It uses one physical line, truncating at narrow widths rather than wrapping or growing. In TUI mode it is mounted once above the editor and updated in place, hidden when idle, and removed on shutdown/reload. RPC uses deduplicated string-widget updates. Expanded active cards do not stream tool activity; the final card retains the last three tools and full result. The parent model still receives the same full tool results; this is a TUI presentation change.
 
 Completion snapshots are saved as UI-only `delegate-job-state` session entries (including the capped answer, without raw thinking), so cards restore on reload/resume without model calls. Identity uses the original tool-call ID, not a short job ID that can repeat after reload. If an old or interrupted job has no saved completion, it is labelled historical with live status unavailable, never falsely left “running”. This does not resume jobs. `/reload` still stops outstanding children, as before.
 
@@ -232,7 +232,7 @@ npm run test:unit       # no Pi required; this is what CI runs
 xvfb-run -a npm test    # unit + CLI load/UI checks (Linux; needs `pi` and Xvfb)
 ```
 
-Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models. The budget-guard startup probe also launches an isolated Pi child and terminates it after readiness, before sending any task. Job-card lifecycle probes inject a mocked child runner. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
+Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models. The budget-guard startup probe also launches an isolated Pi child and terminates it after readiness, before sending any task. Job-card lifecycle probes inject a mocked child runner. Stability checks mount a real widget sibling above the editor and drive the installed regular-mode renderer with off-screen launch cards, verifying that scheduled live repaints do not clear screen/scrollback. Pi-free unit tests cover widget mounting, thinking-only update deduplication, idle/reuse, RPC, and dead UI callbacks; CLI tests cover single-line Unicode widths and actual widget height changes. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
 
 CLI load/UI checks are omitted from GitHub Actions because runners have no `pi`.
 
