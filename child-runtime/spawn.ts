@@ -75,6 +75,8 @@ export interface RunPiChildInput {
 	signal?: AbortSignal;
 	onEvent?: (event: unknown) => void;
 	onControl?: (ctl: ChildControl) => void;
+	/** Optional fail-closed startup handshake, before the task is sent to the child. */
+	beforePrompt?: (signal: AbortSignal) => Promise<void>;
 	spawnFn?: SpawnFn;
 	killTree?: (proc: ChildProcess) => void;
 }
@@ -328,6 +330,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		});
 		pid = proc.pid;
 		let closed = false;
+		const startup = new AbortController();
 		let hardTimer: ReturnType<typeof setTimeout> | undefined;
 		proc.stdin?.on("error", () => {
 			/* EPIPE after exit must not crash the parent */
@@ -336,6 +339,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const finish = (code: number): void => {
 			if (closed) return;
 			closed = true;
+			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
 			input.signal?.removeEventListener("abort", onAbort);
 			resolve(code);
@@ -354,6 +358,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const fail = (reason: "error" | "protocol-error", text: string): void => {
 			if (closed || stopKind || failure) return;
 			failure = { reason, text };
+			startup.abort();
 			closeStdin();
 			terminate(proc);
 		};
@@ -392,6 +397,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			if (closed || failure || stopKind) return;
 			aborted = true;
 			if (!stopKind) stopKind = "aborted";
+			startup.abort();
 			send({ type: "abort" });
 			terminate(proc);
 		};
@@ -412,6 +418,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				if (closed || failure || stopKind) return;
 				timedOut = true;
 				if (!stopKind) stopKind = "hard_timeout";
+				startup.abort();
 				terminate(proc);
 			}, input.hardTimeoutMs);
 		}
@@ -445,6 +452,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		});
 		proc.on("error", (error) => {
 			closed = true;
+			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
 			input.signal?.removeEventListener("abort", onAbort);
 			reject(error);
@@ -453,7 +461,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			reader.end();
 			finish(code ?? 1);
 		});
-		if (!stopKind && !failure) send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
+		const startPrompt = () => {
+			if (!closed && !stopKind && !failure) send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
+		};
+		if (input.beforePrompt) {
+			Promise.resolve().then(() => input.beforePrompt!(startup.signal)).then(startPrompt, error => {
+				if (!closed && !stopKind && !failure) fail("error", `Child startup handshake failed: ${String(error)}`);
+			});
+		} else startPrompt();
 	});
 
 	const stopReason = resolveStopReason({ stopKind, failure, state });

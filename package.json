@@ -22,7 +22,7 @@
   },
   "scripts": {
     "test": "npm run test:unit && npm run test:load",
-    "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts",
+    "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts bench/tests/*.test.ts",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"
   },
   "peerDependencies": {

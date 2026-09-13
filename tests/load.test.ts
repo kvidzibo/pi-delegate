@@ -10,6 +10,16 @@ test("package manifest loads only delegate through the installed Pi CLI", async 
 	assert.deepEqual((await runPiProbe("delegate-load-probe")).result, { tools: ["delegate"] });
 });
 
+test("real isolated Pi child loads the explicit budget guard before any task is dispatched", async () => {
+	assert.deepEqual((await runPiProbe("delegate-guard-startup-probe")).result, { guardLoaded: true, promptWithheld: true, noModelCalls: true });
+});
+
+test("calibrated pricing resolves in the real factory, restores snapshots and loads opt-in benchmarking", async () => {
+	assert.deepEqual((await runPiProbe("delegate-savings-probe")).result, {
+		calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true,
+	});
+});
+
 test("native sessions and real extension infobar/commands work without model calls", async () => {
 	assert.deepEqual((await runPiProbe("delegate-accounting-probe")).result, { nativeSession: true, infobar: true, noModelCalls: true, resume: true });
 });

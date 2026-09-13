@@ -4,6 +4,7 @@ import { readdir, readFile, lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { emptyUsage, record, sessionUsage, totalTokens, UsageMeter, validUsage, type UsageSummary } from "./usage.ts";
 import type { Kind } from "./config.ts";
+import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
 
 export type RunRecord = {
 	version: 1;
@@ -28,9 +29,11 @@ export type RunRecord = {
 	durationMs: number;
 	usage: UsageSummary;
 	recordingError?: string;
+	savings?: SavingsSnapshot;
+	savingsUnavailable?: string;
 };
 
-export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools">;
+export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable">;
 export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -95,7 +98,7 @@ export class ArchivedRun {
 		this.paths = runPaths(root, runId);
 		// Never reuse or replace an existing run directory.
 		mkdirSync(this.paths.dir, { mode: 0o700 });
-		this.meter = new UsageMeter(identity.requestedModel);
+		this.meter = new UsageMeter(identity.requestedModel, identity.savings);
 		this.data = { ...identity, tools: [...identity.tools], version: 1, revision: 0, runId, createdAt: new Date().toISOString(), status: "queued", durationMs: 0, usage: emptyUsage() };
 		// A valid pre-created header persists even when Pi never accepts its first prompt.
 		writeFileSync(this.paths.session, `${JSON.stringify({ type: "session", version: 3, id: runId, timestamp: this.data.createdAt, cwd: identity.cwd, parentSession: identity.parentSessionFile })}\n`, { flag: "wx", mode: 0o600 });
@@ -155,7 +158,7 @@ export class ArchivedRun {
 	async finish(outcome: Outcome): Promise<void> {
 		if (this.finished) return;
 		try {
-			const native = await sessionUsage(this.paths.session, this.data.requestedModel);
+			const native = await sessionUsage(this.paths.session, this.data.requestedModel, this.data.savings);
 			const live = this.meter.snapshot();
 			// A killed in-flight turn can have reported usage but no persisted message_end.
 			// Keep that observed lower bound, flagged incomplete, instead of losing it.
@@ -198,12 +201,18 @@ export async function loadRuns(root: string, options: { rebuild?: boolean; activ
 			const raw = record(data);
 			owner = { parentSessionId: typeof raw.parentSessionId === "string" ? raw.parentSessionId : undefined, createdAt: typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : undefined };
 			if (!validRecord(data, dir.name)) throw new Error("Invalid or unsupported run metadata");
+			if (data.savings && !validSnapshot(data.savings)) {
+				delete data.savings;
+				data.savingsUnavailable = "Invalid archived calibration/pricing snapshot";
+				if (data.usage) delete data.usage.estimate;
+			}
+			if (!data.savings && data.usage) delete data.usage.estimate;
 			const active = options.activeIds?.has(data.runId);
 			const previousUsage = validUsage(data.usage) ? data.usage : undefined;
 			if (!previousUsage && active) throw new Error("Invalid usage summary for active run");
 			if (!active && (options.rebuild || data.status === "running" || !previousUsage)) {
 				if (!(await lstat(paths.session)).isFile()) throw new Error("Transcript is not a regular file");
-				const usage = await sessionUsage(paths.session, data.requestedModel);
+				const usage = await sessionUsage(paths.session, data.requestedModel, data.savings);
 				// Never erase reported partial usage that could not reach a native finalized entry.
 				if (!previousUsage || totalTokens(usage) >= totalTokens(previousUsage)) data.usage = { ...usage, incomplete: usage.incomplete || Boolean(previousUsage?.incomplete) };
 				else data.usage.incomplete = true;

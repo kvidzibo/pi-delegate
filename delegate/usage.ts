@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { isLocalModel } from "./tg.ts";
+import { estimateRequest, validEstimate, type EstimatedUsage, type SavingsSnapshot } from "./calibration.ts";
 
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
 export type UsageSummary = {
@@ -9,6 +10,7 @@ export type UsageSummary = {
 	reported: number;
 	missing: number;
 	incomplete: boolean;
+	estimate?: EstimatedUsage;
 };
 
 export const emptyTokens = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 });
@@ -32,8 +34,17 @@ export function reportedTokens(value: unknown): Tokens | undefined {
 	return { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, total };
 }
 
-export function addUsage(summary: UsageSummary, value: unknown, model: string): void {
+function addEstimate(summary: UsageSummary, tokens: Tokens | undefined, model: string, snapshot?: SavingsSnapshot): void {
+	if (!snapshot) return;
+	const estimate = summary.estimate ??= { usd: 0, requests: 0, unpriced: 0 };
+	const usd = tokens ? estimateRequest(tokens, model, snapshot) : undefined;
+	if (usd === undefined) estimate.unpriced++;
+	else { estimate.usd += usd; estimate.requests++; }
+}
+
+export function addUsage(summary: UsageSummary, value: unknown, model: string, snapshot?: SavingsSnapshot): void {
 	const tokens = reportedTokens(value);
+	addEstimate(summary, tokens, model, snapshot);
 	if (!tokens) { summary.missing++; summary.incomplete = true; return; }
 	addTokens(isLocalModel(model) ? summary.local : summary.hosted, tokens);
 	summary.reported++;
@@ -57,7 +68,8 @@ export class UsageMeter {
 	private messageEpoch = 0;
 	private compactionEpoch = 0;
 
-	constructor(model: string) { this.model = model; }
+	private savings?: SavingsSnapshot;
+	constructor(model: string, savings?: SavingsSnapshot) { this.model = model; this.savings = savings; }
 
 	observe(event: unknown): { changed: boolean; checkpoint: boolean } {
 		const e = record(event);
@@ -88,10 +100,13 @@ export class UsageMeter {
 			if (message && m.role === "assistant") {
 				this.resolvedModel = messageModel(m, this.resolvedModel ?? "") || undefined;
 				this.model = this.resolvedModel ?? this.model;
-				if (!reportedTokens(m.usage) && this.pending) addTokens(isLocalModel(this.model) ? this.completed.local : this.completed.hosted, this.pending);
+				if (!reportedTokens(m.usage) && this.pending) {
+					addTokens(isLocalModel(this.model) ? this.completed.local : this.completed.hosted, this.pending);
+					addEstimate(this.completed, this.pending, this.model, this.savings);
+				}
 				this.pending = undefined; this.inFlight = false;
 			}
-			addUsage(this.completed, message ? m.usage : record(e.result).usage, this.model);
+			addUsage(this.completed, message ? m.usage : record(e.result).usage, this.model, this.savings);
 			return { changed: true, checkpoint: true };
 		}
 		if (e.type === "compaction_end" && (e.aborted || e.errorMessage)) {
@@ -103,7 +118,10 @@ export class UsageMeter {
 
 	snapshot(): UsageSummary {
 		const result = structuredClone(this.completed);
-		if (this.pending) addTokens(isLocalModel(this.model) ? result.local : result.hosted, this.pending);
+		if (this.pending) {
+			addTokens(isLocalModel(this.model) ? result.local : result.hosted, this.pending);
+			addEstimate(result, this.pending, this.model, this.savings);
+		}
 		if (this.inFlight) result.incomplete = true;
 		return result;
 	}
@@ -126,7 +144,7 @@ export async function* jsonlLines(path: string): AsyncGenerator<string> {
 	if (tail.trim()) yield tail;
 }
 
-export async function sessionUsage(path: string, fallbackModel: string): Promise<UsageSummary> {
+export async function sessionUsage(path: string, fallbackModel: string, savings?: SavingsSnapshot): Promise<UsageSummary> {
 	const summary = emptyUsage();
 	const seen = new Set<string>();
 	let header = false;
@@ -144,10 +162,10 @@ export async function sessionUsage(path: string, fallbackModel: string): Promise
 			const m = record(e.message);
 			if (m.role === "assistant") {
 				model = messageModel(m, model);
-				addUsage(summary, m.usage, model);
-			} else if (m.role === "toolResult" && m.usage !== undefined) addUsage(summary, m.usage, model);
+				addUsage(summary, m.usage, model, savings);
+			} else if (m.role === "toolResult" && m.usage !== undefined) addUsage(summary, m.usage, model, savings);
 		} else if (e.type === "compaction" || e.type === "branch_summary") {
-			addUsage(summary, e.usage, model);
+			addUsage(summary, e.usage, model, savings);
 			// retainedTail contains copies of old messages, NOT new inference.
 		}
 	}
@@ -161,5 +179,5 @@ export function validUsage(value: unknown): value is UsageSummary {
 		const t = record(value);
 		return ["input", "output", "cacheRead", "cacheWrite", "total"].every((k) => Number.isSafeInteger(t[k]) && t[k] >= 0)
 			&& t.total === t.input + t.output + t.cacheRead + t.cacheWrite;
-	}) && Number.isSafeInteger(u.reported) && u.reported >= 0 && Number.isSafeInteger(u.missing) && u.missing >= 0 && typeof u.incomplete === "boolean";
+	}) && Number.isSafeInteger(u.reported) && u.reported >= 0 && Number.isSafeInteger(u.missing) && u.missing >= 0 && typeof u.incomplete === "boolean" && (u.estimate === undefined || validEstimate(u.estimate));
 }

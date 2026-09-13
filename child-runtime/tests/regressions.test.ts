@@ -40,6 +40,49 @@ async function within<T>(pending: Promise<T>): Promise<T> {
 	}
 }
 
+test("startup handshake withholds the task and fails closed without any prompt", async (t) => {
+	let ready!: () => void;
+	const waiting = start(t, { beforePrompt: () => new Promise<void>(resolve => { ready = resolve; }) });
+	await new Promise(resolve => setImmediate(resolve));
+	assert.equal(waiting.proc.stdinBytes, "");
+	ready(); await new Promise(resolve => setImmediate(resolve));
+	assert.match(waiting.proc.stdinBytes, /mock-only regression/);
+	waiting.answer(); waiting.emit({ type: "agent_settled" }); await within(waiting.pending);
+	const failed = start(t, { beforePrompt: async () => { throw new Error("guard absent"); } });
+	const result = await within(failed.pending);
+	assert.match(result.text, /startup handshake failed.*guard absent/);
+	assert.equal(failed.proc.stdinBytes, "");
+});
+
+test("shutdown aborts a pending startup handshake", async (t) => {
+	let handshakeSignal: AbortSignal | undefined;
+	const waiting = start(t, { beforePrompt: async signal => {
+		handshakeSignal = signal;
+		await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+	} });
+	await new Promise(resolve => setImmediate(resolve)); waiting.proc.close(1);
+	await within(waiting.pending);
+	assert.equal(handshakeSignal?.aborted, true); assert.equal(waiting.proc.stdinBytes, "");
+});
+
+test("abort and hard timeout cancel the handshake without waiting for process close", async (t) => {
+	for (const timeout of [false, true]) {
+		const proc = mockChild(), control = new AbortController();
+		proc.kill = () => true; // Stubborn mocked child: no OS signals, no close yet.
+		let handshakeSignal: AbortSignal | undefined;
+		const pending = runMockPiChild(childInput({ spawnFn: () => proc, signal: control.signal, hardTimeoutMs: timeout ? 10 : 0,
+			beforePrompt: async signal => { handshakeSignal = signal; await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); },
+		}));
+		t.after(async () => { proc.close(1); await pending; });
+		await new Promise(resolve => setImmediate(resolve));
+		if (timeout) await new Promise(resolve => setTimeout(resolve, 20)); else control.abort();
+		assert.equal(handshakeSignal?.aborted, true);
+		assert.equal(proc.exitCode, null);
+		assert.equal(proc.stdinBytes.includes('"type":"prompt"'), false);
+		proc.close(1); await within(pending);
+	}
+});
+
 test("mock cancellation uses injected termination even with an OS-looking pid", async (t) => {
 	const ac = new AbortController();
 	const { proc, pending } = start(t, { signal: ac.signal });
