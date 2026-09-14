@@ -28,9 +28,9 @@ test("real tool renderer displays errors and propagates failure to Pi", async ()
 	assert.deepEqual((await runPiProbe("delegate-view-probe")).result, { errorsVisible: true, hostErrorsMarked: true });
 });
 
-test("live progress keeps off-screen transcript cards and the mounted widget stable", async () => {
+test("live progress preserves scrollback and bottom-anchors the panel during growing parent output", async () => {
 	assert.deepEqual((await runPiProbe("delegate-panel-probe")).result, {
-		stableScrollback: true, terminalWithoutCollect: true, queuedAndPromoted: true, singleMount: true, noModelCalls: true,
+		stableScrollback: true, bottomAnchored: true, fullPinnedCards: true, terminalWithoutCollect: true, queuedAndPromoted: true, singleMount: true, noModelCalls: true,
 	});
 });
 

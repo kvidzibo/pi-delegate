@@ -76,9 +76,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const completedBeforeOriginal = entries.filter((e) => e.customType === CARD_STATE_TYPE).length;
 	const original = await launch(first.tool, "origin");
 	const jobId = original.result.details.jobId;
-	assert.match(original.row.render(), /Task: Review timeout and abort handling/);
-	assert.match(original.row.render(), /Accepted — live progress above editor/);
-	assert.equal((original.row.render().match(/grok-4.6/g) ?? []).length, 1);
+	assert.match(original.row.render(), /accepted — card pinned above editor/);
+	assert.doesNotMatch(original.row.render(), /Task:|grok-4.6/, "the full active card belongs in the pinned widget, not a duplicate transcript card");
 	const child = runs.at(-1)!;
 	child.input.onEvent?.({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "SECRET raw **File/line:** reasoning" } });
 	assert.doesNotMatch(original.row.render(), /SECRET|File\/line/);
@@ -99,6 +98,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
 	const completed = original.row.render();
 	assert.match(completed, /✓ Finished/); assert.match(completed, /Review complete/);
+	assert.match(completed, /Task: Review timeout and abort handling/);
+	assert.equal((completed.match(/grok-4.6/g) ?? []).length, 1);
 	assert.doesNotMatch(completed, /Running|\*\*|test.mjs|Last detail/);
 	original.row.context.expanded = true;
 	assert.match(original.row.render(), /Last detail/); assert.match(original.row.render(), /✗ bash/);
@@ -121,7 +122,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	}
 	const next = await launch(restored.tool, "new-origin");
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
-	assert.match(oldRow.render(), /✓ Finished/); assert.match(next.row.render(), /Accepted — live progress above editor/);
+	assert.match(oldRow.render(), /✓ Finished/); assert.match(next.row.render(), /accepted — card pinned above editor/);
 	const cancelledArgs = { jobId, cancel: true }; const cancelledRow = row(restored.tool, "cancel", cancelledArgs);
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
 	assert.match(next.row.render(), /Cancelled/); assert.match(cancelledRow.render(), /Cancelled by user/);
@@ -134,7 +135,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	for (const action of ["cancel", "wrap"]) {
 		const id = `queued-${action}`;
 		const queued = await launch(restored.tool, id, local);
-		assert.match(queued.row.render(), /Accepted — live progress above editor/);
+		assert.match(queued.row.render(), /accepted — card pinned above editor/);
 		const stopped = await restored.tool.execute(`${id}-control`, { jobId: queued.result.details.jobId, [action]: true }, undefined, undefined, testCtx);
 		assert.equal(stopped.details.ok, false);
 		assert.match(queued.row.render(), /Cancelled/);
