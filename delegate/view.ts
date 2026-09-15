@@ -1,10 +1,11 @@
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { activityLabel, asActivityItem, asActivityList, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
 import { isLocalModel } from "./tg.ts";
 import type { CardDetails } from "./cards.ts";
+import type { JobBoardState } from "./panel.ts";
 
 export type RowState = {
 	details: CardDetails;
@@ -14,6 +15,7 @@ export type RowState = {
 	isPartial: boolean;
 	collect: boolean;
 	live: boolean;
+	pinned?: boolean;
 };
 type RowInput = { theme: ThemeFg; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
@@ -38,8 +40,8 @@ function statusLine(state: RowState): { color: string; text: string } {
 	}
 	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Finished" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
-	if (state.live) return { color: "muted", text: "○ Accepted — live progress above editor" };
-	if (d.status === "queued") return { color: "muted", text: `○ Queued — waiting for ${d.reason === "gpu" ? "GPU" : "slot"}` };
+	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
+	if (d.status === "queued") return { color: "muted", text: `○ Queued — waiting for ${d.reason === "gpu" ? "GPU" : "slot"}${d.wrapped ? " · wrap requested" : ""}` };
 	if (d.status === "running") {
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
@@ -68,6 +70,8 @@ export class ChildView {
 export function renderChildCall(input: RowInput): ChildView {
 	return new ChildView((width) => {
 		const state = input.read(); const d = state.details;
+		if (state.live && !state.collect && !state.pinned) return wrapTextWithAnsi(
+			`${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg("muted", "accepted — card pinned above editor")}`, width);
 		const header = state.collect
 			? `${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`
 			: paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
@@ -78,6 +82,8 @@ export function renderChildCall(input: RowInput): ChildView {
 export function renderChildResult(input: RowInput): ChildView {
 	return new ChildView((width) => {
 		const state = input.read(); const d = state.details; const theme = input.theme;
+		if (state.live && !state.collect && !state.pinned) return state.expanded && d.sessionFile
+			? wrapTextWithAnsi(input.theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`), width) : [];
 		const lines: string[] = [];
 		const add = (text: string, color?: string) => lines.push(...wrapTextWithAnsi(color ? theme.fg(color, text) : text, width));
 		if (!state.collect) {
@@ -118,6 +124,58 @@ export function renderChildResult(input: RowInput): ChildView {
 
 export function renderJobBoardLine(line: string, width: number): string[] {
 	return width < 1 ? [] : [truncateToWidth(` ${line}`, width, "…")];
+}
+
+function clippedLines(lines: string[], limit: number, width: number): string[] {
+	if (limit < 1) return [];
+	const clipped = lines.slice(0, limit);
+	if (lines.length > limit) clipped[limit - 1] = truncateToWidth(clipped[limit - 1], Math.max(0, width - 1), "") + "…";
+	return clipped;
+}
+
+/** Full live cards, bounded to the input dock's budget, not a counts-only strip. */
+export function renderJobBoard(state: JobBoardState, width: number, maxRows: number, theme: ThemeFg, expanded: boolean, expandHint = keyHint("app.tools.expand", "details")): string[] {
+	if (width < 1 || maxRows < 1 || !state.cards.length) return [];
+	const footerRows = maxRows >= 4 ? 1 : 0;
+	const shown = Math.min(state.cards.length, Math.max(1, Math.floor((maxRows - footerRows) / 3)));
+	const cardRows = Math.min(expanded ? 8 : 4, Math.floor((maxRows - footerRows) / shown));
+	const lines: string[] = [];
+	const fit = (text: string) => truncateToWidth(text, width, "…");
+	for (const d of state.cards.slice(0, shown)) {
+		const status = statusLine({ details: d, collect: false, live: true, pinned: true, isPartial: true, expanded });
+		const header = [theme.fg("toolTitle", theme.bold("delegate")), theme.fg("accent", displayText(str(d, "jobId"))),
+			theme.fg("accent", displayText(str(d, "kind"))), theme.fg("dim", displayText(str(d, "model")))].join(" · ");
+		const card = [fit(header)];
+		const statusText = theme.fg(status.color, displayText(status.text));
+		if (cardRows === 2) card.push(fit(statusText));
+		if (cardRows >= 3) {
+			const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
+			const current = asActivityItem(d.current);
+			const extras: string[] = [];
+			for (const key of ["recordingError", "displayWarning"]) if (d[key]) extras.push(theme.fg("warning", displayText(str(d, key))));
+			if (expanded) {
+				for (const item of activity) extras.push(paintActivity(theme, item));
+				if (current && current.name !== "thinking") extras.push(paintActivity(theme, current));
+				if (d.sessionFile) extras.push(theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`));
+			} else {
+				const latest = current?.mark === "→" ? current : activity.at(-1);
+				if (latest) extras.push(paintActivity(theme, latest));
+			}
+			const task = `Task: ${expanded ? cleanBlock(str(d, "task")) : displayText(str(d, "task")).replace(/\s+/g, " ").trim()}`;
+			const taskRows = expanded ? Math.max(1, cardRows - 2 - Math.min(extras.length, 3)) : 1;
+			const taskLines = expanded ? clippedLines(wrapTextWithAnsi(theme.fg("muted", task), width), taskRows, width) : [fit(theme.fg("muted", task))];
+			card.push(...taskLines, fit(statusText));
+			card.push(...clippedLines(extras.map(fit), cardRows - card.length, width));
+		}
+		while (card.length < cardRows) card.push(""); // Stable geometry as tools start/finish.
+		lines.push(...card);
+	}
+	if (footerRows) {
+		const hidden = state.cards.length - shown;
+		const more = hidden ? `+${hidden} more (${state.cards.slice(shown).map((d) => displayText(str(d, "jobId"))).join(", ")}) · ` : "";
+		lines.push(fit(theme.fg("dim", `${more}${state.summary}${expandHint ? ` · ${expandHint}` : ""}`)));
+	}
+	return lines;
 }
 
 export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDetails; expanded: boolean }): Text {

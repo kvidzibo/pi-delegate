@@ -5,12 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { promptSourceFromDir } from "../child-runtime/spawn.ts";
 import { loadDelegateConfig, resolveAgent, type Kind } from "./config.ts";
 import {
 	delegateTargetLine,
-	formatJobBoard,
 	knownKind,
 } from "./display.ts";
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
@@ -19,9 +19,10 @@ import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
-import { renderChildCall, renderChildResult, renderJobBoardLine, renderNotifyMessage, type RowState } from "./view.ts";
+import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
 import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
-import { JobBoard, type BoardUi } from "./board.ts";
+import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
+import { projectJobBoard } from "./panel.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -150,7 +151,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			catch { cards.update(origin, { ...details, displayWarning: "Could not save delegate display state; the child archive is separate." }); }
 		}
 	};
-	const board = new JobBoard(renderJobBoardLine);
+	const board = new JobBoard(renderJobBoard, () => new Container(), (state) => renderJobBoard(state, 100, 10, plainBoardTheme, false, ""));
 	let ui: BoardUi | undefined;
 	let mode: string | undefined;
 	let hasUI = false;
@@ -160,7 +161,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
 		const rows = scheduler.active();
-		board.paint(ui, mode, rows.length ? formatJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent })[0] : undefined);
+		board.paint(ui, mode, projectJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent }));
 	};
 
 	const gate = new NotifyGate({

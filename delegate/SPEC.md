@@ -13,7 +13,7 @@ Background spawn returns `jobId` immediately. Local/GPU children share `maxLocal
 ```
 delegate/
   README.md SPEC.md config.json
-  index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts tg.ts jobs.ts notify.ts
+  index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts dock.ts panel.ts tg.ts jobs.ts notify.ts
   archive.ts usage.ts accounting.ts stats.ts calibration.ts
   prompts/{recon,implement,review,oracle}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
@@ -63,7 +63,7 @@ Collect waits until terminal, wait budget, or `checkIntervalMs` with no child ev
 
 Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms. If the parent agent is still running (`ctx.isIdle()` false), keep holding — do not `sendMessage` yet. `sendMessage` queues a follow-up that collect cannot unsend. Once idle and not consumed, `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it, including mid-turn collect after the job already finished.
 
-One self-framed card per launch, keyed by original tool-call ID, not the reusable short job ID. Header: `delegate · <kind> · <model id> · <jobId>` (model once). Body always identifies the task and job status. While active, show a stable acceptance label pointing to live progress above the editor; do not stream activity in collapsed or expanded transcript cards. Generic activity labels and optional local `tg n/s` belong in the widget, never raw thinking fragments. Child command failures do not set the overall job status. No success-green host shell around a still-running background receipt.
+One full card per launch, keyed by original tool-call ID, not the reusable short job ID. While active, pin the full card above the editor with header `delegate · <jobId> · <kind> · <model id>` (model once), task, live status and latest tool action. The transcript contains only a stable `accepted — card pinned above editor` receipt; expanding it may show the native session path, not a duplicate card. At terminal completion, remove the pinned card and finalize the original transcript row as `delegate · <kind> · <model id> · <jobId>` plus task/status/result. Do not stream activity in transcript rows. Generic activity and optional local `tg n/s` belong in pinned cards, never raw thinking fragments. Child command failures do not set the overall job status. No success-green host shell around a still-running background receipt.
 
 Freeze the origin snapshot after acceptance: suppressing invalidation alone is insufficient because unrelated repaints read the snapshot again. Finalize and invalidate the origin row once at terminal completion, even after a background return or foreground timeout without collect. This avoids repeated screen/scrollback resets when live cards move above Pi's regular-mode viewport; completion may still cause one redraw. Release row callbacks on terminal/shutdown; observer failures must not affect child outcomes or accounting. Both render slots read shared result state at render time (Pi invokes renderCall before renderResult). Keep tool result content for the parent model unchanged.
 
@@ -73,13 +73,19 @@ Collect/wait/peek/wrap/cancel rows are compact historical receipts, not duplicat
 
 Persist terminal UI details once in `delegate-job-state` custom entries, excluded from model context. Restore the active branch from these entries and tool results via original tool-call identity. Never downgrade terminal state with a late pending result or attach old jobs to reused short IDs. Pending historical jobs with no live scheduler are labelled status unavailable. Persistence failures show a separate display warning without changing job outcomes; archives remain independent.
 
-Sticky widget while jobs are queued or running:
+Pinned full-card stack while jobs are queued or running:
 
 ```
-delegate  N run  M wait  local x/maxLocalConcurrent  ·  d0001 reading file
+delegate · d0001 · review · hosted/model
+Task: Review timeout and abort handling
+● Running — reading file
+→ read  delegate/jobs.ts
+delegate  N run  M wait  local x/maxLocalConcurrent · ctrl+o details
 ```
 
-Show per-job activity/queue reason, local generation rate and wrap requests in acceptance order. One physical row: truncate to terminal width, never wrap. In TUI, mount one component above the editor and request in-place repaints only when its text changes; hide it while idle and remove it on shutdown. Do not repeatedly call `setWidget` (Pi deletes/reinserts the key, changing sibling order). Use deduplicated string-widget updates in RPC; never send component factories there.
+Project only displayed metadata/tool fields into the panel state: no clocks, usage, raw thinking or hidden tool IDs. Preserve acceptance order, live activity/queue reason, local generation rate and wrap requests. Cap at 12 rows and half the terminal height. Reserve header/task/status where space permits, then latest tool/warning; Ctrl+O expands task and recent-tool details within the budget. Label undisplayed jobs as `+N more` with IDs. Truncate each rendered line to terminal width and degrade to compact header/status on tiny terminals. In TUI mount once, repaint only changed display state, hide while idle, and remove on shutdown. Do not repeatedly call `setWidget` (Pi deletes/reinserts its key). RPC receives deduplicated plain-card string arrays, bounded to ten rows and 100 columns; never factories.
+
+In regular mode, group the existing top-level components in a native Container and insert spare rows before the above-editor widget container. Keep the panel and existing editor/footer bottom-aligned while a short transcript grows into scrollback. Render original components once per frame; preserve their identity, focus, ordering and invalidation. Measure the existing editor/footer and sibling widgets before rendering the card, reducing its height budget to leave a transcript row. Only flatten the native plain widget Container for this measurement; custom layouts use a conservative fallback. Do not patch the renderer, write terminal escapes, replace the editor/footer, or change Pi settings. Preserve the bottom after small shrinks, but do not retain pages of filler after large collapses or resizes. Fullscreen uses its own layout root. Hide padding while idle and unwrap on disposal/shutdown/reload, following Pi's stable TUI reference and preserving foreign roots/wrappers.
 
 ## Spawn
 
@@ -138,7 +144,7 @@ Runtime regressions cover prompt rejection and slot release, signal isolation, m
 
 Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible. Accounting regressions cover native session compatibility, live/footer and resume behavior, multi-turn/cached/retry/compaction totals, missing usage, duplicate collects, crash tails, queued cancellation, concurrent processes, private permissions, write failures and non-expiring retention. CLI probes keep RPC stdin open until asynchronous command completion, then close it.
 
-UI regressions cover collapsed result previews, model-once headers, no raw thinking, narrow widths, frozen live transcript rows and terminal finalization without collect, receipt non-duplication, terminal callback release, cancellation, UI persistence failure, branch/reload restoration and reused short IDs. Mount the widget as a real sibling above the editor and drive scheduled regular-mode repaints with off-screen launch rows to assert live progress does not clear scrollback. Verify single-row Unicode widths and idle height changes there. Pi-free unit tests must cover one mount, thinking-only update deduplication, idle/reuse, RPC string fallback, and dead UI observers. CLI lifecycle probes inject a mock child runner, never a real worker or model request.
+UI regressions cover collapsed result previews, model-once headers, no raw thinking, narrow widths, frozen live transcript rows and terminal finalization without collect, receipt non-duplication, terminal callback release, cancellation, UI persistence failure, branch/reload restoration and reused short IDs. Mount the widget as a real sibling above the editor and drive scheduled regular-mode repaints with off-screen launch rows to assert live progress does not clear scrollback. Verify full-card identity/task/status/tool content in the dock, bounded Unicode widths, overflow, expansion and idle height changes there. Assert no duplicate live transcript card and transfer to a finished transcript card at completion. Exercise tall inputs, sibling widgets and resize while idle. Also assert actual viewport-relative panel/footer rows from a short transcript through growing parent output, small shrink, terminal resize and idle/reuse; checking only repaint counts misses a floating panel. Verify editor focus and component-tree restoration. Keep Pi-free layout tests for single-pass rendering, bounded shrink padding, fullscreen passthrough, renderer replacement and cleanup with dead UI callbacks. Pi-free unit tests must cover one mount, thinking-only update deduplication, idle/reuse, RPC string fallback, and dead UI observers. CLI lifecycle probes inject a mock child runner, never a real worker or model request.
 
 Scheduler tests: local jobs never overlap at `maxLocalConcurrent: 1`; hosted is not blocked by the GPU queue; fg wait budget includes queue time; quiet wait does not kill; wrap steers / queued wrap cancels; promoteBackground detaches Esc; hard timeout optional; shutdown drops queue.
 

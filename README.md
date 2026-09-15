@@ -109,7 +109,19 @@ Then `/reload` (or restart Pi) so the overlay is picked up.
 
 ## Job display
 
-Each launch has one job card: kind, model identifier (once), job ID, task, and status. While active, the card stays at **Accepted — live progress above editor**; it is finalized once when the child finishes, even without a collection call. This also applies after a foreground timeout. Continuous activity belongs in the widget, not old transcript rows: changing an off-screen row makes Pi's regular terminal renderer clear and rebuild scrollback. Completion can still cause one redraw. Running/queued cards use neutral framing; only the final job status marks success or failure. Raw child thinking is never displayed.
+The **full active delegate card** stays pinned above the editor—not just a one-line status strip. It shows the job ID, kind, model identifier (once), task, live status and latest tool action. The scrolling transcript contains only a compact `accepted — card pinned above editor` receipt while the job runs. When it finishes, the pinned card disappears and that original receipt becomes the full finished card with its result, even without collection and after a foreground timeout. This keeps live changes out of off-screen transcript rows, which make Pi's regular renderer rebuild scrollback. Completion can still cause one redraw. Running/queued cards use neutral framing; a failed child command is not confused with overall job failure. Raw child thinking is never displayed.
+
+While running:
+
+```text
+delegate · d0003 · review · xai/grok-4.6
+Task: Review timeout and abort handling
+● Running — reading file
+→ read  delegate/jobs.ts
+delegate  1 run  0 wait  local 0/1 · ctrl+o details
+```
+
+After completion, in the transcript:
 
 ```text
 delegate · review · xai/grok-4.6 · d0003
@@ -118,9 +130,13 @@ Task: Review timeout and abort handling
 [Readable preview of the child result]
 ```
 
-Collapsed cards show up to three rendered lines of the result. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned result, the last three tool actions, and the native session path for the complete recorded history. Individual command failures are shown in tool details, not confused with overall job failure. Recording warnings and job errors remain visible when collapsed.
+Collapsed finished cards show up to three rendered lines of the result. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned result, the last three tool actions, and the native session path for the complete recorded history. Individual command failures are shown in tool details, not confused with overall job failure. Recording warnings and job errors remain visible when collapsed.
 
-Wait/peek/wrap/cancel calls are compact transcript receipts, not duplicate job cards. For example, `d0003 · result collected` or `d0003 · checked · running at check`. These are historical events, while the launch card is finalized with the result. The sticky widget shows running/queued/local-slot counts and each active job's ID, activity, optional local generation rate, and wrap request in acceptance order. It uses one physical line, truncating at narrow widths rather than wrapping or growing. In TUI mode it is mounted once above the editor and updated in place, hidden when idle, and removed on shutdown/reload. RPC uses deduplicated string-widget updates. Expanded active cards do not stream tool activity; the final card retains the last three tools and full result. The parent model still receives the same full tool results; this is a TUI presentation change.
+Wait/peek/wrap/cancel calls remain compact historical receipts, such as `d0003 · result collected` or `d0003 · checked · running at check`—never duplicate cards.
+
+The pinned panel stacks active cards in acceptance order and retains running/queued/local-slot counts, optional local generation rate and wrap requests. **Ctrl+O** also expands pinned cards for more task/tool detail, within the panel's height limit. The panel uses at most **12 rows and half the terminal height**; regular mode reduces that budget further for the existing editor, footer and sibling widgets, leaving a transcript row. Overflow is labelled `+N more` with job IDs. Narrow/tiny terminals truncate fields or fall back to a compact header/status rather than pushing the input off-screen. Full results and recorded history remain available in finished cards and archived sessions; expanding a live transcript receipt shows its archive path.
+
+In TUI mode the panel is mounted once and updated in place. **Regular mode anchors the full card stack and the existing editor/footer at the bottom even before output fills the screen**: a removable layout container puts spare rows above the cards. No Pi settings, renderer replacement or editor/footer replacement is needed. Fullscreen keeps Pi's native dock. The panel and added spacing disappear when idle; shutdown/reload restores the original component tree. Native terminal scrollback remains native (manually scrolling it still scrolls the terminal). RPC receives deduplicated plain card previews, capped at ten rows and 100 columns, never component factories. Parent-model tool results are unchanged.
 
 Completion snapshots are saved as UI-only `delegate-job-state` session entries (including the capped answer, without raw thinking), so cards restore on reload/resume without model calls. Identity uses the original tool-call ID, not a short job ID that can repeat after reload. If an old or interrupted job has no saved completion, it is labelled historical with live status unavailable, never falsely left “running”. This does not resume jobs. `/reload` still stops outstanding children, as before.
 
@@ -232,7 +248,7 @@ npm run test:unit       # no Pi required; this is what CI runs
 xvfb-run -a npm test    # unit + CLI load/UI checks (Linux; needs `pi` and Xvfb)
 ```
 
-Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models. The budget-guard startup probe also launches an isolated Pi child and terminates it after readiness, before sending any task. Job-card lifecycle probes inject a mocked child runner. Stability checks mount a real widget sibling above the editor and drive the installed regular-mode renderer with off-screen launch cards, verifying that scheduled live repaints do not clear screen/scrollback. Pi-free unit tests cover widget mounting, thinking-only update deduplication, idle/reuse, RPC, and dead UI callbacks; CLI tests cover single-line Unicode widths and actual widget height changes. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
+Unit tests mock children and process termination; they never signal OS process groups. Load/UI checks start isolated, offline Pi CLI processes with temporary configuration, but never call models. The budget-guard startup probe also launches an isolated Pi child and terminates it after readiness, before sending any task. Job-card lifecycle probes inject a mocked child runner. Stability checks mount a real widget sibling above the editor and drive the installed regular-mode renderer with off-screen launch cards, verifying that scheduled live repaints do not clear screen/scrollback. Screen-coordinate regressions verify full-card headers, tasks, status and tool actions—not only a status strip—while a short transcript grows beyond the viewport. They also exercise expansion, tall inputs, sibling widgets, shrink, resize, idle/reuse, cursor/focus preservation and layout cleanup. Layout unit tests also cover single-pass rendering, fullscreen passthrough and renderer replacement. Pi-free unit tests cover widget mounting, thinking-only update deduplication, idle/reuse, RPC, and dead UI callbacks; CLI tests cover Unicode widths, card-height limits, explicit overflow and actual widget height changes. They use the installed CLI's loader, not private unbundled Pi imports; no separate `@earendil-works/pi-server` installation is needed. On systems without Xvfb, the underlying command is `npm test`.
 
 CLI load/UI checks are omitted from GitHub Actions because runners have no `pi`.
 
