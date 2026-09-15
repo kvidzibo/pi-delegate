@@ -11,8 +11,6 @@ export type ActivityItem = {
 
 export const LIVE_ACTIVITY_MAX = 3;
 export const ACTIVITY_ARG_MAX = 40;
-export const THINKING_TAIL_MAX = ACTIVITY_ARG_MAX;
-const THINKING_BUF_MAX = 200;
 
 export function aliasForModel(model: string | undefined): string {
 	if (!model) return "…";
@@ -48,19 +46,6 @@ export function clipActivityArg(raw: string, max = ACTIVITY_ARG_MAX): string {
 	const compact = raw.replace(/\s+/g, " ").trim();
 	if (compact.length <= max) return compact;
 	return `${compact.slice(0, Math.max(1, max - 1))}…`;
-}
-
-export function clipThinkingTail(raw: string, max = THINKING_TAIL_MAX): string {
-	const compact = raw.replace(/\s+/g, " ").trim();
-	if (!compact) return "";
-	if (compact.length <= max) return compact;
-	return `…${compact.slice(-Math.max(1, max - 1))}`;
-}
-
-function appendThinking(prev: string | undefined, delta: string): string {
-	if (!delta) return prev ?? "";
-	const next = `${prev ?? ""}${delta}`;
-	return next.length > THINKING_BUF_MAX ? next.slice(-THINKING_BUF_MAX) : next;
 }
 
 export type ThemeFg = {
@@ -144,7 +129,7 @@ export type ProgressState = {
 	done: ActivityItem[];
 	current?: ActivityItem;
 	open: Map<string, ActivityItem>;
-	thinking?: string;
+	thinking?: boolean;
 };
 
 export function createProgress(): ProgressState {
@@ -222,9 +207,8 @@ function clearThinking(state: ProgressState): boolean {
 export function applyProgress(state: ProgressState, item: ActivityItem): boolean {
 	if (isThinkingItem(item)) {
 		if (item.args === undefined) return clearThinking(state);
-		const next = appendThinking(state.thinking, item.args);
-		if (next === (state.thinking ?? "")) return false;
-		state.thinking = next;
+		if (state.thinking || !item.args.trim()) return false;
+		state.thinking = true;
 		return true;
 	}
 	if (item.mark === "…") {
@@ -271,21 +255,13 @@ export function asActivityList(value: unknown): ActivityItem[] {
 	return out;
 }
 
-export type JobBoardRow = {
-	local: boolean; status: string; id?: string; current?: ActivityItem;
-	thinking?: string; tg?: string; wrapped?: boolean; reason?: string;
-};
+export type JobBoardRow = { local: boolean; status: string };
 
-export function formatJobBoard(jobs: JobBoardRow[], limits: { maxLocalConcurrent: number }): string[] {
+export function formatJobBoard(jobs: readonly JobBoardRow[], limits: { maxLocalConcurrent: number }): string[] {
 	const run = jobs.filter((job) => job.status === "running");
 	const wait = jobs.filter((job) => job.status === "queued");
 	const localRun = run.filter((job) => job.local).length;
 	const counts = `delegate  ${run.length} run  ${wait.length} wait  local ${localRun}/${limits.maxLocalConcurrent}`;
-	const activity = jobs.filter((job) => job.id && (job.status === "running" || job.status === "queued")).map((job) => {
-		const phase = job.status === "queued" ? `queued (${job.reason === "gpu" ? "GPU" : "slot"})`
-			: job.current?.mark === "→" ? activityLabel(job.current) : job.thinking ? "thinking" : activityLabel(job.current);
-		return `${job.id} ${clipActivityArg(phase)}${job.local && job.tg ? ` · ${job.tg}` : ""}${job.wrapped ? " · wrap requested" : ""}`;
-	});
-	// A single physical widget row, with job order inherited from scheduler acceptance.
-	return [[counts, ...activity].join("  ·  ").replace(/[\x00-\x1f\x7f-\x9f]/g, " ")];
+	// Per-job activity belongs in the full cards, not a second summary strip.
+	return [counts.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")];
 }

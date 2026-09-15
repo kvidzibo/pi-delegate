@@ -10,6 +10,10 @@ test("package manifest loads only delegate through the installed Pi CLI", async 
 	assert.deepEqual((await runPiProbe("delegate-load-probe")).result, { tools: ["delegate"] });
 });
 
+test("package reload restores a single delegate tool through the real session lifecycle", async () => {
+	assert.deepEqual((await runPiProbe("delegate-reload-probe")).result, { tools: ["delegate"], reloaded: true });
+});
+
 test("real isolated Pi child loads the explicit budget guard before any task is dispatched", async () => {
 	assert.deepEqual((await runPiProbe("delegate-guard-startup-probe")).result, { guardLoaded: true, promptWithheld: true, noModelCalls: true });
 });
@@ -37,6 +41,12 @@ test("live progress preserves scrollback and bottom-anchors the panel during gro
 test("delegate card backgrounds fill each row, follow status/theme and leave receipts and RPC plain", async () => {
 	assert.deepEqual((await runPiProbe("delegate-background-probe")).result, {
 		fullWidth: true, statusColors: true, neutralReceipts: true, themeChanges: true, plainRpc: true,
+	});
+});
+
+test("all delegate return paths preserve result, promotion and notification contracts", async () => {
+	assert.deepEqual((await runPiProbe("delegate-result-probe")).result, {
+		terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, noModelCalls: true,
 	});
 });
 

@@ -3,19 +3,23 @@ import { test } from "node:test";
 import type { JobSnapshot } from "../jobs.ts";
 import { projectJobBoard } from "../panel.ts";
 import { JobBoard } from "../board.ts";
+import { applyProgress, createProgress } from "../display.ts";
 
 const job = (extra: Partial<JobSnapshot> = {}): JobSnapshot => ({ id: "d0001", kind: "review", model: "hosted/reviewer", task: "Review card layout",
 	status: "running", local: false, failed: false, background: true, activity: [], ...extra });
 const limits = { maxLocalConcurrent: 1 };
 
 test("panel projection carries full card identity and task while excluding raw thinking and clocks", () => {
-	const initial = job({ thinking: "PRIVATE first", quietForMs: 10,
+	const progress = createProgress();
+	applyProgress(progress, { mark: "…", name: "thinking", args: "PRIVATE first" });
+	const initial = job({ thinking: progress.thinking, quietForMs: 10,
 		activity: [{ name: "thinking", mark: "…", args: "SECRET" }, { name: "read", mark: "✓", args: "file.ts", id: "tool-1" }] });
 	const first = projectJobBoard([initial], limits)!;
 	assert.equal(first.cards[0].model, "hosted/reviewer"); assert.equal(first.cards[0].task, "Review card layout");
 	assert.equal(first.cards[0].phase, "thinking"); assert.equal(first.cards[0].jobId, "d0001");
 	assert.doesNotMatch(JSON.stringify(first), /PRIVATE|SECRET|quietForMs|tool-1/);
-	assert.deepEqual(projectJobBoard([{ ...initial, thinking: "PRIVATE second", quietForMs: 999 }], limits), first);
+	applyProgress(progress, { mark: "…", name: "thinking", args: "PRIVATE second" });
+	assert.deepEqual(projectJobBoard([{ ...initial, thinking: progress.thinking, quietForMs: 999 }], limits), first);
 	initial.activity[1].args = "mutated";
 	assert.equal((first.cards[0].activity as any[])[0].args, "file.ts", "projection owns its tool snapshots");
 });
@@ -38,8 +42,11 @@ test("equivalent full-card snapshots reuse the mounted component; expansion is r
 	} };
 	const board = new JobBoard((state: NonNullable<ReturnType<typeof projectJobBoard>>, _width, maxRows, _theme, expanded) =>
 		[`${state.cards[0].task} · ${expanded} · ${maxRows}`]);
-	board.paint(ui, "tui", projectJobBoard([job({ thinking: "one" })], limits));
-	board.paint(ui, "tui", projectJobBoard([job({ thinking: "two" })], limits));
+	const progress = createProgress();
+	for (const args of ["one", "two"]) {
+		applyProgress(progress, { mark: "…", name: "thinking", args });
+		board.paint(ui, "tui", projectJobBoard([job({ thinking: progress.thinking })], limits));
+	}
 	assert.equal(mounts, 1); assert.equal(paints, 0);
 	assert.deepEqual(component.render(80), ["Review card layout · false · 12"]);
 	expanded = true;

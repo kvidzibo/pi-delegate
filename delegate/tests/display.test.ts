@@ -7,7 +7,6 @@ import {
 	applyProgress,
 	asActivityList,
 	clipActivityArg,
-	clipThinkingTail,
 	createProgress,
 	delegateTargetLine,
 	formatDelegateTarget,
@@ -15,7 +14,6 @@ import {
 	paintHeader,
 	parseChildProgress,
 	summarizeToolArgs,
-	THINKING_TAIL_MAX,
 	type ActivityItem,
 } from "../display.ts";
 
@@ -114,7 +112,7 @@ test("current row stays off the last-3 done list", () => {
 	applyProgress(state, { mark: "…", name: "thinking", args: "Need map first" });
 	assert.deepEqual(state.done, []);
 	assert.equal(state.current, undefined);
-	assert.equal(state.thinking, "Need map first");
+	assert.equal(state.thinking, true);
 	applyProgress(state, { mark: "→", name: "read", args: "a.md", id: "c1" });
 	assert.equal(state.current?.mark, "→");
 	applyProgress(state, { mark: "✓", name: "read", id: "c1" });
@@ -176,7 +174,7 @@ test("thinking does not wipe in-flight tool args", () => {
 		assistantMessageEvent: { type: "thinking_delta", delta: "Keep bash args" },
 	})!), true);
 	assert.equal(state.current?.name, "bash");
-	assert.equal(state.thinking, "Keep bash args");
+	assert.equal(state.thinking, true);
 	applyProgress(
 		state,
 		parseChildProgress({
@@ -243,17 +241,11 @@ test("thinking does not wipe in-flight tool args", () => {
 		],
 	);
 	assert.equal(state.current, undefined);
-	assert.equal(state.thinking, "Need failing test first");
+	assert.equal(state.thinking, true);
 	assert.ok((state.done[1]?.args?.length ?? 0) <= ACTIVITY_ARG_MAX);
 });
 
-test("thinking buffer is bounded but the visible header contains only identity", () => {
-	assert.equal(clipThinkingTail("short"), "short");
-	const long = `Need ${"x".repeat(80)} end`;
-	const clipped = clipThinkingTail(long);
-	assert.equal(clipped.length, THINKING_TAIL_MAX);
-	assert.equal(clipped.startsWith("…"), true);
-	assert.equal(clipped.endsWith("end"), true);
+test("thinking progress retains only phase and the visible header contains only identity", () => {
 	const theme = {
 		fg: (key: string, text: string) => `[${key}]${text}`,
 		bold: (text: string) => `*${text}*`,
@@ -273,10 +265,43 @@ test("thinking buffer is bounded but the visible header contains only identity",
 		assistantMessageEvent: { type: "thinking_delta", delta: "User wants header text" },
 	})!);
 	assert.equal(state.current, undefined);
-	assert.equal(state.thinking, "User wants header text");
+	assert.equal(state.thinking, true);
+	assert.doesNotMatch(JSON.stringify(state), /User wants header text/);
 	applyProgress(state, { mark: "…", name: "writing" });
 	assert.equal(state.thinking, undefined);
 	assert.equal(state.current?.name, "writing");
+});
+
+test("thinking phase ignores empty deltas, resets at block boundaries and yields to writing", () => {
+	const state = createProgress();
+	const event = (type: string, delta?: unknown) => {
+		const item = parseChildProgress({ type: "message_update", assistantMessageEvent: { type, delta } });
+		return item ? applyProgress(state, item) : false;
+	};
+	assert.equal(event("thinking_start"), false);
+	for (const delta of [undefined, 42, "", " \n\t", "\u00a0"]) {
+		assert.equal(event("thinking_delta", delta), false);
+		assert.equal(state.thinking, undefined);
+	}
+	assert.equal(event("thinking_delta", "PRIVATE first"), true);
+	for (const delta of ["PRIVATE second".repeat(1000), "", " \n\t".repeat(1000)]) {
+		assert.equal(event("thinking_delta", delta), false);
+		assert.equal(state.thinking, true);
+	}
+	assert.doesNotMatch(JSON.stringify(state), /PRIVATE/);
+	assert.deepEqual(state.done, []); assert.equal(state.current, undefined);
+	assert.equal(event("thinking_end"), false); assert.equal(state.thinking, true);
+	assert.equal(event("thinking_start"), true); assert.equal(state.thinking, undefined);
+	assert.equal(event("thinking_delta", "new block"), true);
+	applyProgress(state, { mark: "→", name: "read", id: "A", args: "a.ts" });
+	applyProgress(state, { mark: "→", name: "read", id: "B", args: "b.ts" });
+	assert.equal(event("text_start"), true); assert.equal(state.thinking, undefined);
+	assert.equal(state.current?.id, "B", "writing cannot displace an open tool");
+	applyProgress(state, { mark: "✓", name: "read", id: "B" });
+	assert.equal(state.current?.id, "A");
+	applyProgress(state, { mark: "✓", name: "read", id: "A" });
+	assert.equal(event("text_delta", "answer"), true); assert.equal(state.current?.name, "writing");
+	assert.equal(event("text_delta", "more"), false);
 });
 
 test("distinct identical calls keep their IDs and parallel completions keep current activity", () => {
@@ -311,7 +336,7 @@ test("finishing current tool reveals another open tool; ID-less completions stil
 	assert.equal(state.done.at(-1)?.args, "a");
 });
 
-test("sticky board shows counts when job identities are unavailable", () => {
+test("board summary shows running, queued and local-slot counts", () => {
 	assert.deepEqual(
 		formatJobBoard(
 			[
@@ -327,15 +352,18 @@ test("sticky board shows counts when job identities are unavailable", () => {
 	);
 });
 
-test("board carries live activity in acceptance order without raw thinking or control sequences", () => {
+test("board summary ignores per-job activity, identity and terminal jobs", () => {
 	const jobs = [
 		{ id: "d0001", local: true, status: "running", thinking: "PRIVATE", current: { mark: "→" as const, name: "read" }, tg: "tg 40/s" },
 		{ id: "d0002", local: true, status: "queued", reason: "gpu" },
 		{ id: "d0003", local: false, status: "running", thinking: "SECRET", wrapped: true },
+		{ id: "d0004", local: true, status: "done" },
+		{ id: "d0005", local: false, status: "failed" },
 	];
 	const line = formatJobBoard(jobs, { maxLocalConcurrent: 1 });
-	assert.deepEqual(line, ["delegate  2 run  1 wait  local 1/1  ·  d0001 reading file · tg 40/s  ·  d0002 queued (GPU)  ·  d0003 thinking · wrap requested"]);
-	assert.doesNotMatch(line[0], /PRIVATE|SECRET/);
-	const unsafe = formatJobBoard([{ id: "d0001", local: false, status: "running", current: { mark: "→", name: "bad\u001b[2J\nname" } }], { maxLocalConcurrent: 1 });
+	assert.deepEqual(line, ["delegate  2 run  1 wait  local 1/1"]);
+	assert.doesNotMatch(line[0], /PRIVATE|SECRET|d000|thinking|wrap requested|tg 40/);
+	const unsafeJobs = [{ id: "d0001", local: false, status: "running", current: { mark: "→", name: "bad\u001b[2J\nname" } }];
+	const unsafe = formatJobBoard(unsafeJobs, { maxLocalConcurrent: 1 });
 	assert.equal(unsafe.length, 1); assert.doesNotMatch(unsafe[0], /[\x00-\x1f\x7f-\x9f]/);
 });
