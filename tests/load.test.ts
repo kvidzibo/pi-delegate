@@ -34,6 +34,12 @@ test("live progress preserves scrollback and bottom-anchors the panel during gro
 	});
 });
 
+test("delegate card backgrounds fill each row, follow status/theme and leave receipts and RPC plain", async () => {
+	assert.deepEqual((await runPiProbe("delegate-background-probe")).result, {
+		fullWidth: true, statusColors: true, neutralReceipts: true, themeChanges: true, plainRpc: true,
+	});
+});
+
 test("job cards finalize without collection, restore safely and render compact receipts", async () => {
 	assert.deepEqual((await runPiProbe("delegate-card-probe")).result, {
 		liveCard: true, receipts: true, previews: true, restoration: true, cancellation: true, emptyFailures: true, noModelCalls: true,
