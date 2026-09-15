@@ -7,6 +7,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { cardProbe } from "./cards.ts";
 import { panelProbe } from "./panel.ts";
+import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
 
 export default function probe(pi: ExtensionAPI) {
@@ -27,6 +28,7 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));
 	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
 	register("delegate-panel-probe", (ctx) => panelProbe(pi, ctx));
+	register("delegate-background-probe", backgroundProbe);
 	register("delegate-load-probe", () => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);

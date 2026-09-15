@@ -1,5 +1,5 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { activityLabel, asActivityItem, asActivityList, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
@@ -17,7 +17,9 @@ export type RowState = {
 	live: boolean;
 	pinned?: boolean;
 };
-type RowInput = { theme: ThemeFg; read: () => RowState; expandHint?: string };
+type CardBackground = "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
+type CardTheme = ThemeFg & { bg?: (key: CardBackground, text: string) => string };
+type RowInput = { theme: CardTheme; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
 const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
 
@@ -51,6 +53,21 @@ function statusLine(state: RowState): { color: string; text: string } {
 	return { color: "muted", text: "○ Preparing" };
 }
 
+function cardBackground(state: RowState): CardBackground {
+	const { color } = statusLine(state);
+	return color === "error" ? "toolErrorBg" : color === "success" ? "toolSuccessBg" : "toolPendingBg";
+}
+
+function paintCard(theme: CardTheme, lines: string[], width: number, color: CardBackground): string[] {
+	const bg = theme.bg?.bind(theme);
+	if (!bg) return lines; // RPC previews use a plain, foreground-only theme.
+	return lines.map((line) => truncateToWidth(line, width, "…", true)
+		// Wrapping, truncation and Markdown can reset styles inside a line.
+		// Paint each span separately so the fill survives resets, including padding.
+		.split(/(\x1b\[(?:0|49)?m)/)
+		.map((part, index) => index % 2 ? part : bg(color, part)).join(""));
+}
+
 function paintActivity(theme: ThemeFg, item: ActivityItem): string {
 	const color = item.mark === "✗" ? "error" : item.mark === "✓" ? "success" : "muted";
 	return `${theme.fg(color, item.mark)} ${theme.fg("accent", displayText(item.name))}${item.args ? `  ${theme.fg("dim", displayText(item.args))}` : ""}`;
@@ -75,7 +92,8 @@ export function renderChildCall(input: RowInput): ChildView {
 		const header = state.collect
 			? `${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`
 			: paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
-		return wrapTextWithAnsi(header, width);
+		const lines = wrapTextWithAnsi(header, width);
+		return state.collect ? lines : paintCard(input.theme, lines, width, cardBackground(state));
 	});
 }
 
@@ -118,7 +136,7 @@ export function renderChildResult(input: RowInput): ChildView {
 		} else if (!state.collect || failed) {
 			add(input.expandHint || "Expand for full result and tool details", "dim");
 		}
-		return lines;
+		return state.collect ? lines : paintCard(theme, lines, width, cardBackground(state));
 	});
 }
 
@@ -134,7 +152,7 @@ function clippedLines(lines: string[], limit: number, width: number): string[] {
 }
 
 /** Full live cards, bounded to the input dock's budget, not a counts-only strip. */
-export function renderJobBoard(state: JobBoardState, width: number, maxRows: number, theme: ThemeFg, expanded: boolean, expandHint = keyHint("app.tools.expand", "details")): string[] {
+export function renderJobBoard(state: JobBoardState, width: number, maxRows: number, theme: CardTheme, expanded: boolean, expandHint = keyHint("app.tools.expand", "details")): string[] {
 	if (width < 1 || maxRows < 1 || !state.cards.length) return [];
 	const footerRows = maxRows >= 4 ? 1 : 0;
 	const shown = Math.min(state.cards.length, Math.max(1, Math.floor((maxRows - footerRows) / 3)));
@@ -168,14 +186,15 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 			card.push(...clippedLines(extras.map(fit), cardRows - card.length, width));
 		}
 		while (card.length < cardRows) card.push(""); // Stable geometry as tools start/finish.
-		lines.push(...card);
+		lines.push(...paintCard(theme, card, width, "toolPendingBg"));
 	}
 	if (footerRows) {
 		const hidden = state.cards.length - shown;
 		const more = hidden ? `+${hidden} more (${state.cards.slice(shown).map((d) => displayText(str(d, "jobId"))).join(", ")}) · ` : "";
 		lines.push(fit(theme.fg("dim", `${more}${state.summary}${expandHint ? ` · ${expandHint}` : ""}`)));
 	}
-	return lines;
+	// Width truncation emits SGR resets even with a plain theme; keep RPC text ANSI-free.
+	return theme.bg ? lines : lines.map(stripTerminalSequences);
 }
 
 export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDetails; expanded: boolean }): Text {
