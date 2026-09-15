@@ -169,9 +169,24 @@ function checkFullCardAnchoring() {
 		assert.ok(lines.length <= rows); assert.ok(lines.every((line) => visibleWidth(line) <= width));
 	}
 	assert.match(renderJobBoard(many, 100, 12, theme, false, "").join("\n"), /\+5 more/);
-	const unsafe = projectJobBoard([{ ...job, task: "界 🧪 ".repeat(100) + "\u001b[2J", thinking: "PRIVATE THOUGHT", current: { name: "thinking", mark: "…", args: "SECRET" } }], { maxLocalConcurrent: 1 })!;
+	const unsafe = projectJobBoard([{ ...job, task: "界 🧪 ".repeat(100) + "\u001b[2J", thinking: true, current: { name: "thinking", mark: "…", args: "SECRET" } }], { maxLocalConcurrent: 1 })!;
 	const lines = renderJobBoard(unsafe, 30, 8, theme, true, "");
 	assert.doesNotMatch(lines.join("\n").replace(/\x1b\[[0-9;]*m/g, ""), /PRIVATE|SECRET|\u001b/);
+
+	// The retired strip's status coverage belongs to the production full-card renderer.
+	const mixed = projectJobBoard([
+		{ ...job, local: true, model: "local-qwen38/qwen38-q4km", thinking: true, tg: "tg 40/s", current: { mark: "→", name: "read" } },
+		{ ...job, id: "d0002", status: "queued", reason: "gpu", current: undefined },
+		{ ...job, id: "d0003", thinking: true, wrapped: true, current: undefined },
+	], { maxLocalConcurrent: 1 })!;
+	const rendered = renderJobBoard(mixed, 100, 12, theme, false, "").join("\n");
+	assert.match(rendered, /d0001[\s\S]*d0002[\s\S]*d0003/, "cards keep acceptance order");
+	assert.match(rendered, /Running — reading file · tg 40\/s/, "in-flight tools take precedence over thinking");
+	assert.match(rendered, /Queued — waiting for GPU/);
+	assert.match(rendered, /Running — thinking · wrap requested/);
+	assert.equal(mixed.summary, "delegate  2 run  1 wait  local 1/1");
+	const unsafeTool = projectJobBoard([{ ...job, current: { mark: "→", name: "bad\u001b[2J\nname" } }], { maxLocalConcurrent: 1 })!;
+	assert.doesNotMatch(renderJobBoard(unsafeTool, 100, 8, theme, true, "").join("\n"), /[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
 }
 
 export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {

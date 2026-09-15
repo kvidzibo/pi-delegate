@@ -332,139 +332,102 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					});
 				};
 
+				let snap: JobSnapshot;
 				if (parsed.mode === "collect") {
 					const current = scheduler.get(parsed.jobId);
 					publish(current, true, current.status === "queued" || current.status === "running");
 					if (parsed.cancel) scheduler.cancel(parsed.jobId);
 					else if (parsed.wrap) scheduler.wrap(parsed.jobId);
 					const peek = parsed.peek === true;
-					const snap = await scheduler.wait(parsed.jobId, {
+					snap = await scheduler.wait(parsed.jobId, {
 						timeoutMs: peek ? 0 : parsed.waitMs,
 						quietMs: peek || parsed.cancel ? undefined : config.checkIntervalMs,
 						signal: peek ? undefined : signal,
 						onSnapshot: (next) => publish(next, true, next.status === "queued" || next.status === "running"),
 					});
-					const pending = snap.status === "queued" || snap.status === "running";
-					const failed = !pending && snap.failed;
-					const text = receiptText(snap);
-					updateCard(snap);
-					if (shouldConsume(snap)) gate.consume(snap.id);
-					return formatOutput({
-						text,
-						failed,
-						stopReason: snap.stopReason,
-						exitCode: snap.exitCode ?? (failed ? 1 : 0),
-						maxBytes: config.maxOutputBytes,
-						kind: snap.kind,
-						model: snap.model,
-						details: uiDetails(snap, {
-							callType: "collect", operation, background: true,
-							pending,
-							answer: snap.status === "done" || snap.status === "failed" ? text : snap.answer,
-						}),
+				} else {
+					const kind = parsed.kind;
+					const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
+					const resolved = resolveAgent(kind, parsed.modelOverride, config);
+					const local = isLocalModel(resolved.model);
+					update({
+						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
+						details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
 					});
-				}
 
-				const kind = parsed.kind;
-				const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
-				const resolved = resolveAgent(kind, parsed.modelOverride, config);
-				const local = isLocalModel(resolved.model);
-				update({
-					content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
-					details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
-				});
-
-				const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
-				let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
-				if (local) {
-					const alternative = config.localAlternatives[resolved.model];
+					const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
+					let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
+					if (local) {
+						const alternative = config.localAlternatives[resolved.model];
+						try {
+							const slash = alternative?.model.indexOf("/") ?? -1;
+							const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
+							savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
+								key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
+									alternativeThinking: alternative.thinking, tools: resolved.agent.tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
+								files: config.calibrationProfiles, pricing: pricedModel?.cost,
+							}) : { reason: "No hosted alternative configured for this local model" };
+						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
+					}
+					const archive = accounting.create({
+						parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
+						toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
+						savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
+					}, parsed.task, promptPath);
+					origins.set(archive.data.runId, toolCallId);
+					cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued" });
 					try {
-						const slash = alternative?.model.indexOf("/") ?? -1;
-						const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
-						savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
-							key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
-								alternativeThinking: alternative.thinking, tools: resolved.agent.tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
-							files: config.calibrationProfiles, pricing: pricedModel?.cost,
-						}) : { reason: "No hosted alternative configured for this local model" };
-					} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
-				}
-				const archive = accounting.create({
-					parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
-					toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
-					savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
-				}, parsed.task, promptPath);
-				origins.set(archive.data.runId, toolCallId);
-				cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued" });
-				let snap: JobSnapshot;
-				try {
-					snap = scheduler.enqueue({
-						archive: { runId: archive.data.runId, sessionFile: archive.paths.session },
-						kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
-						background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
-						run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
-							task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
-							tools: resolved.agent.tools, offline: resolved.agent.offline,
-							hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
-							promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
-							signal: childSignal, env: process.env,
-							onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
-						})),
-					});
-				} catch (error) {
-					accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });
-					throw error;
-				}
-				publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
-
-				if (parsed.background) {
-					return formatOutput({
-						text: receiptText(snap),
-						failed: false,
-						exitCode: 0,
-						maxBytes: config.maxOutputBytes,
-						kind,
-						model: resolved.model,
-						details: uiDetails(snap, { background: true, pending: true }),
-					});
+						snap = scheduler.enqueue({
+							archive: { runId: archive.data.runId, sessionFile: archive.paths.session },
+							kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
+							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
+							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
+								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
+								tools: resolved.agent.tools, offline: resolved.agent.offline,
+								hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
+								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
+								signal: childSignal, env: process.env,
+								onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
+							})),
+						});
+					} catch (error) {
+						accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });
+						throw error;
+					}
+					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
+					if (!parsed.background) {
+						snap = await scheduler.wait(snap.id, {
+							timeoutMs: parsed.timeoutMs,
+							signal,
+							onSnapshot: (next) => publish(next, false, next.status === "queued" || next.status === "running"),
+						});
+						if (snap.status === "queued" || snap.status === "running") {
+							snap = scheduler.promoteBackground(snap.id);
+						}
+					}
 				}
 
-				let done = await scheduler.wait(snap.id, {
-					timeoutMs: parsed.timeoutMs,
-					signal,
-					onSnapshot: (next) => publish(next, false, next.status === "queued" || next.status === "running"),
-				});
-				if (done.status === "queued" || done.status === "running") {
-					done = scheduler.promoteBackground(snap.id);
-				}
-				if (done.status === "queued" || done.status === "running") {
-					const text = receiptText(done);
-					updateCard(done);
-					return formatOutput({
-						text,
-						failed: false,
-						exitCode: 0,
-						maxBytes: config.maxOutputBytes,
-						kind,
-						model: done.model || resolved.model,
-						details: uiDetails(done, { background: true, pending: true }),
-					});
-				}
-				const model = done.model || resolved.model;
-				const text = truncateOutput(done.answer || done.stderrTail || "(no output)", config.maxOutputBytes);
-				const failed = done.failed;
-				updateCard(done);
+				const collect = parsed.mode === "collect";
+				const pending = snap.status === "queued" || snap.status === "running";
+				const failed = !pending && snap.failed;
+				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
+				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
+				const text = collect || pending ? receiptText(snap)
+					: truncateOutput(snap.answer || snap.stderrTail || "(no output)", config.maxOutputBytes);
+				updateCard(snap);
+				if (collect && shouldConsume(snap)) gate.consume(snap.id);
 				return formatOutput({
 					text,
 					failed,
-					stopReason: done.stopReason,
-					exitCode: done.exitCode ?? (failed ? 1 : 0),
+					stopReason: snap.stopReason,
+					exitCode,
 					maxBytes: config.maxOutputBytes,
-					kind,
-					model,
-					details: uiDetails(done, {
-						exitCode: done.exitCode ?? (failed ? 1 : 0),
-						answer: text,
-					}),
+					kind: snap.kind,
+					model: snap.model,
+					details: uiDetails(snap, collect ? {
+						callType: "collect", operation, background: true, pending,
+						answer: pending ? snap.answer : text,
+					} : pending ? { background: true, pending: true } : { exitCode, answer: text }),
 				});
 			} catch (error) {
 				cards.forget(toolCallId);

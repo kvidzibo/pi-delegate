@@ -3,7 +3,6 @@ import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../ch
 import { assertKind, type Kind } from "./config.ts";
 import {
 	applyProgress,
-	clipThinkingTail,
 	createProgress,
 	parseChildProgress,
 	type ActivityItem,
@@ -45,7 +44,7 @@ export type JobSnapshot = {
 	reason?: QueueReason;
 	activity: ActivityItem[];
 	current?: ActivityItem;
-	thinking?: string;
+	thinking?: boolean;
 	tg?: string;
 	answer?: string;
 	exitCode?: number;
@@ -458,7 +457,6 @@ export class JobScheduler {
 	private snapshot(job: InternalJob): JobSnapshot {
 		const failed =
 			job.status === "failed" || (job.status === "done" && job.result ? isFailedChildResult(job.result) : false);
-		const thinking = clipThinkingTail(job.progress.thinking ?? "") || undefined;
 		const tg =
 			job.status === "running" || job.status === "done" || job.status === "failed"
 				? visibleChildTg(job.model, job.meter, undefined)
@@ -484,7 +482,7 @@ export class JobScheduler {
 		}
 		const reason = this.queueReason(job);
 		if (reason) snap.reason = reason;
-		if (thinking) snap.thinking = thinking;
+		if (job.progress.thinking) snap.thinking = true;
 		if (tg) snap.tg = tg;
 		if (job.result) {
 			snap.answer = job.result.text;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JobBoard } from "../board.ts";
-import { formatJobBoard } from "../display.ts";
+import { applyProgress, createProgress } from "../display.ts";
+import { projectJobBoard } from "../panel.ts";
 
 // Lifecycle is independent of Pi. Real width rendering is covered by the CLI UI probe.
 const draw = (line: string, width: number) => [line.slice(0, width)];
@@ -41,12 +42,18 @@ test("board mounts once, updates in place, requests idle/reuse repaints and pres
 	assert.equal(h.widgets.has("delegate"), false);
 });
 
-test("thinking-only deltas stay generic and identical board strings do not request repaints", () => {
-	const h = host(); const board = new JobBoard(draw);
-	for (const thinking of ["SECRET one", "SECRET two", "SECRET three"]) {
-		const line = formatJobBoard([{ id: "d0001", local: false, status: "running", thinking }], { maxLocalConcurrent: 1 })[0];
-		assert.match(line, /d0001 thinking$/); assert.doesNotMatch(line, /SECRET/);
-		board.paint(h.ui, "tui", line);
+test("thinking-only deltas stay generic and identical panel states do not request repaints", () => {
+	const h = host();
+	const board = new JobBoard((state: NonNullable<ReturnType<typeof projectJobBoard>>) =>
+		[`${state.cards[0].jobId} ${state.cards[0].phase}`]);
+	const progress = createProgress();
+	for (const args of ["SECRET one", "SECRET two", "SECRET three"]) {
+		applyProgress(progress, { mark: "…", name: "thinking", args });
+		const state = projectJobBoard([{ id: "d0001", kind: "review", model: "hosted/reviewer", task: "Mock review",
+			local: false, status: "running", failed: false, background: true, activity: [], thinking: progress.thinking }], { maxLocalConcurrent: 1 })!;
+		assert.equal(state.cards[0].phase, "thinking"); assert.doesNotMatch(JSON.stringify(state), /SECRET/);
+		board.paint(h.ui, "tui", state);
+		assert.deepEqual(h.widgets.get("delegate").render(80), ["d0001 thinking"]);
 	}
 	assert.equal(h.calls.length, 1); assert.equal(h.repaints(), 0);
 	board.close(h.ui);

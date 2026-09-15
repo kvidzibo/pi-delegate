@@ -13,7 +13,7 @@ export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocal
 	const active = jobs.filter((job) => job.status === "running" || job.status === "queued");
 	if (!active.length) return undefined;
 	return {
-		summary: formatJobBoard(active.map(({ local, status }) => ({ local, status })), limits)[0],
+		summary: formatJobBoard(active, limits)[0],
 		cards: active.map((job) => ({
 			jobId: job.id, kind: job.kind, model: job.model, task: job.task, status: job.status,
 			reason: job.reason, wrapped: job.wrapped, phase: job.thinking ? "thinking" : undefined,

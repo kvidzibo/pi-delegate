@@ -118,6 +118,39 @@ test("parse spawn and collect modes", () => {
 	assert.throws(() => parseDelegateCall({ kind: "recon" }, callConfig), /task is required/);
 });
 
+test("snapshots carry thinking presence while every raw delta still updates local generation rate", async (t) => {
+	let now = 1000;
+	t.mock.method(Date, "now", () => now);
+	const finish = deferred();
+	let emit!: (event: unknown) => void;
+	const scheduler = new JobScheduler(limits);
+	const job = scheduler.enqueue(enq({ task: "phase only", run: async (_job, _signal, onEvent) => {
+		emit = onEvent;
+		await finish.promise;
+		return ok;
+	} }));
+	const delta = (type: string, text: string) => emit({ type: "message_update", assistantMessageEvent: { type, delta: text } });
+	try {
+		delta("thinking_delta", "PRIVATE first");
+		now = 2000;
+		delta("thinking_delta", "PRIVATE second");
+		let snap = scheduler.get(job.id);
+		assert.equal(snap.thinking, true);
+		assert.equal(snap.tg, "tg 7.0/s", "unchanged phase must not skip token metering");
+		assert.doesNotMatch(JSON.stringify(snap), /PRIVATE/);
+		now = 3000;
+		delta("text_delta", "answer");
+		snap = scheduler.get(job.id);
+		assert.equal(snap.thinking, undefined);
+		assert.equal(snap.current?.name, "writing");
+		assert.equal(snap.tg, "tg 4.5/s");
+	} finally {
+		finish.resolve();
+		await scheduler.wait(job.id);
+		await scheduler.shutdown();
+	}
+});
+
 test("ten local jobs never overlap with maxLocalConcurrent 1", async () => {
 	let current = 0;
 	let maxSeen = 0;

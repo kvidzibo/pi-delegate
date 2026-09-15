@@ -6,11 +6,21 @@ import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { cardProbe } from "./cards.ts";
+import { resultProbe } from "./results.ts";
 import { panelProbe } from "./panel.ts";
 import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
 
 export default function probe(pi: ExtensionAPI) {
+	pi.registerCommand("delegate-reload-probe", {
+		description: "Exercise the /reload lifecycle without model requests",
+		handler: async (_args, ctx) => { await ctx.reload(); },
+	});
+	pi.on("session_start", (event, ctx) => {
+		if (event.reason !== "reload") return;
+		const tools = pi.getAllTools().filter(tool => tool.sourceInfo.source !== "builtin").map(tool => tool.name);
+		ctx.ui.notify(JSON.stringify({ type: "delegate_test_probe", command: "delegate-reload-probe", result: { tools, reloaded: true } }), "info");
+	});
 	const register = (name: string, run: (ctx: ExtensionCommandContext) => unknown | Promise<unknown>) => {
 		pi.registerCommand(name, {
 			description: "Offline package test; no model requests",
@@ -27,6 +37,7 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));
 	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
+	register("delegate-result-probe", (ctx) => resultProbe(pi, ctx));
 	register("delegate-panel-probe", (ctx) => panelProbe(pi, ctx));
 	register("delegate-background-probe", backgroundProbe);
 	register("delegate-load-probe", () => {
