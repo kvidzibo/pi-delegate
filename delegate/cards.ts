@@ -1,5 +1,6 @@
 import { copyCapabilities } from "./capabilities.ts";
 import { copyOutcome } from "./outcomes.ts";
+import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
 
 // UI-only state. Short job IDs are reused after reload; origin tool-call IDs are not.
 export const CARD_STATE_TYPE = "delegate-job-state";
@@ -15,6 +16,11 @@ function copyDetails(details: CardDetails): CardDetails {
 		const outcome = copyOutcome(copy.outcome);
 		if (outcome) copy.outcome = outcome; else delete copy.outcome;
 	}
+	if ("finalization" in copy) {
+		const finalization = copyFinalizationProgress(copy.finalization);
+		if (finalization) copy.finalization = finalization; else delete copy.finalization;
+	}
+	if (copy.resource && typeof copy.resource === "object") copy.resource = { ...copy.resource };
 	return copy;
 }
 
