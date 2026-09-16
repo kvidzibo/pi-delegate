@@ -46,6 +46,14 @@ Completed phase reports survive guarded failure. If a guarded child dies before 
 
 Guarded runs invalidate legacy savings estimates, including on archive reload/rebuild. Existing calibration keys do not represent execution policy; a policy-aware calibration is required before estimates can cover these runs.
 
+## Text-headroom planner
+
+`headroom.ts` currently provides a pure `planHeadroom(payload, model, policy)` helper only. **It is not connected to `runPiChild`, provider hooks or delegate configuration yet.** No runtime context protection is activated.
+
+The explicit policy sets `maxInputBytes`, `maxToolResultBytes`, `maxToolBatchBytes` and `reserveTokens`. Tool limits count JSON-encoded content individually and cumulatively across each outgoing request. The planner recognizes OpenAI Completions/Responses (including Codex/Azure) and Anthropic Messages request shapes. It copies only the prospective payload, clips tool-result content with labelled omissions, prefers newer tool evidence, and preserves the task, assistant/call history, signed thinking, tool schemas and output parameters. Native session data is never changed.
+
+It reserves the larger of the policy reserve and requested output limit (declared model maximum if absent), allows at most one input byte per remaining declared token, applies the explicit byte ceiling, then leaves 1024 bytes for controls. This intentionally conservative envelope is **not tokenizer-exact or a guarantee about hidden server prompts or inaccurate model metadata**. Multimodal, opaque and unsupported payloads refuse rather than guess. Required non-tool context that cannot fit also refuses. Clipping or 80% occupancy sets an advisory `finalize` flag; callers must not confuse it with enforced finalization.
+
 ## Tests
 
 ```bash
