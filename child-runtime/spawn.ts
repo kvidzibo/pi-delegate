@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
+import { AnswerHistory, answerExplanation } from "./answers.ts";
 
 export interface PiInvocation {
 	command: string;
@@ -208,15 +210,15 @@ export function extractAssistantText(event: unknown): AssistantSnapshot {
 	};
 }
 
-export function applyAssistantSnapshot(current: AssistantState, event: unknown): AssistantState {
+export function applyAssistantSnapshot(current: AssistantState, event: unknown, maxBytes?: number): AssistantState {
 	const snap = extractAssistantText(event);
 	if (!snap.assistant) return current;
 	return {
-		text: snap.text,
+		text: maxBytes === undefined ? snap.text : truncateOutput(snap.text, maxBytes),
 		// Pi sends provider and model ID separately; IDs may themselves contain slashes.
 		model: snap.provider && snap.model ? `${snap.provider}/${snap.model}` : current.model,
 		stopReason: snap.stopReason,
-		errorMessage: snap.errorMessage,
+		errorMessage: maxBytes === undefined || snap.errorMessage === undefined ? snap.errorMessage : truncateOutput(snap.errorMessage, maxBytes),
 		sawAssistant: true,
 	};
 }
@@ -311,6 +313,11 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 
 	let stderr = "";
 	let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
+	const answers = new AnswerHistory(input.maxOutputBytes);
+	// Correlate delivered steering by exact text without retaining arbitrary control messages.
+	const pendingWraps = new Map<string, number>();
+	const wrapKey = (text: string) => createHash("sha256").update(text).digest("hex");
+	let initialUserSeen = false;
 	let timedOut = false;
 	let aborted = false;
 	let stopKind: "aborted" | "hard_timeout" | undefined;
@@ -378,7 +385,21 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				}
 				const cancel = uiCancelResponse(parsed);
 				if (cancel) writeStdin(proc.stdin, cancel);
-				state = applyAssistantSnapshot(state, parsed);
+				if (type === "message_end" && parsed.message?.role === "user") {
+					const content = parsed.message.content;
+					const text = typeof content === "string" ? content : Array.isArray(content)
+						? content.filter((part: any) => part?.type === "text" && typeof part.text === "string").map((part: any) => part.text).join("") : "";
+					if (!initialUserSeen && text === `Task: ${input.task}`) initialUserSeen = true;
+					else {
+						const key = wrapKey(text), pending = pendingWraps.get(key);
+						if (pending) {
+							if (pending === 1) pendingWraps.delete(key); else pendingWraps.set(key, pending - 1);
+							answers.beginWrap();
+						}
+					}
+				}
+				const next = applyAssistantSnapshot(state, parsed, input.maxOutputBytes);
+				if (next !== state) { state = next; answers.observe(state); }
 				if (isAgentSettled(parsed) && !settled) {
 					settled = true;
 					closeStdin();
@@ -406,7 +427,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			input.onControl?.({
 				wrap: (message) => {
 					if (settled || aborted || timedOut || closed || failure) return false;
-					return send({ type: "steer", message: message && message.trim() ? message : DEFAULT_WRAP_MESSAGE });
+					const text = message && message.trim() ? message : DEFAULT_WRAP_MESSAGE;
+					const key = wrapKey(text), count = pendingWraps.get(key) ?? 0;
+					// Refuse excessive distinct pending controls rather than lose their provenance.
+					if (!count && pendingWraps.size >= 64) return false;
+					pendingWraps.set(key, count + 1);
+					if (send({ type: "steer", message: text })) return true;
+					if (count) pendingWraps.set(key, count); else pendingWraps.delete(key);
+					return false;
 				},
 			});
 		} catch {
@@ -471,11 +499,10 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		} else startPrompt();
 	});
 
-	const stopReason = resolveStopReason({ stopKind, failure, state });
+	const stopReason = !stopKind && !failure && answers.awaitingResponse
+		? "no-assistant-output" : resolveStopReason({ stopKind, failure, state });
 	// Put the cause before partial output so the answer cap cannot hide it.
-	const explanation = stopReason === "length"
-		? "Child response reached the model output token limit; the answer is incomplete."
-		: stopReason === "error" ? state.errorMessage : undefined;
+	const explanation = answerExplanation({ ...state, stopReason });
 	const assistantText = explanation
 		? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
 		: state.text || state.errorMessage || "";
@@ -497,7 +524,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		stderrTail,
 	});
 	return {
-		text: finalizeChildText(failure?.text ?? assistantText, dump, input.maxOutputBytes),
+		text: finalizeChildText(answers.format(failure?.text ?? assistantText, failure?.text ?? explanation), dump, input.maxOutputBytes),
 		exitCode,
 		stderrTail,
 		model: state.model,

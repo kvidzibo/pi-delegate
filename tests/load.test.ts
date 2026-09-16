@@ -46,7 +46,7 @@ test("delegate card backgrounds fill each row, follow status/theme and leave rec
 
 test("all delegate return paths preserve result, promotion and notification contracts", async () => {
 	assert.deepEqual((await runPiProbe("delegate-result-probe")).result, {
-		terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, noModelCalls: true,
+		terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, noModelCalls: true,
 	});
 });
 
