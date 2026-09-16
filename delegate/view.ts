@@ -43,7 +43,10 @@ function statusLine(state: RowState): { color: string; text: string } {
 	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Finished" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
-	if (d.status === "queued") return { color: "muted", text: `○ Queued — waiting for ${d.reason === "gpu" ? "GPU" : "slot"}${d.wrapped ? " · wrap requested" : ""}` };
+	if (d.status === "queued") {
+		const waiting = d.reason === "local-off" ? "local delegation OFF" : d.reason === "local-unavailable" ? "local control unavailable" : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
+		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
+	}
 	if (d.status === "running") {
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
