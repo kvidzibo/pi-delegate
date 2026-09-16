@@ -105,6 +105,6 @@ xvfb-run -a npm test    # unit + offline CLI/UI checks; needs Pi and Xvfb
 
 The [child-runtime API](child-runtime/README.md#opt-in-guarded-execution) also supports explicitly opted-in execution budgets and an enforced tool-finalization gate. This is not yet wired to delegate configuration or defaults; ordinary delegation remains steer-only. Guarded runs cannot reuse legacy savings calibrations.
 
-A [text-headroom planner](child-runtime/README.md#text-headroom-planner) is experimental library groundwork only; it is not connected to child requests and provides no runtime protection yet.
+The same API accepts an optional [text-headroom policy](child-runtime/README.md#opt-in-text-headroom): it bounds outgoing tool-result text, reserves declared output space, closes the work gate under pressure, and refuses unsafe provider requests. Native history stays unchanged. This conservative byte policy is not tokenizer-exact and has no delegate configuration/default activation yet.
 
 Tests use mocked workers or isolated offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.

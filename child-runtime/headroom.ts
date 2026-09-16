@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export interface HeadroomPolicy {
-	/** Hard serialized-request ceiling, not a tokenizer measurement. */
+	/** JSON payload ceiling before transport framing, not a tokenizer measurement. */
 	maxInputBytes: number;
 	/** JSON-encoded tool-result content, individually and across each request. */
 	maxToolResultBytes: number;
@@ -9,7 +9,7 @@ export interface HeadroomPolicy {
 	/** Reserve at least this many declared tokens; larger requested output limits win. */
 	reserveTokens: number;
 }
-export interface HeadroomModel { api: string; contextWindow: number; maxTokens: number }
+export interface HeadroomModel { api: string; contextWindow: number; maxTokens: number; id?: string }
 export interface HeadroomPlan {
 	payload: Record<string, unknown>;
 	inputBytes: number;
@@ -75,7 +75,7 @@ export function jsonBytes(value: unknown, limit = MAX_BYTES): number {
 		if (typeof item !== "object") throw new Error("Headroom payload contains non-JSON data.");
 		if (parents.has(item)) throw new Error("Headroom payload contains a cycle.");
 		const array = Array.isArray(item), proto = Object.getPrototypeOf(item);
-		if (!array && proto !== Object.prototype && proto !== null) throw new Error("Headroom payload contains opaque data.");
+		if (array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new Error("Headroom payload contains opaque data.");
 		const descriptors = Object.getOwnPropertyDescriptors(item);
 		if (Object.values(descriptors).some(field => field.get || field.set) || typeof descriptors.toJSON?.value === "function") throw new Error("Headroom payload accessors/serialization hooks are unsupported.");
 		const type = descriptors.type?.value;
@@ -99,43 +99,76 @@ export function jsonBytes(value: unknown, limit = MAX_BYTES): number {
 	visit(value, 0); return total;
 }
 
-type Slot = { value: unknown; bytes: number; baseBytes: number; set: (value: unknown) => void };
+type Projection = { id: string; digest: string; value: unknown; clipped: boolean };
+type Slot = { value: unknown; bytes: number; baseBytes: number; fixed: boolean; projection?: Projection; set: (value: unknown) => void };
 function record(value: unknown): Record<string, any> {
 	if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) throw new Error("Unsupported headroom request shape.");
 	if (Object.values(Object.getOwnPropertyDescriptors(value)).some(field => field.get || field.set)) throw new Error("Headroom payload accessors are unsupported.");
 	return value as Record<string, any>;
 }
 function array(value: unknown): unknown[] {
-	if (!Array.isArray(value) || value.length > MAX_NODES) throw new Error("Unsupported headroom message shape.");
-	if (Object.values(Object.getOwnPropertyDescriptors(value)).some(field => field.get || field.set)) throw new Error("Headroom payload accessors are unsupported.");
+	if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > MAX_NODES) throw new Error("Unsupported headroom message shape.");
+	const descriptors = Object.getOwnPropertyDescriptors(value);
+	if (Object.values(descriptors).some(field => field.get || field.set)) throw new Error("Headroom payload accessors are unsupported.");
+	if (Object.keys(descriptors).some(key => key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key))) throw new Error("Unsupported headroom array properties.");
 	return value;
 }
 
+function contentDigest(value: unknown): string {
+	// Pi may move cache markers and convert a lone text block back to a string on replay.
+	const textOnly = Array.isArray(value) && value.every(block => block && typeof block === "object"
+		&& ["text", "input_text"].includes(block.type) && typeof block.text === "string"
+		&& Object.keys(block).every(key => ["type", "text", "cache_control"].includes(key)));
+	const canonical = textOnly ? value.map(block => block.text).join("\n") : value;
+	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
 /** Only protocol positions are tool output; never recursively rewrite arguments/schemas. */
-function slotsFor(payload: Record<string, unknown>, api: string, slots: Slot[]): Record<string, unknown> {
-	const add = (row: Record<string, unknown>, key: string) => {
+function slotsFor(payload: Record<string, unknown>, api: string, slots: Slot[], prior?: Projection[]): Record<string, unknown> {
+	const rows = array(api === "openai-completions" || api === "anthropic-messages" ? payload.messages : payload.input).map(record);
+	const lastAssistant = rows.findLastIndex(row => row.role === "assistant" || ["reasoning", "function_call", "custom_tool_call"].includes(row.type));
+	const ids = new Set<string>();
+	const add = (row: Record<string, unknown>, key: string, idKey: string, position: number) => {
 		if (slots.length >= MAX_SLOTS) throw new Error("Too many tool results for text headroom inspection.");
 		const value = row[key];
 		if (typeof value !== "string" && !Array.isArray(value)) throw new Error("Unsupported tool-result content.");
 		const bytes = jsonBytes(value), markerBytes = jsonBytes(NOTICE);
-		row[key] = bytes <= markerBytes ? value : NOTICE;
-		slots.push({ value, bytes, baseBytes: Math.min(bytes, markerBytes), set: value => { row[key] = value; } });
+		let fixed = false, projection: Projection | undefined;
+		if (prior) {
+			const id = row[idKey];
+			if (typeof id !== "string" || !id || id.length > 256 || ids.has(id)) throw new Error("Ambiguous tool-result identity for headroom replay.");
+			ids.add(id);
+			const digest = contentDigest(value);
+			const previous = prior[slots.length];
+			if (previous && (previous.id !== id || previous.digest !== digest)) throw new Error("Tool-result history changed during protected replay.");
+			// Do not rewrite a prefix already used to produce an assistant response/signature.
+			fixed = !!previous || position < lastAssistant;
+			projection = previous ? { ...previous, value: previous.clipped ? previous.value : value } : { id, digest, value, clipped: false };
+		}
+		row[key] = fixed ? projection!.value : bytes <= markerBytes ? value : NOTICE;
+		slots.push({ value, bytes, fixed, projection, baseBytes: jsonBytes(row[key]), set: next => {
+			row[key] = next;
+			if (projection) { projection.value = next; projection.clipped = next !== value; }
+		} });
 	};
-	if (api === "openai-completions") return { ...payload, messages: array(payload.messages).map(value => {
-		const row = record(value); if (row.role !== "tool") return row;
-		const copy = { ...row }; add(copy, "content"); return copy;
+	let shaped: Record<string, unknown>;
+	if (api === "openai-completions") shaped = { ...payload, messages: rows.map((row, i) => {
+		if (row.role !== "tool") return row;
+		const copy = { ...row }; add(copy, "content", "tool_call_id", i); return copy;
 	}) };
-	if (api === "anthropic-messages") return { ...payload, messages: array(payload.messages).map(value => {
-		const row = record(value); if (!Array.isArray(row.content)) return row;
+	else if (api === "anthropic-messages") shaped = { ...payload, messages: rows.map((row, i) => {
+		if (row.role !== "user" || !Array.isArray(row.content)) return row;
 		return { ...row, content: row.content.map(value => {
 			const block = record(value); if (block.type !== "tool_result") return block;
-			const copy = { ...block }; add(copy, "content"); return copy;
+			const copy = { ...block }; add(copy, "content", "tool_use_id", i); return copy;
 		}) };
 	}) };
-	return { ...payload, input: array(payload.input).map(value => {
-		const row = record(value); if (row.type !== "function_call_output") return row;
-		const copy = { ...row }; add(copy, "output"); return copy;
+	else shaped = { ...payload, input: rows.map((row, i) => {
+		if (row.type !== "function_call_output" && row.type !== "custom_tool_call_output") return row;
+		const copy = { ...row }; add(copy, "output", "call_id", i); return copy;
 	}) };
+	if (prior && slots.length < prior.length) throw new Error("Tool-result history disappeared during protected replay.");
+	return shaped;
 }
 
 function shortened(value: unknown, budget: number): string {
@@ -159,9 +192,36 @@ function shortened(value: unknown, budget: number): string {
 
 /** Request-only shaping. Native session messages, model metadata and output parameters are untouched. */
 export function planHeadroom(input: unknown, model: HeadroomModel, policyInput: HeadroomPolicy): HeadroomPlan {
+	return buildPlan(input, model, policyInput).plan;
+}
+
+/** Bounded per-child request projections. Earlier presented results are never re-clipped. */
+export class HeadroomSession {
+	private readonly policy: HeadroomPolicy;
+	private prior: Projection[] = [];
+	private api?: string;
+	constructor(policy: HeadroomPolicy) { this.policy = validateHeadroomPolicy(policy); }
+	plan(input: unknown, model: HeadroomModel): HeadroomPlan {
+		if (this.api && model?.api !== this.api) throw new Error("Provider API changed during protected replay.");
+		const { plan, projections } = buildPlan(input, model, this.policy, this.prior);
+		// Commit only after full validation; neither caller nor transport can mutate retained data.
+		this.prior = structuredClone(projections); this.api = model.api;
+		return plan;
+	}
+}
+
+function buildPlan(input: unknown, model: HeadroomModel, policyInput: HeadroomPolicy, prior?: Projection[]): { plan: HeadroomPlan; projections: Projection[] } {
 	const policy = validateHeadroomPolicy(policyInput); validateHeadroomModel(model);
 	const payload = record(input);
-	jsonBytes(payload);
+	const sourceBytes = jsonBytes(payload);
+	if (prior && sourceBytes > MAX_BYTES) throw new Error("Protected replay source exceeds the inspection byte limit.");
+	if (model.id && model.api !== "azure-openai-responses" && payload.model !== model.id) {
+		throw new Error("Request model differs from the declared headroom model.");
+	}
+	if (model.api.includes("responses") && (["previous_response_id", "conversation", "prompt"].some(key => payload[key] != null)
+		|| (Array.isArray(payload.input) && array(payload.input).map(record).some(row => row.type === "item_reference")))) {
+		throw new Error("Server-retained context cannot be inspected by the text headroom policy.");
+	}
 	const keys = model.api === "openai-completions" ? ["max_tokens", "max_completion_tokens"]
 		: model.api === "anthropic-messages" ? ["max_tokens"] : ["max_output_tokens"];
 	const outputs = keys.filter(key => payload[key] !== undefined).map(key => payload[key]);
@@ -171,14 +231,16 @@ export function planHeadroom(input: unknown, model: HeadroomModel, policyInput: 
 	// nor a guarantee about hidden server prompts, and deliberately underuses many windows.
 	const inputLimitBytes = Math.min(policy.maxInputBytes, model.contextWindow - reservedTokens) - CONTROL_MARGIN;
 	if (inputLimitBytes < 1024) throw new Error("No declared context headroom remains after reserving output and control space.");
-	const slots: Slot[] = [], shaped = slotsFor(payload, model.api, slots);
+	const slots: Slot[] = [], shaped = slotsFor(payload, model.api, slots, prior);
+	if (slots.some(slot => slot.fixed && slot.baseBytes > policy.maxToolResultBytes)) throw new Error("Previously presented tool output exceeds the per-result budget.");
 	const baseline = jsonBytes(shaped, inputLimitBytes);
 	if (baseline > inputLimitBytes) throw new Error("Non-tool context exceeds the protected request budget.");
 	const baseToolBytes = slots.reduce((sum, slot) => sum + slot.baseBytes, 0);
 	if (baseToolBytes > policy.maxToolBatchBytes) throw new Error("Required tool-result markers exceed the batch budget.");
 	let available = Math.min(inputLimitBytes - baseline, policy.maxToolBatchBytes - baseToolBytes), clippedToolResults = 0;
-	// Newest evidence gets spare space first; older shortened results retain labelled markers.
+	// Newest fresh evidence gets spare space first. Fixed prefixes consume their full budget.
 	for (const slot of [...slots].reverse()) {
+		if (slot.fixed) { if (slot.projection?.clipped) clippedToolResults++; continue; }
 		const budget = Math.min(policy.maxToolResultBytes, slot.baseBytes + available);
 		const value = slot.bytes <= budget ? slot.value : shortened(slot.value, budget);
 		const used = jsonBytes(value, budget);
@@ -188,6 +250,7 @@ export function planHeadroom(input: unknown, model: HeadroomModel, policyInput: 
 	}
 	const inputBytes = jsonBytes(shaped, inputLimitBytes);
 	if (inputBytes > inputLimitBytes) throw new Error("Shaped request exceeds the protected budget.");
-	return { payload: structuredClone(shaped), inputBytes, inputLimitBytes, reservedTokens, clippedToolResults,
-		finalize: clippedToolResults > 0 || inputBytes >= Math.floor(inputLimitBytes * 0.8) };
+	return { plan: { payload: structuredClone(shaped), inputBytes, inputLimitBytes, reservedTokens, clippedToolResults,
+		finalize: clippedToolResults > 0 || inputBytes >= Math.floor(inputLimitBytes * 0.8) },
+		projections: slots.flatMap(slot => slot.projection ? [slot.projection] : []) };
 }

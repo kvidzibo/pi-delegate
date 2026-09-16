@@ -1,4 +1,6 @@
 import type { FinalizationState } from "./finalization.ts";
+import { validateHeadroomPolicy, type HeadroomPolicy } from "./headroom.ts";
+import { copyHeadroomProgress, type HeadroomProgress } from "./headroom-protocol.ts";
 
 export const GUARD_ENV = "PI_DELEGATE_RUNTIME_GUARD";
 export const GUARD_COMMAND = "delegate-runtime-finalize";
@@ -12,22 +14,25 @@ export interface GuardedExecution {
 	finalizeAfterMs: number;
 	finalizationGraceMs: number;
 	startupTimeoutMs: number;
+	headroom?: HeadroomPolicy;
 }
 
-export interface GuardConfig { nonce: string; tools: string[] }
-export type FinalizationReason = "wrap" | "execution_budget";
+export interface GuardConfig { nonce: string; tools: string[]; headroom?: HeadroomPolicy }
+export type FinalizationReason = "wrap" | "execution_budget" | "context_budget";
 export type FinalizationProgress = {
 	phase: "starting" | "requested" | FinalizationState["phase"];
 	reason?: FinalizationReason;
 	activeTools?: number;
+	headroom?: HeadroomProgress;
 };
 export type GuardNotice = {
 	type: typeof GUARD_NOTICE;
 	version: 1;
 	nonce: string;
-	event: "ready" | "state";
+	event: "ready" | "state" | "headroom";
 	state: FinalizationState;
 	tools?: string[];
+	headroom?: HeadroomProgress;
 };
 
 export function validateGuardConfig(value: unknown): GuardConfig {
@@ -38,7 +43,7 @@ export function validateGuardConfig(value: unknown): GuardConfig {
 		|| new Set(raw.tools).size !== raw.tools.length) {
 		throw new Error("Runtime guard requires a nonce and a distinct supported builtin tool list.");
 	}
-	return { nonce: raw.nonce, tools: [...raw.tools] };
+	return { nonce: raw.nonce, tools: [...raw.tools], ...(raw.headroom === undefined ? {} : { headroom: validateHeadroomPolicy(raw.headroom) }) };
 }
 
 export function validateGuardedExecution(value: GuardedExecution): GuardedExecution {
@@ -50,16 +55,19 @@ export function validateGuardedExecution(value: GuardedExecution): GuardedExecut
 		}
 	}
 	return { tools: [...value.tools], finalizeAfterMs: value.finalizeAfterMs,
-		finalizationGraceMs: value.finalizationGraceMs, startupTimeoutMs: value.startupTimeoutMs };
+		finalizationGraceMs: value.finalizationGraceMs, startupTimeoutMs: value.startupTimeoutMs,
+		...(value.headroom === undefined ? {} : { headroom: validateHeadroomPolicy(value.headroom) }) };
 }
 
 export function copyFinalizationProgress(value: unknown): FinalizationProgress | undefined {
 	const raw = value as Partial<FinalizationProgress> | undefined;
 	if (!raw || !["starting", "running", "requested", "draining", "answering"].includes(raw.phase as string)
-		|| (raw.reason !== undefined && raw.reason !== "wrap" && raw.reason !== "execution_budget")
+		|| (raw.reason !== undefined && !["wrap", "execution_budget", "context_budget"].includes(raw.reason))
 		|| (raw.activeTools !== undefined && (!Number.isSafeInteger(raw.activeTools) || raw.activeTools < 0))) return;
+	const headroom = raw.headroom === undefined ? undefined : copyHeadroomProgress(raw.headroom);
+	if (raw.headroom !== undefined && !headroom) return;
 	return { phase: raw.phase!, ...(raw.reason ? { reason: raw.reason } : {}),
-		...(raw.activeTools !== undefined ? { activeTools: raw.activeTools } : {}) };
+		...(raw.activeTools !== undefined ? { activeTools: raw.activeTools } : {}), ...(headroom ? { headroom } : {}) };
 }
 
 /** Only transport notifications from the private guard, never model prose/tool results. */
@@ -70,12 +78,13 @@ export function parseGuardNotice(event: unknown, nonce: string): GuardNotice | u
 	try { notice = JSON.parse(raw.message); } catch { return; }
 	if (notice?.type !== GUARD_NOTICE || notice.nonce !== nonce) return;
 	const state = notice.state;
-	if (notice.version !== 1 || !["ready", "state"].includes(notice.event)
+	if (notice.version !== 1 || !["ready", "state", "headroom"].includes(notice.event)
 		|| !state || !["running", "draining", "answering"].includes(state.phase)
 		|| !Number.isSafeInteger(state.activeTools) || state.activeTools < 0
 		|| (state.phase === "answering" && state.activeTools !== 0)
 		|| (state.phase === "draining" && state.activeTools === 0)) {
 		throw new Error("Invalid runtime guard acknowledgement.");
 	}
+	if (notice.headroom !== undefined && !copyHeadroomProgress(notice.headroom)) throw new Error("Invalid runtime headroom acknowledgement.");
 	return notice as GuardNotice;
 }

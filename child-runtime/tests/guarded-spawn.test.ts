@@ -6,6 +6,8 @@ import { isFailedChildResult } from "../policy.ts";
 import { DEFAULT_WRAP_MESSAGE, encodeRpc, type ChildControl, type RunPiChildInput } from "../spawn.ts";
 import { GUARD_ENV, GUARD_NOTICE, GUARD_REQUEST_ID, type GuardConfig } from "../guard-protocol.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
+import { headroomPolicyId } from "../headroom.ts";
+import { HEADROOM_EXIT_CODE, HEADROOM_STDERR_PREFIX } from "../headroom-protocol.ts";
 
 const PROMPT = fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url));
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -26,14 +28,16 @@ function start(t: TestContext, overrides: Partial<RunPiChildInput> = {}) {
 	});
 	t.after(async () => { proc.close(1); await pending; });
 	const emit = (event: object) => proc.stdout!.write(encodeRpc(event as any));
-	const guard = (event: string, phase = "running", activeTools = 0) => emit({ type: "extension_ui_request", method: "notify",
+	const guard = (event: string, phase = "running", activeTools = 0, fields: object = {}) => emit({ type: "extension_ui_request", method: "notify",
 		message: JSON.stringify({ type: GUARD_NOTICE, version: 1, nonce: config.nonce, event,
-			tools: config.tools, state: { phase, activeTools } }),
+			tools: config.tools, state: { phase, activeTools }, ...(event === "ready" && config.headroom ? {
+				headroom: { policyId: headroomPolicyId(config.headroom), phase: "ready", limited: false },
+			} : {}), ...fields }),
 	});
 	const answer = (text: string, fields: object = {}) => emit({ type: "message_end", message: {
 		role: "assistant", provider: "test", model: "model", stopReason: "stop", content: [{ type: "text", text }], ...fields,
 	} });
-	return { proc, pending, args, states, emit, guard, answer, wrap: () => control.wrap(),
+	return { proc, pending, args, config, states, emit, guard, answer, wrap: () => control.wrap(),
 		ready: async () => {
 			guard("ready");
 			// Flush startup promises without yielding to unrelated deadline timers on busy CI hosts.
@@ -248,6 +252,72 @@ test("deadline termination holds the scheduler slot until the child really close
 		assert.equal((await scheduler.wait(first.id)).stopReason, "finalization_timeout");
 		assert.equal((await scheduler.wait(second.id)).answer, "Next");
 	} finally { child.proc.close = close; close(1); await child.pending; await scheduler.shutdown(); }
+});
+
+const headroom = { maxInputBytes: 65536, maxToolResultBytes: 512, maxToolBatchBytes: 768, reserveTokens: 4096 };
+const contextExecution = { tools: ["read"], finalizeAfterMs: 0, finalizationGraceMs: 1000, startupTimeoutMs: 1000, headroom };
+
+test("context-limited normal exit preserves preceding reports and exposes incomplete context", async t => {
+	const child = start(t, { execution: contextExecution }); await child.ready(); child.answer("Original report.");
+	child.guard("headroom", "running", 0, { headroom: { policyId: headroomPolicyId(headroom), phase: "limited", limited: true,
+		inputBytes: 1000, inputLimitBytes: 2000, reservedTokens: 4096, clippedToolResults: 1 } });
+	assert.equal(child.states.at(-1).phase, "requested"); assert.equal(child.states.at(-1).reason, "context_budget");
+	child.guard("state", "answering"); child.deliverWrap(); child.answer("Final report."); child.settle();
+	const result = await child.pending;
+	assert.equal(result.stopReason, "context_budget"); assert.equal(isFailedChildResult(result), true);
+	assert.match(result.text, /^Child context budget reached/); assert.match(result.text, /Original report/); assert.match(result.text, /Final report/);
+	assert.equal(result.finalization?.headroom?.clippedToolResults, 1);
+});
+
+test("correlated context refusal preserves completed and open-stream evidence", async t => {
+	const child = start(t, { execution: contextExecution }); await child.ready(); child.answer("Original report.");
+	child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Open partial." } });
+	child.guard("headroom", "running", 0, { headroom: { policyId: headroomPolicyId(headroom), phase: "refused", limited: true, detail: "Non-tool context cannot fit." } });
+	const result = await child.pending;
+	assert.equal(result.stopReason, "context_budget"); assert.match(result.text, /Non-tool context cannot fit/);
+	assert.match(result.text, /Original report/); assert.match(result.text, /Open partial/); assert.equal(result.finalization?.headroom?.phase, "refused");
+});
+
+for (const ready of [false, true]) {
+	test(`context refusal exit-code fallback works without an RPC receipt (ready: ${ready})`, async t => {
+		const child = start(t, { execution: contextExecution });
+		if (ready) { await child.ready(); child.answer("Prior report."); }
+		child.proc.close(HEADROOM_EXIT_CODE); const result = await child.pending;
+		assert.equal(result.stopReason, "context_budget"); assert.equal(result.finalization?.headroom?.phase, "refusal-exit");
+		assert.match(result.text, /RPC receipt was unavailable/); if (ready) assert.match(result.text, /Prior report/);
+	});
+}
+
+test("stderr refusal latches the cause but drains preceding stdout reports before process closure", async t => {
+	const signal = new AbortController();
+	const child = start(t, { execution: contextExecution, signal: signal.signal }); await child.ready();
+	const close = child.proc.close; child.proc.close = () => {};
+	try {
+		const line = `${HEADROOM_STDERR_PREFIX}${JSON.stringify({ nonce: child.config.nonce,
+			headroom: { policyId: headroomPolicyId(headroom), phase: "refused", limited: true, detail: "Cannot fit." } })}\n`;
+		child.proc.stderr!.write(line.slice(0, 15)); child.proc.stderr!.write(line.slice(15));
+		// Different pipes can be read out of generation order. Neither the later abort nor a
+		// later terminal notification may discard an earlier completed report still in stdout.
+		signal.abort(); child.answer("Buffered preceding report.");
+		close(HEADROOM_EXIT_CODE);
+		const result = await child.pending;
+		assert.equal(result.stopReason, "context_budget"); assert.equal(result.finalization?.headroom?.phase, "refused");
+		assert.match(result.text, /Buffered preceding report/); assert.match(result.text, /Cannot fit/);
+	} finally { child.proc.close = close; close(1); }
+});
+
+test("uncorrelated or oversized stderr diagnostics cannot assert a context refusal", async t => {
+	const child = start(t, { execution: contextExecution }); await child.ready();
+	child.proc.stderr!.write("x".repeat(5000) + "\n" + HEADROOM_STDERR_PREFIX + JSON.stringify({ nonce: "different-child-nonce",
+		headroom: { policyId: headroomPolicyId(headroom), phase: "refused", limited: true } }) + "\n");
+	child.answer("Normal report."); child.settle();
+	assert.equal((await child.pending).stopReason, "stop");
+});
+
+test("an unconfigured reserved exit code does not claim context enforcement", async t => {
+	const child = start(t); await child.ready(); child.answer("Report."); child.proc.close(HEADROOM_EXIT_CODE);
+	const result = await child.pending; assert.notEqual(result.stopReason, "context_budget"); assert.equal(result.finalization?.headroom, undefined);
 });
 
 test("correlated guard command rejection fails immediately with its explanation", async t => {

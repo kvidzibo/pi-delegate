@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { promptSourceFromDir } from "../child-runtime/spawn.ts";
+import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { loadDelegateConfig, resolveAgent, type Kind } from "./config.ts";
 import {
 	delegateTargetLine,
@@ -64,6 +65,11 @@ function receiptText(snap: JobSnapshot): string {
 		else if (snap.finalization?.phase === "draining") lines.push(`finalization enforced; ${snap.finalization.activeTools ?? "unknown"} current tools draining`);
 		else if (snap.finalization?.phase === "answering") lines.push("finalization enforced; waiting for the final answer");
 		else if (snap.wrapped) lines.push("wrap queued (current tool may finish first)");
+		const headroom = snap.finalization?.headroom;
+		if (headroom) {
+			lines.push(`context policy: ${headroom.phase}${headroom.inputBytes === undefined ? "" : `; ${headroom.inputBytes}/${headroom.inputLimitBytes} payload bytes`}`);
+			if (headroom.clippedToolResults) lines.push(`tool results shortened in request: ${headroom.clippedToolResults}; native evidence retained`);
+		}
 		for (const item of snap.activity.slice(-3)) {
 			lines.push(`${item.mark} ${item.name}${item.args ? ` ${item.args}` : ""}`);
 		}
@@ -125,7 +131,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	details.terminal = snap.status === "done" || snap.status === "failed";
 	if (snap.quietForMs !== undefined) details.quietForMs = snap.quietForMs;
 	if (snap.wrapped) details.wrapped = true;
-	if (snap.finalization) details.finalization = { ...snap.finalization };
+	if (snap.finalization) details.finalization = copyFinalizationProgress(snap.finalization);
 	return details;
 }
 

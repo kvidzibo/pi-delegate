@@ -9,6 +9,7 @@ import { AnswerHistory, answerExplanation } from "./answers.ts";
 import { StreamedAnswer } from "./streamed-answer.ts";
 import { ChildFinalizer, type FinalizationFailure } from "./child-finalizer.ts";
 import { GUARD_ENV, validateGuardedExecution, type GuardedExecution, type FinalizationProgress } from "./guard-protocol.ts";
+import { HEADROOM_EXIT_CODE, parseHeadroomRefusal, type HeadroomProgress } from "./headroom-protocol.ts";
 
 export interface PiInvocation {
 	command: string;
@@ -321,7 +322,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	if (execution) {
 		if (!args.includes("--no-extensions")) args.push("--no-extensions");
 		args.push("--extension", fileURLToPath(new URL("./guard.ts", import.meta.url)));
-		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools });
+		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools, ...(execution.headroom ? { headroom: execution.headroom } : {}) });
 	}
 	const invocation = getPiInvocation(args);
 	const started = Date.now();
@@ -329,6 +330,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const terminate = input.killTree ?? killChildTree;
 
 	let stderr = "";
+	let refusalReceipt: HeadroomProgress | undefined;
 	let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
 	const answers = new AnswerHistory(input.maxOutputBytes);
 	const streamed = execution ? new StreamedAnswer(input.maxOutputBytes) : undefined;
@@ -340,6 +342,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	let aborted = false;
 	let stopKind: "aborted" | "hard_timeout" | undefined;
 	let failure: { reason: "error" | "protocol-error" | FinalizationFailure; text: string } | undefined;
+	let drainRefusalOutput = false;
 	let finalizer: ChildFinalizer | undefined;
 	let taskDispatched = false;
 	let settled = false;
@@ -366,6 +369,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const finish = (code: number): void => {
 			if (closed) return;
 			closed = true;
+			if (execution?.headroom && (code === HEADROOM_EXIT_CODE || refusalReceipt) && !failure && !stopKind) {
+				try {
+					finalizer?.refusalExit(refusalReceipt);
+					failure = { reason: "context_budget", text: refusalReceipt
+						? `Child context request refused: ${refusalReceipt.detail ?? "unsafe payload"}`
+						: "Child context request refused; the RPC receipt was unavailable. Available evidence may be incomplete." };
+				} catch (error) { failure = { reason: "guard-error", text: String(error) }; }
+			}
 			if (execution && !taskDispatched && !failure && !stopKind) {
 				failure = { reason: "guard-error", text: "Child exited before the guarded task was dispatched." };
 			}
@@ -412,7 +423,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		});
 
 		const consume = (line: string): void => {
-			if (closed || stopKind || failure || !line.trim()) return;
+			if (closed || stopKind || (failure && !drainRefusalOutput) || !line.trim()) return;
 			try {
 				const parsed = JSON.parse(line);
 				const type = jsonlEventType(parsed);
@@ -425,8 +436,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					return;
 				}
 				finalizer?.accept(parsed);
-				if (failure || stopKind || closed) return;
-				const cancel = uiCancelResponse(parsed);
+				if ((failure && !drainRefusalOutput) || stopKind || closed) return;
+				const cancel = failure ? undefined : uiCancelResponse(parsed);
 				if (cancel) writeStdin(proc.stdin, cancel);
 				if (type === "message_end" && parsed.message?.role === "user") {
 					const content = parsed.message.content;
@@ -511,9 +522,24 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			},
 		});
 		proc.stdout?.on("data", (chunk: string) => {
-			if (!closed && !stopKind && !failure) reader.write(chunk);
+			if (!closed && !stopKind && (!failure || drainRefusalOutput)) reader.write(chunk);
 		});
+		const refusalReader = execution?.headroom ? new JsonlReader({ maxBytes: 4096, onOversized: () => {},
+			onLine: line => {
+				const receipt = parseHeadroomRefusal(line, nonce!);
+				if (!receipt || refusalReceipt || closed || stopKind || failure) return;
+				refusalReceipt = receipt;
+				// Latch the first terminal cause, but stderr can overtake preceding stdout reports.
+				// Continue draining those reports through process closure instead of discarding them.
+				drainRefusalOutput = true;
+				try {
+					finalizer?.refusalExit(receipt);
+					fail("context_budget", `Child context request refused: ${receipt.detail ?? "unsafe payload"}`);
+				} catch (error) { fail("guard-error", String(error)); }
+			},
+		}) : undefined;
 		proc.stderr?.on("data", (chunk: string) => {
+			refusalReader?.write(chunk);
 			stderr += chunk;
 			if (Buffer.byteLength(stderr, "utf8") > STDERR_TAIL_BYTES * 4) {
 				stderr = tailBytes(stderr, STDERR_TAIL_BYTES);
@@ -528,7 +554,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			reject(error);
 		});
 		proc.on("close", (code) => {
-			reader.end();
+			reader.end(); refusalReader?.end();
 			finish(code ?? 1);
 		});
 		const startupFailure = (error: unknown) => {
@@ -562,11 +588,15 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		: !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
 			: resolveStopReason({ stopKind, failure, state });
 	const finalization = finalizer?.snapshot();
-	if (!stopKind && !failure && !completedError && finalization?.reason === "execution_budget") stopReason = "execution_budget";
+	if (!stopKind && !failure && !completedError) {
+		if (finalization?.reason === "execution_budget") stopReason = "execution_budget";
+		else if (finalization?.reason === "context_budget" || finalization?.headroom?.limited) stopReason = "context_budget";
+	}
 	// Put the cause before partial output so the answer cap cannot hide it.
 	const explanation = answerExplanation({ ...state, stopReason })
 		?? (execution && stopReason === "hard_timeout" ? "Child hard runtime limit expired; available evidence may be incomplete."
 			: execution && stopReason === "aborted" ? "Child cancelled; available evidence may be incomplete."
+				: stopReason === "context_budget" ? "Child context budget reached; available evidence may be incomplete."
 				: stopReason === "execution_budget" ? "Child execution budget exhausted; available evidence may be incomplete."
 					: stopReason === "incomplete-output" ? "Child exited before its assistant response was finalized; available evidence may be incomplete." : undefined);
 	const assistantText = explanation

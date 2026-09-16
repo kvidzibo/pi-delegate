@@ -43,6 +43,13 @@ test("explicit runtime guard preserves builtins, drains current tools and blocks
 	});
 });
 
+test("headroom guard bounds real serialized payloads and vetoes unsafe transport despite swallowed hook errors", async () => {
+	assert.deepEqual((await runPiProbe("delegate-headroom-probe")).result, {
+		nativeTransportBoundary: true, unsafeDispatchBlocked: true, compactionBlocked: true,
+		priorReportPreserved: true, nativeEvidencePreserved: true, noModelCalls: true,
+	});
+});
+
 test("calibrated pricing resolves in the real factory, restores snapshots and loads opt-in benchmarking", async () => {
 	assert.deepEqual((await runPiProbe("delegate-savings-probe")).result, {
 		calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true,

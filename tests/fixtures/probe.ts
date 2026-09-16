@@ -11,6 +11,7 @@ import { panelProbe } from "./panel.ts";
 import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
 import { finalizationProbe } from "./finalization.ts";
+import { headroomProbe } from "./headroom.ts";
 import { localProbe } from "./local.ts";
 import { LocalControl } from "../../delegate/local-control.ts";
 
@@ -45,6 +46,7 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-local-probe", ctx => localProbe(pi, ctx));
 	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-finalization-probe", ctx => finalizationProbe(pi, ctx));
+	register("delegate-headroom-probe", headroomProbe);
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));
 	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
 	register("delegate-result-probe", (ctx) => resultProbe(pi, ctx));
