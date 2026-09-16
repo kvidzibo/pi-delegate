@@ -2,6 +2,8 @@
 
 - A shared admission gate can refuse after a scheduler finds a free slot. Recheck the queue bound after dispatch attempts, or repeated admission failures can grow the queue beyond its configured limit.
 
+- A queued steering request is not a delivered phase boundary. Preserve the preceding answer until its matching user-message event, then retain labelled follow-ups with independent space in the return budget; test both wrap/report event orderings.
+
 - Freeze complete tool-result envelopes before consolidating return paths: omitted empty fields, capped content, and retained answer details can differ intentionally. A baseline factory probe catches differences that text-only assertions miss.
 
 - A background job's launch row outlives its tool call: update it from scheduler snapshots keyed by the origin tool-call ID, and test completion without collect plus reused short IDs after reload. Release its invalidation callback at terminal.

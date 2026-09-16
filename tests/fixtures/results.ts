@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import delegate from "../../delegate/index.ts";
 import { delegateTargetLine } from "../../delegate/display.ts";
@@ -6,7 +7,31 @@ import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import { NOTIFY_HOLD_MS } from "../../delegate/notify.ts";
 import { truncateOutput } from "../../child-runtime/policy.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
-import type { ChildResult } from "../../child-runtime/spawn.ts";
+import { DEFAULT_WRAP_MESSAGE, encodeRpc, type ChildControl, type ChildResult } from "../../child-runtime/spawn.ts";
+import { mockChild, runMockPiChild } from "../../child-runtime/tests/helpers.ts";
+
+async function wrappedResult(): Promise<ChildResult> {
+	const proc = mockChild();
+	let control!: ChildControl;
+	const pending = runMockPiChild({ cwd: process.cwd(), model: "xai/grok-4.6", task: "mock wrap",
+		hardTimeoutMs: 0, maxOutputBytes: 220, env: {}, buildArgs: () => [], spawnFn: () => proc,
+		promptSourcePath: fileURLToPath(new URL("../../delegate/prompts/review.md", import.meta.url)),
+		onControl: next => { control = next; },
+	});
+	const emit = (message: object) => proc.stdout!.write(encodeRpc({ type: "message_end", message }));
+	emit({ role: "user", content: "Task: mock wrap" });
+	emit({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Original report: " + "界".repeat(2000) }] });
+	control.wrap();
+	emit({ role: "user", content: DEFAULT_WRAP_MESSAGE });
+	emit({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Correction: use B." }] });
+	proc.stdout!.write(encodeRpc({ type: "agent_settled" }));
+	const result = await pending;
+	assert.match(result.text, /Original report:/);
+	assert.match(result.text, /Wrap-up 1/);
+	assert.match(result.text, /Correction: use B\./);
+	assert.ok(Buffer.byteLength(result.text) <= 220);
+	return result;
+}
 
 /** Exercise all returned result paths through the real factory, with no provider calls. */
 export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -51,7 +76,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	await handlers.get("session_start")?.({}, testCtx);
 	try {
 		// Freeze the existing terminal return shapes, including intentional foreground/collect differences.
-		for (const outcome of [success, { ...success, model: undefined },
+		for (const outcome of [success, await wrappedResult(), { ...success, model: undefined },
 			{ ...success, model: "hosted/actual-model", text: "Partial answer", exitCode: 1, stopReason: "error" },
 			{ ...success, text: "Partial limit", stopReason: "length" },
 			{ ...success, text: "", stderrTail: "Provider unavailable", exitCode: 1, stopReason: "error" },
@@ -158,5 +183,5 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.equal(notices.length, 1); assert.equal(notices[0].details.jobId, uncollected.details.jobId);
 		await call({ jobId: uncollected.details.jobId });
 	} finally { await handlers.get("session_shutdown")?.(); }
-	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, noModelCalls: true };
+	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, noModelCalls: true };
 }
