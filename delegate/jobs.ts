@@ -1,6 +1,7 @@
 import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { assertKind, type Kind } from "./config.ts";
+import { LOCAL_OFF_MESSAGE, type LocalAdmission } from "./local-control.ts";
 import {
 	applyProgress,
 	createProgress,
@@ -11,7 +12,7 @@ import {
 import { applyTgEvent, createTgMeter, visibleChildTg, type TgMeter } from "./tg.ts";
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
-export type QueueReason = "gpu" | "slot";
+export type QueueReason = "gpu" | "slot" | "local-off" | "local-unavailable";
 
 export type JobHandle = {
 	id: string;
@@ -127,6 +128,8 @@ type InternalJob = {
 	startedAt?: number;
 	lastEventAt?: number;
 	control?: ChildControl;
+	releaseLocal?: () => void;
+	localAdmissionError?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -204,8 +207,9 @@ export class JobScheduler {
 	private readonly onChange?: (snap?: JobSnapshot) => void;
 	private readonly onTerminal?: (snap: JobSnapshot) => void;
 	private readonly onSettled?: (snap: JobSnapshot) => string | void;
+	private readonly localAdmission?: LocalAdmission;
 
-	constructor(input: SchedulerLimits & { onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
+	constructor(input: SchedulerLimits & { localAdmission?: LocalAdmission; onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
 			maxLocalConcurrent: input.maxLocalConcurrent,
@@ -214,10 +218,19 @@ export class JobScheduler {
 		this.onChange = input.onChange;
 		this.onTerminal = input.onTerminal;
 		this.onSettled = input.onSettled;
+		this.localAdmission = input.localAdmission;
+	}
+
+	/** Called by the shared-switch observer; does not reset queue/wait budgets. */
+	refreshLocalState(): void {
+		if (this.closed) return;
+		this.pump();
+		for (const job of this.jobs) if (job.local && job.status === "queued") this.notify(job);
 	}
 
 	enqueue(input: EnqueueInput): JobSnapshot {
 		if (this.closed) throw new Error("delegate refused: scheduler shutdown.");
+		if (input.local && this.localAdmission && !this.localAdmission.enabled()) throw new Error(LOCAL_OFF_MESSAGE);
 		if (!this.canStart(input.local) && this.queuedCount() >= this.limits.maxQueued) {
 			throw new Error(
 				`delegate refused: ${this.queuedCount()} already queued (max ${this.limits.maxQueued}).`,
@@ -258,6 +271,13 @@ export class JobScheduler {
 		}
 		this.jobs.push(job);
 		this.pump();
+		// A shared gate may close (or fail) after canStart. Do not let failed
+		// admissions bypass the queue bound just because a process slot is free.
+		if (job.status === "queued" && this.queuedCount() > this.limits.maxQueued) {
+			this.jobs.splice(this.jobs.indexOf(job), 1);
+			this.releaseRuntime(job);
+			throw new Error(`delegate refused: queue full (max ${this.limits.maxQueued}).`);
+		}
 		this.notify(job);
 		return this.snapshot(job);
 	}
@@ -428,8 +448,13 @@ export class JobScheduler {
 		return this.jobs.filter((job) => job.status === "running");
 	}
 
+	private localBlockReason(): "local-off" | "local-unavailable" | undefined {
+		try { return this.localAdmission && !this.localAdmission.enabled() ? "local-off" : undefined; }
+		catch { return "local-unavailable"; }
+	}
+
 	private canStart(local: boolean): boolean {
-		if (this.closed) return false;
+		if (this.closed || (local && this.localBlockReason())) return false;
 		const running = this.runningJobs();
 		if (running.length >= this.limits.maxConcurrent) return false;
 		if (local && running.filter((job) => job.local).length >= this.limits.maxLocalConcurrent) return false;
@@ -438,6 +463,9 @@ export class JobScheduler {
 
 	private queueReason(job: InternalJob): QueueReason | undefined {
 		if (job.status !== "queued") return undefined;
+		const blocked = job.local ? this.localBlockReason() : undefined;
+		if (blocked) return blocked;
+		if (job.localAdmissionError) return "local-unavailable";
 		const running = this.runningJobs();
 		if (job.local && running.filter((item) => item.local).length >= this.limits.maxLocalConcurrent) return "gpu";
 		return "slot";
@@ -475,6 +503,7 @@ export class JobScheduler {
 			background: job.background,
 		};
 		if (job.recordingError) snap.recordingError = job.recordingError;
+		if (job.localAdmissionError) snap.recordingError = `Local dispatch unavailable: ${job.localAdmissionError}`;
 		if (job.wrapped) snap.wrapped = true;
 		if (job.status === "running" || job.status === "queued") {
 			const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
@@ -489,7 +518,7 @@ export class JobScheduler {
 			snap.exitCode = job.result.exitCode;
 			snap.stopReason = job.result.stopReason;
 			snap.stderrTail = job.result.stderrTail;
-			if (job.result.recordingError) snap.recordingError = job.result.recordingError;
+			if (job.result.recordingError) snap.recordingError = [snap.recordingError, job.result.recordingError].filter(Boolean).join("\n");
 		} else if (job.status === "failed") {
 			snap.exitCode = job.exitCode ?? 1;
 			snap.stopReason = job.stopReason;
@@ -512,8 +541,8 @@ export class JobScheduler {
 	private notify(job?: InternalJob): void {
 		if (job && this.terminal(job) && !job.accountingSettled) {
 			job.accountingSettled = true;
-			try { job.recordingError = this.onSettled?.(this.snapshot(job)) || undefined; }
-			catch { job.recordingError = "Delegate recording incomplete: terminal accounting callback failed."; }
+			try { job.recordingError = [job.recordingError, this.onSettled?.(this.snapshot(job))].filter(Boolean).join("\n") || undefined; }
+			catch { job.recordingError = [job.recordingError, "Delegate recording incomplete: terminal accounting callback failed."].filter(Boolean).join("\n"); }
 		}
 		if (job) this.emit(job);
 		try {
@@ -543,6 +572,9 @@ export class JobScheduler {
 		// Keep collectible snapshots, not closures retaining the process and uncapped RPC state.
 		job.control = undefined;
 		job.run = undefined;
+		try { job.releaseLocal?.(); }
+		catch { job.recordingError = "Local delegation activity cleanup failed; /delegate-local status may still show this job."; }
+		job.releaseLocal = undefined;
 	}
 
 	private pump(): void {
@@ -554,10 +586,11 @@ export class JobScheduler {
 		try {
 			do {
 				this.pumpAgain = false;
+				const blocked = new Set<InternalJob>();
 				while (true) {
-					const next = this.jobs.find((job) => job.status === "queued" && this.canStart(job.local));
+					const next = this.jobs.find((job) => job.status === "queued" && !blocked.has(job) && this.canStart(job.local));
 					if (!next) break;
-					this.start(next);
+					if (!this.start(next)) blocked.add(next);
 				}
 			} while (this.pumpAgain);
 		} finally {
@@ -565,7 +598,12 @@ export class JobScheduler {
 		}
 	}
 
-	private start(job: InternalJob): void {
+	private start(job: InternalJob): boolean {
+		if (job.local && this.localAdmission) {
+			try { job.releaseLocal = this.localAdmission.acquire(); job.localAdmissionError = undefined; }
+			catch (error) { job.localAdmissionError = String(error); return false; }
+			if (!job.releaseLocal) return false;
+		}
 		job.status = "running";
 		job.startedAt = Date.now();
 		job.lastEventAt = job.startedAt;
@@ -574,6 +612,7 @@ export class JobScheduler {
 		} finally {
 			void this.execute(job);
 		}
+		return true;
 	}
 
 	private async execute(job: InternalJob): Promise<void> {

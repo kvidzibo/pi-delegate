@@ -80,6 +80,14 @@ Use the returned job ID in another `delegate` call (`d0001` below is illustrativ
 
 Defaults: **8 running jobs, 1 local worker, 16 queued jobs**. Hosted work can run while local work waits; a full queue rejects new work. See [job lifecycle](delegate/README.md#job-lifecycle) for overrides and notifications.
 
+### Pause local delegation for benchmarks
+
+Run `/delegate-local` to open an **On / Off picker** showing the current shared setting and active local jobs. Esc leaves it unchanged. Direct commands are `/delegate-local on`, `/delegate-local off`, and `/delegate-local status`.
+
+**Off** rejects new local launches and holds queued local jobs. Already-running jobs finish; the status changes from **OFF · draining N jobs** to **OFF · idle**. Wait for idle before benchmarking. Hosted delegation stays available, with no automatic cloud fallback.
+
+The switch persists across restarts and applies without reload to participating Pi sessions using the same agent directory. It does not stop servers, control other GPU clients, or change concurrency limits. Load this version in each session once before relying on the switch. See [scope and recovery](delegate/README.md#local-delegation-switch).
+
 ## Results and history
 
 - Active cards stay above the editor; finished results appear in the transcript. **Ctrl+O** expands details and shows the archived session path.
