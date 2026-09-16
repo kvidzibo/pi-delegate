@@ -66,8 +66,12 @@ For collection:
 
 - Omit `timeoutMs` to wait until completion or 60 seconds of quiet by default. Progress keeps the wait open without repeated parent receipts.
 - Set a positive `timeoutMs` to bound that wait, or `0` to peek.
-- Use `wrap` to steer the child toward finishing; the current tool may complete first.
+- Use `wrap` to steer the child toward finishing; the current tool may complete first. Requests made before control readiness are retained; repeated accepted wraps are idempotent.
 - Use `cancel` to stop it. `hardTimeoutMs` is the separate, optional process-start kill limit.
+
+The child runtime determines cancellation and deadline causes; a zero exit after an applied stop remains unsuccessful. A later cancellation during post-exit recording does not relabel an already-completed child. Available text stays collectible; capacity remains held until the runner settles after process closure.
+
+The runtime library separately offers [explicit guarded execution](../child-runtime/README.md#opt-in-guarded-execution): a readiness handshake, execution-body tool gate, soft execution budget and bounded finalization grace. It is not yet connected to agent configuration or enabled by default. For opted-in runners, result details distinguish a finalization request from acknowledged enforcement and retain incomplete streaming evidence on forced stops. Legacy calibration estimates are disabled for these runs.
 
 Finished results remain collectible within the session. In TUI/RPC, background completion may inject a short follow-up after the parent becomes idle; collect via `jobId` for the full result. Collecting a finished job suppresses the notice. Success notices stay hidden in the transcript; failures are visible. Print/JSON is pull-only. Shutdown stops children and queued work without completion notices.
 

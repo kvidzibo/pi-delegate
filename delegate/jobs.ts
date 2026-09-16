@@ -1,5 +1,6 @@
 import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
+import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
 import {
 	applyProgress,
@@ -52,6 +53,7 @@ export type JobSnapshot = {
 	stderrTail?: string;
 	background: boolean;
 	wrapped?: boolean;
+	finalization?: FinalizationProgress;
 	quietForMs?: number;
 };
 
@@ -123,6 +125,10 @@ type InternalJob = {
 	accountingSettled: boolean;
 	recordingError?: string;
 	wrapped: boolean;
+	wrapSent: boolean;
+	wrapSending?: boolean;
+	wrapMessage?: string;
+	finalization?: FinalizationProgress;
 	queuedAt: number;
 	startedAt?: number;
 	lastEventAt?: number;
@@ -242,6 +248,7 @@ export class JobScheduler {
 			terminalEmitted: false,
 			accountingSettled: false,
 			wrapped: false,
+			wrapSent: false,
 			queuedAt: Date.now(),
 		};
 		if (input.cancelOnAbort) {
@@ -346,19 +353,32 @@ export class JobScheduler {
 	wrap(id: string, message?: string): JobSnapshot {
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
-		if (this.terminal(job)) return this.snapshot(job);
+		if (this.terminal(job) || job.controller.signal.aborted) return this.snapshot(job);
 		if (job.status === "queued") {
 			this.cancel(id);
 			return this.get(id);
 		}
-		job.wrapped = true;
-		try {
-			job.control?.wrap(message ?? DEFAULT_WRAP_MESSAGE);
-		} catch {
-			/* wrap must not break the scheduler */
+		if (!job.wrapped) {
+			const text = message ?? DEFAULT_WRAP_MESSAGE;
+			if (text.length > 20000) throw new Error("delegate refused: wrap message exceeds 20000 chars.");
+			job.wrapped = true;
+			job.wrapMessage = text;
 		}
+		this.sendWrap(job);
 		this.notify(job);
 		return this.snapshot(job);
+	}
+
+	private sendWrap(job: InternalJob): void {
+		if (!job.control || !job.wrapped || job.wrapSent || job.wrapSending || job.controller.signal.aborted) return;
+		const control = job.control;
+		job.wrapSending = true;
+		try {
+			if (control.wrap(job.wrapMessage)) { job.wrapSent = true; job.wrapMessage = undefined; }
+		} catch { /* Keep the request pending until control becomes ready. */ }
+		finally { job.wrapSending = false; }
+		// A readiness callback can replace a refusing control during its synchronous call.
+		if (!job.wrapSent && job.control !== control) queueMicrotask(() => this.sendWrap(job));
 	}
 
 	cancel(id: string): void {
@@ -476,6 +496,7 @@ export class JobScheduler {
 		};
 		if (job.recordingError) snap.recordingError = job.recordingError;
 		if (job.wrapped) snap.wrapped = true;
+		if (job.finalization) snap.finalization = { ...job.finalization };
 		if (job.status === "running" || job.status === "queued") {
 			const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
 			snap.quietForMs = Math.max(0, Date.now() - last);
@@ -543,6 +564,7 @@ export class JobScheduler {
 		// Keep collectible snapshots, not closures retaining the process and uncapped RPC state.
 		job.control = undefined;
 		job.run = undefined;
+		job.wrapMessage = undefined;
 	}
 
 	private pump(): void {
@@ -586,18 +608,24 @@ export class JobScheduler {
 				(event) => {
 					if (job.status !== "running") return;
 					job.lastEventAt = Date.now();
+					const progress = event as { type?: unknown; state?: unknown } | undefined;
+					if (progress?.type === "delegate_finalization") {
+						job.finalization = copyFinalizationProgress(progress.state) ?? job.finalization;
+					}
 					const item = parseChildProgress(event);
 					if (item) applyProgress(job.progress, item);
 					if (job.local) applyTgEvent(job.meter, event);
 					this.notify(job);
 				},
 				(ctl) => {
-					if (job.status === "running") job.control = ctl;
+					if (job.status === "running" && !job.controller.signal.aborted) { job.control = ctl; this.sendWrap(job); }
 				},
 			);
 			if (job.status === "queued") return;
+			// The child runtime owns terminal-cause ordering; recording may await after process exit.
 			job.result = result;
-			job.status = isFailedChildResult(result) ? "failed" : "done";
+			job.finalization = copyFinalizationProgress(result.finalization) ?? job.finalization;
+			job.status = isFailedChildResult(job.result) ? "failed" : "done";
 			if (result.model) job.model = result.model;
 		} catch (error) {
 			if (job.status !== "failed" || !job.result) {

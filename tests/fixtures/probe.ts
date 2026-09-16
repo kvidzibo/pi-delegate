@@ -10,6 +10,7 @@ import { resultProbe } from "./results.ts";
 import { panelProbe } from "./panel.ts";
 import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
+import { finalizationProbe } from "./finalization.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	pi.registerCommand("delegate-reload-probe", {
@@ -35,6 +36,7 @@ export default function probe(pi: ExtensionAPI) {
 		});
 	};
 	register("delegate-guard-startup-probe", guardStartupProbe);
+	register("delegate-finalization-probe", ctx => finalizationProbe(pi, ctx));
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));
 	register("delegate-card-probe", (ctx) => cardProbe(pi, ctx));
 	register("delegate-result-probe", (ctx) => resultProbe(pi, ctx));

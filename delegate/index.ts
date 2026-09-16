@@ -56,7 +56,10 @@ function receiptText(snap: JobSnapshot): string {
 	}
 	if (snap.status === "running") {
 		const lines = [`bg ${snap.id} running`, `quietForMs: ${snap.quietForMs ?? 0}`];
-		if (snap.wrapped) lines.push("wrap queued (current tool may finish first)");
+		if (snap.finalization?.phase === "requested") lines.push("finalization requested; enforcement not yet acknowledged");
+		else if (snap.finalization?.phase === "draining") lines.push(`finalization enforced; ${snap.finalization.activeTools ?? "unknown"} current tools draining`);
+		else if (snap.finalization?.phase === "answering") lines.push("finalization enforced; waiting for the final answer");
+		else if (snap.wrapped) lines.push("wrap queued (current tool may finish first)");
 		for (const item of snap.activity.slice(-3)) {
 			lines.push(`${item.mark} ${item.name}${item.args ? ` ${item.args}` : ""}`);
 		}
@@ -118,6 +121,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	details.terminal = snap.status === "done" || snap.status === "failed";
 	if (snap.quietForMs !== undefined) details.quietForMs = snap.quietForMs;
 	if (snap.wrapped) details.wrapped = true;
+	if (snap.finalization) details.finalization = { ...snap.finalization };
 	return details;
 }
 

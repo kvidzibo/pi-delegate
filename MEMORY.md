@@ -1,5 +1,12 @@
 # Validated lessons
 
+- Classify child cancellation at the process boundary, not after asynchronous archival work: a later abort must not relabel an earlier completed child outcome. Campaign-level cancellation is a separate decision.
+- Keep a wrap pending until child control accepts it; registration can arrive after the request. Guard synchronous observer reentrancy while acceptance is in progress. Accepted repeats must not resend it or extend grace.
+- Authoritative `text_end` snapshots replace streamed deltas, including their truncation state; old clipping must not mislabel a corrected complete block.
+- Execution-policy changes invalidate legacy calibration even when models, tools and prompts still match. Keep measured usage, but discard incompatible estimates in live state and archive rebuilds.
+
+- A GitHub CLI PR-creation 401 can be specific to that command even when authenticated API probes succeed. Verify the actor and absence of an existing PR before using the REST create endpoint; do not reset credentials or retry creation blindly.
+
 - A queued steering request is not a delivered phase boundary. Preserve the preceding answer until its matching user-message event, then retain labelled follow-ups with independent space in the return budget; test both wrap/report event orderings.
 
 - Freeze complete tool-result envelopes before consolidating return paths: omitted empty fields, capped content, and retained answer details can differ intentionally. A baseline factory probe catches differences that text-only assertions miss.

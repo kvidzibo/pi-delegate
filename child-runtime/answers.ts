@@ -10,6 +10,7 @@ interface PhaseAnswer extends Answer {
 	phase: number;
 	/** Ordinal of message_end assistant events, not a native session entry ID. */
 	message?: number;
+	partial?: boolean;
 }
 
 export function answerExplanation(answer: Answer): string | undefined {
@@ -37,6 +38,11 @@ export class AnswerHistory {
 		};
 	}
 
+	/** A killed guarded stream is evidence, not a finalized assistant message. */
+	observePartial(text: string): void {
+		this.current = { phase: this.phase, partial: true, text: truncateOutput(text, this.maxBytes) };
+	}
+
 	beginWrap(): void {
 		if (this.current || this.phase > 0) {
 			this.previous.push(this.current ?? { phase: this.phase, text: "" });
@@ -55,10 +61,11 @@ export class AnswerHistory {
 		const answers = [...this.previous, latest];
 		const headers = answers.map(answer => {
 			const phase = answer.phase === 0 ? "Task response" : `Wrap-up ${answer.phase}`;
+			if (answer.partial) return `${phase} (incomplete streamed response):\n`;
 			return answer.message === undefined ? `${phase}: ` : `${phase} (assistant ${answer.message}):\n`;
 		});
 		const bodies = answers.map(answer => {
-			if (answer.message === undefined) return "[No assistant message received]";
+			if (answer.message === undefined && !answer.partial) return "[No assistant message received]";
 			const text = answer.text || "[No assistant text]";
 			const explanation = answerExplanation(answer);
 			return explanation && answer !== latest ? `${explanation}\n\n${text}` : text;

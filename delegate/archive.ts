@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { emptyUsage, record, sessionUsage, totalTokens, UsageMeter, validUsage, type UsageSummary } from "./usage.ts";
 import type { Kind } from "./config.ts";
 import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
+import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 
 export type RunRecord = {
 	version: 1;
@@ -31,10 +32,17 @@ export type RunRecord = {
 	recordingError?: string;
 	savings?: SavingsSnapshot;
 	savingsUnavailable?: string;
+	finalization?: FinalizationProgress;
 };
 
 export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable">;
-export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number };
+export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress };
+const GUARDED_SAVINGS_UNAVAILABLE = "Legacy calibration does not cover guarded execution; a policy-aware calibration is required.";
+function invalidateGuardedSavings(data: RunRecord): void {
+	delete data.savings;
+	if (data.usage) delete data.usage.estimate;
+	data.savingsUnavailable = GUARDED_SAVINGS_UNAVAILABLE;
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function archiveRoot(agentDir: string, env: NodeJS.Dict<string> = process.env): string {
@@ -118,6 +126,8 @@ export class ArchivedRun {
 
 	observe(event: unknown): boolean {
 		if (this.finished) return false;
+		const progress = record(event);
+		if (progress.type === "delegate_finalization" && this.noteFinalization(progress.state)) { this.persist(); return true; }
 		const result = this.meter.observe(event);
 		if (result.changed) {
 			this.data.actualModel = this.meter.resolvedModel;
@@ -141,9 +151,20 @@ export class ArchivedRun {
 		try { atomicJson(this.paths.metadata, this.data); } catch (error) { this.failRecording(error); }
 	}
 
+	private noteFinalization(value: unknown): boolean {
+		const progress = copyFinalizationProgress(value);
+		if (!progress) return false;
+		this.data.finalization = progress;
+		this.meter.disableSavings();
+		invalidateGuardedSavings(this.data);
+		return true;
+	}
+
 	private complete(outcome: Outcome): void {
 		this.finished = true;
-		Object.assign(this.data, outcome, { finishedAt: new Date().toISOString() });
+		const { finalization, ...terminal } = outcome;
+		this.noteFinalization(finalization);
+		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
 		this.persist();
 		try { appendLedger(this.root, this.data); } catch (error) { this.failRecording(error); this.persist(); }
@@ -201,6 +222,10 @@ export async function loadRuns(root: string, options: { rebuild?: boolean; activ
 			const raw = record(data);
 			owner = { parentSessionId: typeof raw.parentSessionId === "string" ? raw.parentSessionId : undefined, createdAt: typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : undefined };
 			if (!validRecord(data, dir.name)) throw new Error("Invalid or unsupported run metadata");
+			if (data.finalization !== undefined) {
+				invalidateGuardedSavings(data);
+				data.finalization = copyFinalizationProgress(data.finalization);
+			}
 			if (data.savings && !validSnapshot(data.savings)) {
 				delete data.savings;
 				data.savingsUnavailable = "Invalid archived calibration/pricing snapshot";
