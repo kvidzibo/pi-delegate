@@ -36,3 +36,4 @@
 - With independent admission gates, keep capacity provisional until both accept. Roll back refusals immediately and stop retrying if release cannot be confirmed; do not replace an earlier cancellation.
 - Individually mergeable runtime branches can conflict at shared readiness gates. Validate tools, lease identity and context policy together before dispatch, then test scheduler-to-child forwarding and lease retention through refusal.
 - After fetching changed main, recheck ancestry rather than assuming a prerequisite can fast-forward. Integration scripts must stop on a failed step before starting another merge.
+- Snapshot isolation must include restored UI cards, not just scheduler and archive boundaries: clone nested finalization/headroom and resource state on update, restore and get.
