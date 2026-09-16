@@ -11,6 +11,7 @@ import { panelProbe } from "./panel.ts";
 import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
 import { localProbe } from "./local.ts";
+import { capabilitiesProbe } from "./capabilities.ts";
 import { LocalControl } from "../../delegate/local-control.ts";
 
 export default function probe(pi: ExtensionAPI) {
@@ -41,6 +42,8 @@ export default function probe(pi: ExtensionAPI) {
 			},
 		});
 	};
+	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
+	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
 	register("delegate-local-probe", ctx => localProbe(pi, ctx));
 	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));

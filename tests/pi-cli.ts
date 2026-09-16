@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Exercise the installed CLI/loader, never private unbundled Pi entrypoints. */
-export async function runPiProbe(command: string, select?: (request: { title: string; options: string[] }) => string | undefined): Promise<Record<string, unknown>> {
+export async function runPiProbe(command: string, select?: (request: { title: string; options: string[] }) => string | undefined, tools?: string[]): Promise<Record<string, unknown>> {
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-load-"));
 	try {
 		return await new Promise((resolve, reject) => {
@@ -15,6 +15,7 @@ export async function runPiProbe(command: string, select?: (request: { title: st
 				"--offline", "--mode", "rpc", "--no-session", "--no-extensions", "--no-skills",
 				"--no-prompt-templates", "--no-context-files", "--no-themes", "--no-approve",
 				"-e", REPO, "-e", join(REPO, "tests", "fixtures", "probe.ts"),
+				...(tools === undefined ? [] : ["--tools", tools.join(",")]),
 			], {
 				cwd: dir,
 				// No user settings, credentials, nesting markers, or startup network.

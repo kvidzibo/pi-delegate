@@ -10,6 +10,23 @@ test("package manifest loads only delegate through the installed Pi CLI", async 
 	assert.deepEqual((await runPiProbe("delegate-load-probe")).result, { tools: ["delegate"] });
 });
 
+test("configured capabilities survive overlays, model overrides, observers, collection, archive and rendering", async () => {
+	assert.deepEqual((await runPiProbe("delegate-capabilities-probe")).result, {
+		configuredOnly: true, overlays: true, overridesKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true,
+	});
+});
+
+test("installed Pi CLI tool selection uses exact comma-separated names, not wildcard/case aliases", async () => {
+	for (const [input, expected] of [
+		[["read", "grep", "find", "ls", "bash"], ["read", "grep", "find", "ls", "bash"]],
+		[["read, bash, BASH", "*", "all", "none", "unknown", "delegate"], ["read", "bash", "delegate"]],
+		[[" , , "], []],
+	] as Array<[string[], string[]]>) {
+		const result = (await runPiProbe("delegate-allowlist-probe", undefined, input)).result as { tools: string[] };
+		assert.deepEqual([...result.tools].sort(), [...expected].sort());
+	}
+});
+
 test("local delegation picker uses native dialogs, drains work and gates model overrides without fallback", async () => {
 	let selects = 0;
 	const result = await runPiProbe("delegate-local-probe", ({ title, options }) => {

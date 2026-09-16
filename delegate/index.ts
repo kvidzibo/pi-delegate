@@ -25,6 +25,7 @@ import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
 import { LocalControl } from "./local-control.ts";
 import { LocalCommand } from "./local-command.ts";
+import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -32,10 +33,11 @@ function agentDir(): string {
 	return typeof getAgentDir === "function" ? getAgentDir() : join(homedir(), ".pi", "agent");
 }
 
-function errorResult(message: string) {
+function errorResult(message: string, requested?: CapabilityManifest) {
+	const capabilities = copyCapabilities(requested);
 	return {
-		content: [{ type: "text" as const, text: message }],
-		details: { ok: false },
+		content: [{ type: "text" as const, text: message }, ...capabilityContent(capabilities)],
+		details: { ok: false, ...(capabilities ? { capabilities } : {}) },
 		isError: true,
 	};
 }
@@ -93,6 +95,7 @@ function formatOutput(input: {
 				type: "text" as const,
 				text: input.failed ? `delegate failed (${input.stopReason || input.exitCode}): ${body}` : body,
 			},
+			...capabilityContent(input.details.capabilities),
 		],
 		details: { ok: !input.failed, ...input.details },
 		isError: input.failed,
@@ -110,6 +113,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 		...extra,
 	};
 	if (snap.archive) { details.runId = snap.archive.runId; details.sessionFile = snap.archive.sessionFile; }
+	if (snap.capabilities) details.capabilities = copyCapabilities(snap.capabilities);
 	if (snap.recordingError) details.recordingError = snap.recordingError;
 	if (snap.current) details.current = snap.current;
 	if (snap.thinking) details.phase = "thinking";
@@ -327,6 +331,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			cancel: Type.Optional(Type.Boolean({ description: "With jobId: abort and kill the child." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			let capabilities: CapabilityManifest | undefined;
 			const update = (result: Parameters<NonNullable<typeof onUpdate>>[0]): void => {
 				try { onUpdate?.(result); }
 				catch { /* Progress observers must never change job acceptance or outcomes. */ }
@@ -340,7 +345,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				const publish = (snap: JobSnapshot, background: boolean, pending: boolean): void => {
 					updateCard(snap);
 					update({
-						content: [{ type: "text" as const, text: delegateTargetLine(snap.kind, snap.model) }],
+						content: [{ type: "text" as const, text: delegateTargetLine(snap.kind, snap.model) }, ...capabilityContent(snap.capabilities)],
 						details: {
 							...uiDetails(snap, { pending, background, callType: parsed.mode, operation }),
 						},
@@ -350,6 +355,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				let snap: JobSnapshot;
 				if (parsed.mode === "collect") {
 					const current = scheduler.get(parsed.jobId);
+					capabilities = copyCapabilities(current.capabilities);
 					publish(current, true, current.status === "queued" || current.status === "running");
 					if (parsed.cancel) scheduler.cancel(parsed.jobId);
 					else if (parsed.wrap) scheduler.wrap(parsed.jobId);
@@ -364,11 +370,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const kind = parsed.kind;
 					const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
 					const resolved = resolveAgent(kind, parsed.modelOverride, config);
+					const tools = [...resolved.agent.tools];
+					capabilities = describeCapabilities(tools);
 					const local = isLocalModel(resolved.model);
 					if (local) localControl.assertEnabled();
 					update({
-						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
-						details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },
+						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }, ...capabilityContent(capabilities)],
+						details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
 					});
 
 					const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
@@ -380,26 +388,26 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
 							savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
 								key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
-									alternativeThinking: alternative.thinking, tools: resolved.agent.tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
+									alternativeThinking: alternative.thinking, tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
 								files: config.calibrationProfiles, pricing: pricedModel?.cost,
 							}) : { reason: "No hosted alternative configured for this local model" };
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
 					}
 					const archive = accounting.create({
 						parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
-						toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools: resolved.agent.tools,
+						toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools, capabilities,
 						savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
 					}, parsed.task, promptPath);
 					origins.set(archive.data.runId, toolCallId);
-					cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued" });
+					cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
 					try {
 						snap = scheduler.enqueue({
-							archive: { runId: archive.data.runId, sessionFile: archive.paths.session },
+							archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
 							kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
 							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
 							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
 								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
-								tools: resolved.agent.tools, offline: resolved.agent.offline,
+								tools: [...tools], offline: resolved.agent.offline,
 								hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
 								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
 								signal: childSignal, env: process.env,
@@ -448,7 +456,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			} catch (error) {
 				cards.forget(toolCallId);
 				const message = error instanceof Error ? error.message : String(error);
-				return errorResult(message);
+				return errorResult(message, capabilities);
 			}
 		},
 		renderCall(args, theme, context) {
