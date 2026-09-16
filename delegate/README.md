@@ -57,7 +57,7 @@ State lives in `<agent-dir>/delegate-local/` (normally `~/.pi/agent/delegate-loc
 
 **Before benchmarking:** select Off and wait for `OFF · idle`; separately stop or coordinate clients outside this scope. A crashed parent may leave an orphaned child. Its reservation is retained and reported as **unverified (not idle)**, rather than silently expired. Inspect the processes/archives and remove only the corresponding files in `delegate-local/active/` after confirming the work has stopped. PID reuse can conservatively keep a stale reservation counted as active. Do not delete active reservations or the state directory to force an idle report.
 
-Unreadable/corrupt control state blocks local admission and produces an unavailable warning; hosted work remains independent. `/delegate-local on` or `off` can replace a malformed state file, but never clears reservations. Cleanup failures leave a warning and a conservative reservation. Concurrent command changes are last-writer-wins; status is a snapshot, not an exclusive benchmark reservation.
+Unreadable/corrupt control state blocks local admission and produces an unavailable warning; hosted work remains independent. Scheduler admission callbacks must return a release function; malformed grants cannot start work. Cancellation/shutdown during admission releases the provisional reservation without restarting the job or replacing its stop cause. `/delegate-local on` or `off` can replace a malformed state file, but never clears reservations. Cleanup failures leave a warning and a conservative reservation. Concurrent command changes are last-writer-wins; status is a snapshot, not an exclusive benchmark reservation.
 
 ## Job lifecycle
 

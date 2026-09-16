@@ -594,9 +594,14 @@ export class JobScheduler {
 		job.control = undefined;
 		job.run = undefined;
 		job.wrapMessage = undefined;
-		try { job.releaseLocal?.(); }
-		catch { job.recordingError = "Local delegation activity cleanup failed; /delegate-local status may still show this job."; }
+		const release = job.releaseLocal;
 		job.releaseLocal = undefined;
+		if (release) this.releaseLocal(job, release);
+	}
+
+	private releaseLocal(job: InternalJob, release: () => void): void {
+		try { release(); }
+		catch { job.recordingError = [job.recordingError, "Local delegation activity cleanup failed; /delegate-local status may still show this job."].filter(Boolean).join("\n"); }
 	}
 
 	private pump(): void {
@@ -621,10 +626,18 @@ export class JobScheduler {
 	}
 
 	private start(job: InternalJob): boolean {
+		if (job.status !== "queued" || this.closed) return false;
 		if (job.local && this.localAdmission) {
-			try { job.releaseLocal = this.localAdmission.acquire(); job.localAdmissionError = undefined; }
-			catch (error) { job.localAdmissionError = String(error); return false; }
-			if (!job.releaseLocal) return false;
+			let release: (() => void) | undefined, retained = false;
+			try {
+				release = this.localAdmission.acquire();
+				if (release !== undefined && typeof release !== "function") throw new Error("Invalid local admission reservation.");
+				job.localAdmissionError = undefined;
+				// Admission is an opaque callback: cancellation/shutdown can occur before it returns.
+				if (!release || !this.canStart(job.local) || job.status !== "queued" || this.closed) return false;
+				job.releaseLocal = release; retained = true;
+			} catch (error) { job.localAdmissionError = String(error); return false; }
+			finally { if (typeof release === "function" && !retained) this.releaseLocal(job, release); }
 		}
 		job.status = "running";
 		job.startedAt = Date.now();
