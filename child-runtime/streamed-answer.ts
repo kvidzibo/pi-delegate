@@ -4,6 +4,7 @@ import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 export class StreamedAnswer {
 	private readonly maxBytes: number;
 	private active = false;
+	private phase = 0;
 	private blocks = new Map<number, string>();
 	private bytes = 0;
 	private truncated = new Set<number>();
@@ -11,10 +12,14 @@ export class StreamedAnswer {
 
 	constructor(maxBytes: number) { this.maxBytes = maxBytes; }
 
-	observe(event: any): void {
+	get open(): boolean { return this.active; }
+	get originPhase(): number { return this.phase; }
+
+	observe(event: any, phase = 0): void {
 		if ((event?.type === "message_start" || event?.type === "message_end") && event.message?.role === "assistant") {
 			this.blocks.clear(); this.bytes = 0; this.truncated.clear(); this.omittedBlocks = false;
 			this.active = event.type === "message_start";
+			if (this.active) this.phase = phase;
 			return;
 		}
 		if (!this.active || event?.type !== "message_update") return;

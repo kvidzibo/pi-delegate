@@ -75,6 +75,16 @@ test("an early wrap grace shorter than readiness times out with the first deadli
 	clock.advance(100); assert.equal(failures.length, 1); assert.equal(clock.jobs.size, 0);
 });
 
+test("early finalization that acknowledges active tools drains before initial task readiness", async () => {
+	const { child, steers } = start(); child.request("Finish now.");
+	const ready = child.waitReady(new AbortController().signal);
+	child.accept(notice()); child.accept(notice("state", "draining", 1));
+	let prepared = false; void ready.then(() => { prepared = true; });
+	await Promise.resolve(); assert.equal(prepared, false); assert.equal(steers.length, 0);
+	child.accept(notice("state", "answering", 0)); await ready;
+	child.markTaskSent(); assert.deepEqual(steers, ["Finish now."]); child.dispose();
+});
+
 test("execution budget begins at runtime start and is separate from finalization grace", () => {
 	const { child, sent, failures, clock } = start({ finalizeAfterMs: 80 });
 	child.accept(notice()); child.markTaskSent();

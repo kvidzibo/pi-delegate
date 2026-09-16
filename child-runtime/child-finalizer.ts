@@ -49,11 +49,15 @@ export class ChildFinalizer {
 
 	snapshot(): FinalizationProgress { return { ...this.state }; }
 
+	canDispatchTask(): boolean {
+		return this.ready && !this.disposed && !this.ended && (!this.state.reason || this.state.phase === "answering");
+	}
+
 	waitReady(signal: AbortSignal): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const check = () => {
 				if (signal.aborted || this.disposed) { cleanup(); reject(new Error("Child startup stopped.")); }
-				else if (this.ready && this.state.phase !== "requested") { cleanup(); resolve(); }
+				else if (this.canDispatchTask()) { cleanup(); resolve(); }
 			};
 			const cleanup = () => { this.waiters.delete(check); signal.removeEventListener("abort", check); };
 			this.waiters.add(check); signal.addEventListener("abort", check, { once: true }); check();

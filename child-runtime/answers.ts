@@ -40,9 +40,12 @@ export class AnswerHistory {
 		};
 	}
 
-	/** A killed guarded stream is evidence, not a finalized assistant message. */
-	observePartial(text: string): void {
-		this.partial = { phase: this.phase, partial: true, text: truncateOutput(text, this.maxBytes) };
+	get currentPhase(): number { return this.phase; }
+
+	/** Record a stopped open stream for terminal formatting, not as a finalized message. */
+	observePartial(text: string, phase = this.phase): void {
+		if (!Number.isSafeInteger(phase) || phase < 0 || phase > this.phase) throw new Error("Unknown partial response phase.");
+		this.partial = { phase, partial: true, text: truncateOutput(text, this.maxBytes) };
 	}
 
 	beginWrap(): void {
@@ -62,8 +65,11 @@ export class AnswerHistory {
 		if (this.phase === 0 && !this.partial) return unwrappedText;
 		const completed = this.current ?? { phase: this.phase, text: "" };
 		// An open stream is extra evidence, never a replacement for finalized text in its phase.
-		const answers = [...this.previous, ...(this.current || !this.partial ? [completed] : []),
-			...(this.partial ? [this.partial] : [])];
+		const answers = [...this.previous, ...(this.current || !this.partial || this.partial.phase !== this.phase ? [completed] : [])];
+		if (this.partial) {
+			const later = answers.findIndex(answer => answer.phase > this.partial!.phase);
+			answers.splice(later < 0 ? answers.length : later, 0, this.partial);
+		}
 		const latest = answers.at(-1);
 		const headers = answers.map(answer => {
 			const phase = answer.phase === 0 ? "Task response" : `Wrap-up ${answer.phase}`;
