@@ -1,4 +1,5 @@
 import { copyCapabilities } from "./capabilities.ts";
+import { copyOutcome } from "./outcomes.ts";
 
 // UI-only state. Short job IDs are reused after reload; origin tool-call IDs are not.
 export const CARD_STATE_TYPE = "delegate-job-state";
@@ -9,6 +10,10 @@ function copyDetails(details: CardDetails): CardDetails {
 	if ("capabilities" in copy) {
 		const capabilities = copyCapabilities(copy.capabilities);
 		if (capabilities) copy.capabilities = capabilities; else delete copy.capabilities;
+	}
+	if ("outcome" in copy) {
+		const outcome = copyOutcome(copy.outcome);
+		if (outcome) copy.outcome = outcome; else delete copy.outcome;
 	}
 	return copy;
 }

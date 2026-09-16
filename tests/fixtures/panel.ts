@@ -292,7 +292,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		const queuedBefore = queued.render(100); const queuedInvalidations = queued.invalidations();
 		firstRun.resolve({ text: "Done reading", exitCode: 0, stderrTail: "" });
 		for (let i = 0; i < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "first"); i++) await new Promise((r) => setTimeout(r, 5));
-		assert.match(first.render(100).join("\n"), /✓ Finished/);
+		assert.match(first.render(100).join("\n"), /✓ Worker finished — task unverified/);
 		assert.doesNotMatch(host.render(300).join("\n"), /d0001|Done reading/, "completed cards leave the dock and stay in the transcript");
 		assert.equal(runs.length, 2, "the queued child starts without collecting its predecessor");
 		assert.deepEqual(queued.render(100), queuedBefore); assert.equal(queued.invalidations(), queuedInvalidations);

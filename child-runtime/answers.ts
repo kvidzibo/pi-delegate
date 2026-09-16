@@ -1,4 +1,5 @@
 import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
+import { MAX_RETAINED_RESPONSES, type ResponseEvidence } from "./evidence.ts";
 
 interface Answer {
 	text: string;
@@ -52,7 +53,7 @@ export class AnswerHistory {
 		if (this.current || this.phase > 0) {
 			this.previous.push(this.current ?? { phase: this.phase, text: "" });
 			// At most eight phases including current: keep the first and six most recent sealed phases.
-			if (this.previous.length > 7) { this.previous.splice(1, 1); this.omitted++; }
+			if (this.previous.length > MAX_RETAINED_RESPONSES - 1) { this.previous.splice(1, 1); this.omitted++; }
 		}
 		this.current = undefined;
 		this.partial = undefined;
@@ -60,6 +61,14 @@ export class AnswerHistory {
 	}
 
 	get awaitingResponse(): boolean { return this.phase > 0 && !this.current; }
+
+	/** Counts message_end observations, not model requests, useful reports or verified work. */
+	evidence(taskSent: boolean, openResponse: boolean, agentSettled: boolean): ResponseEvidence {
+		return { source: "rpc", taskSent, agentSettled, finalizedMessages: this.sequence,
+			retainedResponses: this.previous.filter(answer => answer.message !== undefined).length + (this.current ? 1 : 0),
+			omittedPhases: this.omitted, unansweredWrap: this.awaitingResponse,
+			openResponse: openResponse || !!this.partial, partialResponseRetained: !!this.partial };
+	}
 
 	format(unwrappedText: string, cause?: string): string {
 		if (this.phase === 0 && !this.partial) return unwrappedText;

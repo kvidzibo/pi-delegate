@@ -7,6 +7,7 @@ import { isLocalModel } from "./tg.ts";
 import type { CardDetails } from "./cards.ts";
 import type { JobBoardState } from "./panel.ts";
 import { capabilityContent } from "./capabilities.ts";
+import { outcomeContent } from "./outcomes.ts";
 
 export type RowState = {
 	details: CardDetails;
@@ -41,7 +42,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 		const reason = str(d, "stopReason");
 		return { color: "error", text: reason === "aborted" ? "✗ Cancelled" : `✗ Failed${reason ? ` — ${reason}` : ""}` };
 	}
-	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Finished" };
+	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Worker finished — task unverified" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
 	if (d.status === "queued") {
@@ -121,10 +122,11 @@ export function renderChildResult(input: RowInput): ChildView {
 		for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) add(displayText(str(d, key)), "warning");
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
-		const capabilityText = capabilityContent(d.capabilities)[0]?.text;
+		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
-		// Our extra final data block is not part of the child report; render it separately below.
-		if (textParts.length > 1 && capabilityText && textParts.at(-1) === capabilityText) textParts.pop();
+		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
+		const footers = new Set(dataBlocks.map(block => block.text));
+		while (textParts.length > 1 && footers.delete(textParts.at(-1)!)) textParts.pop();
 		const contentText = textParts.join("\n");
 		const answer = failed
 			? ((d.status === "failed" ? str(d, "answer") : "") || contentText || str(d, "answer") || "delegate failed (no error details)")
@@ -142,7 +144,7 @@ export function renderChildResult(input: RowInput): ChildView {
 				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
 				if (!d.historical && pending && current && current.name !== "thinking") add(paintActivity(theme, current));
 			}
-			if (capabilityText) add(cleanBlock(capabilityText), "dim");
+			for (const block of dataBlocks) add(cleanBlock(block.text), "dim");
 			if (d.sessionFile) add(`Session: ${displayText(str(d, "sessionFile"))}`, "dim");
 		} else if (!state.collect || failed) {
 			add(input.expandHint || "Expand for full result and tool details", "dim");

@@ -42,9 +42,13 @@ export async function headroomProbe(ctx: ExtensionCommandContext) {
 			const terminal = await scheduler.wait(job.id, { timeoutMs: 18000 });
 			assert.equal(terminal.status, "failed", JSON.stringify(terminal));
 			assert.equal(terminal.stopReason, "context_budget"); assert.equal(terminal.resource?.state, "released");
+			assert.equal(terminal.outcome?.execution, "limited"); assert.equal(terminal.outcome?.taskAssessment, "not-performed");
+			assert.deepEqual(terminal.outcome?.evidence, result?.evidence);
 			const next = capacity.tryAcquire(resourceGroup); assert.ok(next, "runner closure releases shared capacity"); next.release();
 		} finally { await scheduler.shutdown(); }
 		assert.ok(result);
+		assert.equal(result.evidence?.source, "rpc"); assert.equal(result.evidence?.taskSent, true);
+		assert.ok(result.evidence!.finalizedMessages >= 1); assert.ok(result.evidence!.retainedResponses >= 1);
 		const requests = readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
 		assert.equal(result.stopReason, "context_budget", JSON.stringify({ result, requests: requests.length }));
 		const native = readFileSync(sessionFile, "utf8").trim().split("\n").map(line => JSON.parse(line));

@@ -3,6 +3,8 @@ import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../ch
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
 import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
+import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
+import { describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
 import { validateResourceGroup, type CapacityBroker, type ResourceGroup, type ResourceLease } from "./capacity.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
 import { LOCAL_OFF_MESSAGE, type LocalAdmission } from "./local-control.ts";
@@ -67,6 +69,7 @@ export type JobSnapshot = {
 	background: boolean;
 	wrapped?: boolean;
 	finalization?: FinalizationProgress;
+	outcome?: ExecutionOutcome;
 	quietForMs?: number;
 };
 
@@ -150,6 +153,7 @@ type InternalJob = {
 	wrapSending?: boolean;
 	wrapMessage?: string;
 	finalization?: FinalizationProgress;
+	evidence?: ResponseEvidence;
 	queuedAt: number;
 	startedAt?: number;
 	lastEventAt?: number;
@@ -593,6 +597,7 @@ export class JobScheduler {
 			snap.stopReason = job.stopReason;
 			snap.answer = job.errorMessage;
 		}
+		snap.outcome = describeOutcome({ status: snap.status, stopReason: snap.stopReason, finalization: snap.finalization, evidence: job.evidence });
 		return snap;
 	}
 
@@ -780,6 +785,7 @@ export class JobScheduler {
 			if (job.status === "queued") return;
 			// The child runtime owns terminal-cause ordering; recording may await after process exit.
 			job.result = result;
+			job.evidence = copyResponseEvidence(result.evidence);
 			job.finalization = copyFinalizationProgress(result.finalization) ?? job.finalization;
 			job.status = isFailedChildResult(job.result) ? "failed" : "done";
 			if (result.model) job.model = result.model;

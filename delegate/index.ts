@@ -27,6 +27,7 @@ import { projectJobBoard } from "./panel.ts";
 import { LocalControl } from "./local-control.ts";
 import { LocalCommand } from "./local-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
+import { copyOutcome, outcomeContent } from "./outcomes.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -109,6 +110,7 @@ function formatOutput(input: {
 				text: input.failed ? `delegate failed (${input.stopReason || input.exitCode}): ${body}` : body,
 			},
 			...capabilityContent(input.details.capabilities),
+			...outcomeContent(input.details.outcome),
 		],
 		details: { ok: !input.failed, ...input.details },
 		isError: input.failed,
@@ -127,6 +129,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	};
 	if (snap.archive) { details.runId = snap.archive.runId; details.sessionFile = snap.archive.sessionFile; }
 	if (snap.capabilities) details.capabilities = copyCapabilities(snap.capabilities);
+	if (snap.outcome) details.outcome = copyOutcome(snap.outcome);
 	if (snap.recordingError) details.recordingError = snap.recordingError;
 	if (snap.current) details.current = snap.current;
 	if (snap.thinking) details.phase = "thinking";
@@ -212,6 +215,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		onTerminal: (snap) => gate.schedule(snap),
 		onSettled: (snap) => accounting.terminal(snap.archive?.runId, snap.id, {
 			status: snap.failed ? "failed" : "done", stopReason: snap.stopReason, exitCode: snap.exitCode,
+			finalization: snap.finalization, evidence: snap.outcome?.evidence,
 		}),
 	});
 

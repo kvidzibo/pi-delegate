@@ -7,6 +7,8 @@ import type { Kind } from "./config.ts";
 import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
 import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
+import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
+import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
 
 export type RunRecord = {
 	version: 1;
@@ -35,10 +37,11 @@ export type RunRecord = {
 	savings?: SavingsSnapshot;
 	savingsUnavailable?: string;
 	finalization?: FinalizationProgress;
+	outcome?: ExecutionOutcome;
 };
 
 export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities">;
-export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress };
+export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress; evidence?: ResponseEvidence };
 const GUARDED_SAVINGS_UNAVAILABLE = "Legacy calibration does not cover guarded execution; a policy-aware calibration is required.";
 function invalidateGuardedSavings(data: RunRecord): void {
 	delete data.savings;
@@ -112,7 +115,8 @@ export class ArchivedRun {
 		const { capabilities: requested, ...fields } = identity;
 		const capabilities = copyCapabilities(requested);
 		this.data = { ...fields, tools: [...identity.tools], ...(capabilities ? { capabilities } : {}),
-			version: 1, revision: 0, runId, createdAt: new Date().toISOString(), status: "queued", durationMs: 0, usage: emptyUsage() };
+			version: 1, revision: 0, runId, createdAt: new Date().toISOString(), status: "queued", durationMs: 0, usage: emptyUsage(),
+			outcome: describeOutcome({ status: "queued" }) };
 		// A valid pre-created header persists even when Pi never accepts its first prompt.
 		writeFileSync(this.paths.session, `${JSON.stringify({ type: "session", version: 3, id: runId, timestamp: this.data.createdAt, cwd: identity.cwd, parentSession: identity.parentSessionFile })}\n`, { flag: "wx", mode: 0o600 });
 		writeFileSync(this.paths.task, task, { flag: "wx", mode: 0o600 });
@@ -124,6 +128,7 @@ export class ArchivedRun {
 		this.data.jobId = jobId;
 		this.data.startedAt = new Date().toISOString();
 		this.data.status = "running";
+		this.data.outcome = describeOutcome(this.data);
 		this.data.revision++;
 		// Refuse launch if recording cannot be established. Do not silently run without an archive.
 		atomicJson(this.paths.metadata, this.data);
@@ -152,6 +157,7 @@ export class ArchivedRun {
 	}
 
 	private persist(): void {
+		this.data.outcome = describeOutcome({ ...this.data, evidence: this.data.outcome?.evidence });
 		this.data.revision++;
 		try { atomicJson(this.paths.metadata, this.data); } catch (error) { this.failRecording(error); }
 	}
@@ -167,9 +173,10 @@ export class ArchivedRun {
 
 	private complete(outcome: Outcome): void {
 		this.finished = true;
-		const { finalization, ...terminal } = outcome;
+		const { finalization, evidence, ...terminal } = outcome;
 		this.noteFinalization(finalization);
 		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
+		this.data.outcome = describeOutcome({ ...this.data, evidence });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
 		this.persist();
 		try { appendLedger(this.root, this.data); } catch (error) { this.failRecording(error); this.persist(); }
@@ -183,6 +190,7 @@ export class ArchivedRun {
 
 	async finish(outcome: Outcome): Promise<void> {
 		if (this.finished) return;
+		const snapshot = { ...outcome, evidence: copyResponseEvidence(outcome.evidence), finalization: copyFinalizationProgress(outcome.finalization) };
 		try {
 			const native = await sessionUsage(this.paths.session, this.data.requestedModel, this.data.savings);
 			const live = this.meter.snapshot();
@@ -192,7 +200,7 @@ export class ArchivedRun {
 			else { this.data.usage = native; this.data.usage.incomplete ||= live.incomplete; }
 			this.data.usage.incomplete ||= !this.meter.settled || this.data.usage.reported === 0 || Boolean(this.data.recordingError);
 		} catch (error) { this.failRecording(error); }
-		this.complete(outcome);
+		this.complete(snapshot);
 	}
 }
 
@@ -234,6 +242,12 @@ export async function loadRuns(root: string, options: { rebuild?: boolean; activ
 			if (data.finalization !== undefined) {
 				invalidateGuardedSavings(data);
 				data.finalization = copyFinalizationProgress(data.finalization);
+			}
+			if (data.outcome !== undefined) {
+				const outcome = copyOutcome(data.outcome);
+				const expected = outcome && describeOutcome({ ...data, evidence: outcome.evidence });
+				if (outcome && JSON.stringify(outcome) === JSON.stringify(expected)) data.outcome = outcome;
+				else delete data.outcome;
 			}
 			if (data.savings && !validSnapshot(data.savings)) {
 				delete data.savings;

@@ -23,6 +23,19 @@ All kinds default to `read`, `grep`, `find`, `ls` and `bash`; `implement` also g
 
 A per-call `model` override changes only the model. The kind keeps its tools, prompt, thinking level and `offline` setting. When changing a local agent to a hosted model, explicitly set `offline: false` in the overlay.
 
+### Outcome receipts
+
+Accepted jobs expose `details.outcome` (version 1), retained in archive metadata and restored cards:
+
+- `execution`: queued, running, finished, failed, cancelled or limited. Existing `status`/`ok`/`isError` remain worker-result signals, not task verdicts.
+- `taskAssessment`: always **`not-performed`**. Delegate does not grade report prose, check claimed tests or infer task success from exit codes, tools or response length.
+- `responses`: pending, unrecorded, none, observed or unsettled. Optional `evidence` contains observed RPC dispatch/settlement flags, finalized-message counts, retained phase responses, omitted phases, unanswered wraps and open/retained partial responses. Finalized messages include empty/error messages; counts are not useful-report or inference counts.
+- `limitations`: known output/execution/context/time limits, missing final output and response/history gaps. Earlier terminal causes remain authoritative; recording and resource-cleanup warnings stay separate.
+
+A separate **≤512-byte** terminal data block reaches the parent without consuming the first report's budget. Completion notices and cards label worker completion rather than verified task success; expanded cards separate both outcome and capability blocks from evidence. A naturally zero-exiting unguarded worker can have an unsettled response lifecycle without changing legacy exit classification or enabling guarded streaming retention.
+
+Legacy/custom runners without RPC evidence remain **unrecorded**, not inferred from text or diagnostics. Missing, malformed or contradictory archived outcomes are omitted; rebuild does not invent evidence. `/delegate-stats` reports outcome coverage and limitations, not task-success rates. These observations do not cover bypassed/direct model calls, detached work or task correctness.
+
 ### Configured capabilities
 
 Spawn/check-in/collection results carry `details.capabilities`, a launch-time snapshot of the resolved kind's requested tool allowlist. Model overrides, including a different model reported at completion, do not change it. A separate text block (at most **512 bytes**) exposes the same limits to the parent; the first report block and its answer budget stay unchanged. Expanded result/collection cards show capabilities separately from evidence. Archives, rebuilds and restored cards retain the snapshot; older or malformed snapshots remain unknown, not inferred.
@@ -142,7 +155,7 @@ delegate  1 run  0 wait  local 0/1 · ctrl+o details
 
 The transcript holds a compact acceptance receipt. On completion, the pinned card disappears and that receipt becomes the finished result card, even without collection or after a foreground timeout. Wait/peek/wrap/cancel calls remain compact receipts, not duplicate cards.
 
-Collapsed finished cards show up to three rendered result lines. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned answer, last three tools, configured capabilities and native session path. Job errors and recording warnings remain visible when collapsed. A failed child command is not itself an overall job failure. Raw thinking is never displayed.
+Collapsed finished cards show up to three rendered result lines. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned answer, last three tools, configured capabilities, outcome observations and native session path. Job errors and recording warnings remain visible when collapsed. A failed child command is not itself an overall job failure. Raw thinking is never displayed.
 
 The pinned stack preserves acceptance order and shows running/queued/local counts, optional local generation rate and wrap requests. It uses at most 12 rows and half the terminal height, reduced further for the editor/footer and sibling widgets in regular mode. Overflow shows `+N more` with job IDs; tiny terminals use compact cards. Expansion stays within that budget.
 
@@ -223,7 +236,7 @@ Rejected RPC prompts, including missing-credential failures, clean up the proces
 
 Without delivered wrap steering, the returned answer joins all text blocks from the last assistant message. When a wrap message is delivered, the preceding response is retained separately from subsequent wrap-up replies. Labels identify the task/wrap phase and assistant-message ordinal (not a native session entry ID). Reports finishing while steering is queued still belong to the preceding phase; acknowledgements and corrections never replace them. A successful retry replaces an earlier error within the same phase. Empty or missing wrap-up responses are labelled and fail rather than imply a complete answer.
 
-`maxOutputBytes` caps the combined text. Space is shared between retained phases so a long report cannot consume the follow-up's entire budget; errors precede the history. At most eight phases are retained in memory: the first plus the most recent seven, with omissions labelled. Very small caps explicitly truncate the history; full recorded messages remain in the native archive. Natural completion shortened only by this cap remains successful. Completed jobs retain capped results but release process/control references.
+`maxOutputBytes` caps the combined report text, not the separate capability/outcome data blocks. Space is shared between retained phases so a long report cannot consume the follow-up's entire budget; errors precede the history. At most eight phases are retained in memory: the first plus the most recent seven, with omissions labelled. Very small caps explicitly truncate the history; full recorded messages remain in the native archive. Natural completion shortened only by this cap remains a successful worker return, not a verified task result. Completed jobs retain capped results but release process/control references.
 
 The separate RPC transport limit is 8 MiB per record. Recognized oversized non-answer events (such as cumulative transcripts or image tool results) are discarded; some progress detail may be absent. Oversized assistant/control events or unknown layouts fail explicitly rather than return an older answer. Discards are logged as `oversized_event_skipped`.
 
