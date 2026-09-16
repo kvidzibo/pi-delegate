@@ -2,6 +2,7 @@ import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
+import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { validateResourceGroup, type CapacityBroker, type ResourceGroup, type ResourceLease } from "./capacity.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
 import { LOCAL_OFF_MESSAGE, type LocalAdmission } from "./local-control.ts";
@@ -45,6 +46,7 @@ export type JobSnapshot = {
 	resource?: ResourceProgress;
 	resourceError?: string;
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	recordingError?: string;
 	id: string;
 	kind: Kind;
@@ -72,6 +74,7 @@ export type EnqueueInput = {
 	/** Explicit server/resource group, never derived from a model ID. Local jobs only. */
 	resourceGroup?: ResourceGroup;
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	kind: Kind;
 	model: string;
 	local: boolean;
@@ -120,6 +123,7 @@ type InternalJob = {
 	resourceError?: string;
 	lease?: ResourceLease;
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	id: string;
 	kind: Kind;
 	model: string;
@@ -274,6 +278,7 @@ export class JobScheduler {
 		const job: InternalJob = {
 			resourceGroup,
 			archive: input.archive,
+			capabilities: copyCapabilities(input.capabilities),
 			id: `d${this.seq.toString(16).padStart(4, "0")}`,
 			kind: input.kind,
 			model: input.model,
@@ -558,6 +563,7 @@ export class JobScheduler {
 			current: job.status === "running" ? job.progress.current : undefined,
 			background: job.background,
 		};
+		if (job.capabilities) snap.capabilities = copyCapabilities(job.capabilities);
 		if (job.resourceGroup) snap.resource = { ...job.resourceGroup,
 			state: job.lease ? "held" : job.status === "queued" ? "waiting" : job.resourceError ? "release-unknown"
 				: job.resourceSlot === undefined ? "not-acquired" : "released",

@@ -13,6 +13,7 @@ import { savingsProbe, guardStartupProbe } from "./savings.ts";
 import { finalizationProbe } from "./finalization.ts";
 import { headroomProbe } from "./headroom.ts";
 import { localProbe } from "./local.ts";
+import { capabilitiesProbe } from "./capabilities.ts";
 import { LocalControl } from "../../delegate/local-control.ts";
 
 export default function probe(pi: ExtensionAPI) {
@@ -43,6 +44,8 @@ export default function probe(pi: ExtensionAPI) {
 			},
 		});
 	};
+	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
+	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
 	register("delegate-local-probe", ctx => localProbe(pi, ctx));
 	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-finalization-probe", ctx => finalizationProbe(pi, ctx));

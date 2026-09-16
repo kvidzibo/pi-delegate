@@ -1,6 +1,23 @@
+import { copyCapabilities } from "./capabilities.ts";
+import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
+
 // UI-only state. Short job IDs are reused after reload; origin tool-call IDs are not.
 export const CARD_STATE_TYPE = "delegate-job-state";
 export type CardDetails = Record<string, unknown>;
+
+function copyDetails(details: CardDetails): CardDetails {
+	const copy = { ...details };
+	if ("capabilities" in copy) {
+		const capabilities = copyCapabilities(copy.capabilities);
+		if (capabilities) copy.capabilities = capabilities; else delete copy.capabilities;
+	}
+	if ("finalization" in copy) {
+		const finalization = copyFinalizationProgress(copy.finalization);
+		if (finalization) copy.finalization = finalization; else delete copy.finalization;
+	}
+	if (copy.resource && typeof copy.resource === "object") copy.resource = { ...copy.resource };
+	return copy;
+}
 
 export function isTerminal(details: CardDetails): boolean {
 	return details.status === "done" || details.status === "failed";
@@ -12,7 +29,10 @@ export class JobCards {
 	private readonly owned = new Set<string>();
 	private readonly observers = new Map<string, () => void>();
 
-	get(origin: string): CardDetails | undefined { return this.snapshots.get(origin); }
+	get(origin: string): CardDetails | undefined {
+		const details = this.snapshots.get(origin);
+		return details ? copyDetails(details) : undefined;
+	}
 	isLive(origin: string): boolean { return this.live.has(origin); }
 
 	begin(origin: string, details: CardDetails): void {
@@ -34,7 +54,7 @@ export class JobCards {
 			// invalidate is insufficient: other widgets can repaint and read this snapshot.
 			if (this.live.has(origin) && previous?.jobId) return;
 		}
-		this.snapshots.set(origin, { ...details, originToolCallId: origin });
+		this.snapshots.set(origin, { ...copyDetails(details), originToolCallId: origin });
 		const invalidate = this.observers.get(origin);
 		if (isTerminal(details)) {
 			this.live.delete(origin);

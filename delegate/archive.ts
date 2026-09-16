@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { emptyUsage, record, sessionUsage, totalTokens, UsageMeter, validUsage, type UsageSummary } from "./usage.ts";
 import type { Kind } from "./config.ts";
 import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
+import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 
 export type RunRecord = {
@@ -21,6 +22,7 @@ export type RunRecord = {
 	actualModel?: string;
 	thinking: string;
 	tools: string[];
+	capabilities?: CapabilityManifest;
 	createdAt: string;
 	startedAt?: string;
 	finishedAt?: string;
@@ -35,7 +37,7 @@ export type RunRecord = {
 	finalization?: FinalizationProgress;
 };
 
-export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable">;
+export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities">;
 export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress };
 const GUARDED_SAVINGS_UNAVAILABLE = "Legacy calibration does not cover guarded execution; a policy-aware calibration is required.";
 function invalidateGuardedSavings(data: RunRecord): void {
@@ -107,7 +109,10 @@ export class ArchivedRun {
 		// Never reuse or replace an existing run directory.
 		mkdirSync(this.paths.dir, { mode: 0o700 });
 		this.meter = new UsageMeter(identity.requestedModel, identity.savings);
-		this.data = { ...identity, tools: [...identity.tools], version: 1, revision: 0, runId, createdAt: new Date().toISOString(), status: "queued", durationMs: 0, usage: emptyUsage() };
+		const { capabilities: requested, ...fields } = identity;
+		const capabilities = copyCapabilities(requested);
+		this.data = { ...fields, tools: [...identity.tools], ...(capabilities ? { capabilities } : {}),
+			version: 1, revision: 0, runId, createdAt: new Date().toISOString(), status: "queued", durationMs: 0, usage: emptyUsage() };
 		// A valid pre-created header persists even when Pi never accepts its first prompt.
 		writeFileSync(this.paths.session, `${JSON.stringify({ type: "session", version: 3, id: runId, timestamp: this.data.createdAt, cwd: identity.cwd, parentSession: identity.parentSessionFile })}\n`, { flag: "wx", mode: 0o600 });
 		writeFileSync(this.paths.task, task, { flag: "wx", mode: 0o600 });
@@ -222,6 +227,10 @@ export async function loadRuns(root: string, options: { rebuild?: boolean; activ
 			const raw = record(data);
 			owner = { parentSessionId: typeof raw.parentSessionId === "string" ? raw.parentSessionId : undefined, createdAt: typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : undefined };
 			if (!validRecord(data, dir.name)) throw new Error("Invalid or unsupported run metadata");
+			if (data.capabilities !== undefined) {
+				const capabilities = copyCapabilities(data.capabilities);
+				if (capabilities) data.capabilities = capabilities; else delete data.capabilities;
+			}
 			if (data.finalization !== undefined) {
 				invalidateGuardedSavings(data);
 				data.finalization = copyFinalizationProgress(data.finalization);

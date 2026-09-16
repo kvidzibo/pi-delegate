@@ -23,6 +23,17 @@ All kinds default to `read`, `grep`, `find`, `ls` and `bash`; `implement` also g
 
 A per-call `model` override changes only the model. The kind keeps its tools, prompt, thinking level and `offline` setting. When changing a local agent to a hosted model, explicitly set `offline: false` in the overlay.
 
+### Configured capabilities
+
+Spawn/check-in/collection results carry `details.capabilities`, a launch-time snapshot of the resolved kind's requested tool allowlist. Model overrides, including a different model reported at completion, do not change it. A separate text block (at most **512 bytes**) exposes the same limits to the parent; the first report block and its answer budget stay unchanged. Expanded result/collection cards show capabilities separately from evidence. Archives, rebuilds and restored cards retain the snapshot; older or malformed snapshots remain unknown, not inferred.
+
+- `source: "configured"`: **not child-verified**. This does not prove tool registration, executable/dependency availability, task permission or successful test execution.
+- `tools`: exact CLI selection names after comma splitting, trimming and deduplication. Names are case-sensitive; `*`, `all` and `none` are not aliases. Up to 64 names, each at most 128 encoded JSON bytes; `omittedTools` counts omitted names.
+- `shellTools`: listed `bash`/`powershell`; `writeTools`: listed `write`/`edit`. These positive declarations survive name-list omissions. `unknownTools` counts names outside the known builtin inventory; their availability and effects are unknown.
+- `filesystemSandbox: false`: no filesystem isolation. A missing write/edit tool does **not** make a shell read-only. Recon's read-only intent still applies; tests or commands that write files are not made permissible by this receipt.
+
+Before assigning work, inspect the resolved configuration rather than assuming every recon can run commands or tests. The pure [`describeCapabilities(tools)`](capabilities.ts) helper supports prelaunch inspection without a child or model call. This adds no inspection tool/action, new permissions, prompt instructions or configuration defaults. `offline` still means startup networking only.
+
 ### Limits
 
 Default limits apply to this parent session, not other Pi sessions or unrelated GPU processes. The separately opted-in shared-capacity API below adds cross-session coordination without replacing these limits.
@@ -131,7 +142,7 @@ delegate  1 run  0 wait  local 0/1 · ctrl+o details
 
 The transcript holds a compact acceptance receipt. On completion, the pinned card disappears and that receipt becomes the finished result card, even without collection or after a foreground timeout. Wait/peek/wrap/cancel calls remain compact receipts, not duplicate cards.
 
-Collapsed finished cards show up to three rendered result lines. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned answer, last three tools and native session path. Job errors and recording warnings remain visible when collapsed. A failed child command is not itself an overall job failure. Raw thinking is never displayed.
+Collapsed finished cards show up to three rendered result lines. **Ctrl+O** (or your configured tool-expansion shortcut) shows the full returned answer, last three tools, configured capabilities and native session path. Job errors and recording warnings remain visible when collapsed. A failed child command is not itself an overall job failure. Raw thinking is never displayed.
 
 The pinned stack preserves acceptance order and shows running/queued/local counts, optional local generation rate and wrap requests. It uses at most 12 rows and half the terminal height, reduced further for the editor/footer and sibling widgets in regular mode. Overflow shows `+N more` with job IDs; tiny terminals use compact cards. Expansion stays within that budget.
 

@@ -6,6 +6,7 @@ import { displayText } from "./stats.ts";
 import { isLocalModel } from "./tg.ts";
 import type { CardDetails } from "./cards.ts";
 import type { JobBoardState } from "./panel.ts";
+import { capabilityContent } from "./capabilities.ts";
 
 export type RowState = {
 	details: CardDetails;
@@ -120,7 +121,11 @@ export function renderChildResult(input: RowInput): ChildView {
 		for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) add(displayText(str(d, key)), "warning");
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
-		const contentText = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+		const capabilityText = capabilityContent(d.capabilities)[0]?.text;
+		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
+		// Our extra final data block is not part of the child report; render it separately below.
+		if (textParts.length > 1 && capabilityText && textParts.at(-1) === capabilityText) textParts.pop();
+		const contentText = textParts.join("\n");
 		const answer = failed
 			? ((d.status === "failed" ? str(d, "answer") : "") || contentText || str(d, "answer") || "delegate failed (no error details)")
 			: (str(d, "answer") || contentText);
@@ -137,6 +142,7 @@ export function renderChildResult(input: RowInput): ChildView {
 				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
 				if (!d.historical && pending && current && current.name !== "thinking") add(paintActivity(theme, current));
 			}
+			if (capabilityText) add(cleanBlock(capabilityText), "dim");
 			if (d.sessionFile) add(`Session: ${displayText(str(d, "sessionFile"))}`, "dim");
 		} else if (!state.collect || failed) {
 			add(input.expandHint || "Expand for full result and tool details", "dim");
