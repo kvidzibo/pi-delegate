@@ -19,3 +19,4 @@
 - A cancelled child may resolve normally: recheck the abort signal after persisting its evidence and before publishing a campaign result, especially on the final iteration. Test cancellation on the last child, not only between jobs.
 - Freeze accepted live transcript snapshots, not just invalidations: unrelated repaints can reread them and make Pi's regular renderer clear scrollback. Keep progress in a single mounted widget, finalize history once, and test off-screen cards with the real renderer.
 - ANSI-aware truncation emits resets even with an identity theme. Strip terminal sequences from plain RPC previews, and test background coverage after resets as well as on trailing padding.
+- Validate restored positive capability flags against the omission mechanism: short builtin names cannot be hidden by a name-length limit when the visible list is below its count cap.

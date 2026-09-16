@@ -60,7 +60,9 @@ test("copiers reject malformed or contradictory capability claims without invent
 	const caps = describeCapabilities(recon);
 	for (const bad of [undefined, null, {}, { ...caps, source: "verified" }, { ...caps, filesystemSandbox: true },
 		{ ...caps, tools: "bash" }, { ...caps, tools: ["read,bash"] }, { ...caps, shellTools: [] },
-		{ ...caps, writeTools: ["write"] }, { ...caps, omittedTools: -1 }, { ...caps, unknownTools: 1 },
+		{ ...caps, writeTools: ["write"] }, { ...caps, writeTools: ["write"], omittedTools: 1 },
+		{ ...caps, shellTools: ["bash", "powershell"], omittedTools: 1 },
+		{ ...caps, omittedTools: -1 }, { ...caps, unknownTools: 1 },
 		{ ...caps, omittedTools: 0.5 }, { ...caps, omittedTools: Number.MAX_SAFE_INTEGER }, { ...caps, tools: [...recon, "read"] }]) {
 		assert.equal(copyCapabilities(bad), undefined); assert.deepEqual(capabilityContent(bad), []);
 	}
@@ -111,7 +113,7 @@ test("archives and rebuild retain configured capabilities, not inferred legacy o
 	assert.deepEqual((await loadRuns(root, { rebuild: true })).runs[0].capabilities, expected);
 	assert.equal(readFileSync(run.paths.metadata, "utf8"), before);
 	assert.deepEqual(JSON.parse(readFileSync(join(root, "usage.jsonl"), "utf8").trim().split("\n").at(-1)!).capabilities, expected);
-	for (const capabilities of [undefined, { ...expected, filesystemSandbox: true }]) {
+	for (const capabilities of [undefined, { ...expected, filesystemSandbox: true }, { ...expected, writeTools: ["write"], omittedTools: 1 }]) {
 		writeFileSync(run.paths.metadata, JSON.stringify({ ...JSON.parse(before), capabilities }));
 		const loaded = await loadRuns(root); assert.equal(loaded.runs[0].capabilities, undefined);
 		assert.equal(loaded.runs[0].status, "failed"); assert.equal(loaded.warnings.length, 0);

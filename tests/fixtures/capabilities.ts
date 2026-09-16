@@ -59,6 +59,12 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 						if (width === 80) { const text = lines.join("\n"); assert.equal(text.match(/Configured capabilities only/g)?.length, 1); assert.match(text, /No filesystem sandbox/); }
 					}
 				}
+				const error = { details: { ok: false, capabilities: expected }, content: [{ type: "text", text: "Failure reason." }, ...capabilityContent(expected)] };
+				for (const width of [24, 80]) {
+					const text = tool.renderResult(error, { expanded: false, isPartial: false }, theme,
+						{ toolCallId: "error-preview", state: {}, invalidate() {} }).render(width).join("\n");
+					assert.match(text, /Failure reason/); assert.doesNotMatch(text, /Configured capabilities|Shell tools|filesystem sandbox/);
+				}
 				// A subsequent default-model launch keeps the same configured tools after all observer/result mutations.
 				const foreground = call({ kind: "recon", task: "Default-model fixture", timeoutMs: 1000 });
 				assert.deepEqual(runs[1].input.tools, tools);

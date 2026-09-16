@@ -37,7 +37,9 @@ export function copyCapabilities(value: unknown): CapabilityManifest | undefined
 		|| !names(raw.shellTools, SHELL) || !names(raw.writeTools, WRITE) || !count(raw.omittedTools) || !count(raw.unknownTools)) return;
 	const visibleUnknown = raw.tools.filter(name => !BUILTINS.has(name)).length;
 	const missing = [...raw.shellTools, ...raw.writeTools].filter(name => !raw.tools!.includes(name)).length;
-	if (!Number.isSafeInteger(raw.tools.length + raw.omittedTools) || raw.unknownTools < visibleUnknown
+	// Known builtin names fit the name-byte limit; only a full count-limited list can omit them.
+	if ((missing > 0 && raw.tools.length < MAX_TOOLS)
+		|| !Number.isSafeInteger(raw.tools.length + raw.omittedTools) || raw.unknownTools < visibleUnknown
 		|| raw.unknownTools - visibleUnknown + missing > raw.omittedTools
 		|| SHELL.some(name => raw.tools!.includes(name) && !raw.shellTools!.includes(name))
 		|| WRITE.some(name => raw.tools!.includes(name) && !raw.writeTools!.includes(name))) return;
