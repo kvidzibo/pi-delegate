@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChildFinalizer, type FinalizerClock } from "../child-finalizer.ts";
 import { headroomPolicyId } from "../headroom.ts";
+import type { LeaseIdentity } from "../lease.ts";
 import { GUARD_NOTICE, GUARD_REQUEST_ID, validateGuardedExecution, type GuardedExecution } from "../guard-protocol.ts";
 
 class Clock implements FinalizerClock {
@@ -26,15 +27,36 @@ const notice = (event = "ready", phase = "running", activeTools = 0, fields: obj
 	type: "extension_ui_request", method: "notify", message: JSON.stringify({ type: GUARD_NOTICE, nonce, version: 1,
 		event, tools: policy.tools, state: { phase, activeTools }, ...fields }),
 });
-function start(overrides: Partial<GuardedExecution> = {}, writes = true) {
+function start(overrides: Partial<GuardedExecution> = {}, writes = true, lease?: LeaseIdentity) {
 	const clock = new Clock(), sent: any[] = [], steers: string[] = [], failures: any[] = [], states: any[] = [];
 	const child = new ChildFinalizer({ ...policy, ...overrides }, nonce, {
 		send: command => { sent.push(command); return writes; }, steer: text => { steers.push(text); return writes; },
 		fail: (reason, text) => failures.push({ reason, text }), onState: state => states.push(state),
-	}, clock);
+	}, clock, lease);
 	child.start("Finish now.");
 	return { child, clock, sent, steers, failures, states };
 }
+
+test("combined lease/headroom readiness requires both proofs and preserves later context finalization", () => {
+	const headroom = { maxInputBytes: 65536, maxToolResultBytes: 512, maxToolBatchBytes: 768, reserveTokens: 4096 };
+	const policyId = headroomPolicyId(headroom), lease = { dev: "1", ino: "2" };
+	const progress = { policyId, phase: "ready", limited: false };
+	for (const fields of [{ headroom: progress }, { lease: { ...lease, ino: "3" }, headroom: progress }, { lease },
+		{ lease, headroom: { ...progress, policyId: "a".repeat(64) } }, { lease, headroom: { ...progress, phase: "checked" } }]) {
+		const { child, failures, clock } = start({ headroom }, true, lease);
+		child.accept(notice("ready", "running", 0, fields));
+		assert.equal(child.canDispatchTask(), false); assert.equal(failures[0]?.reason, "guard-error");
+		assert.equal(clock.jobs.size, 0);
+	}
+	const { child, failures, sent } = start({ headroom }, true, lease);
+	child.accept(notice("ready", "running", 0, { lease, headroom: progress }));
+	assert.equal(child.canDispatchTask(), true); child.markTaskSent();
+	child.accept(notice("headroom", "running", 0, { headroom: { ...progress, phase: "limited", limited: true } }));
+	assert.equal(sent.length, 1); assert.equal(child.snapshot().reason, "context_budget");
+	child.accept(notice("state", "answering"));
+	assert.equal(child.snapshot().phase, "answering"); assert.equal(child.snapshot().headroom?.limited, true);
+	assert.deepEqual(failures, []); child.dispose();
+});
 
 test("readiness is required; RPC success is not enforcement acknowledgement", async () => {
 	const { child, sent, steers, clock } = start();

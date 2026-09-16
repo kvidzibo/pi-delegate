@@ -105,6 +105,8 @@ xvfb-run -a npm test    # unit + offline CLI/UI checks; needs Pi and Xvfb
 
 The [child-runtime API](child-runtime/README.md#opt-in-guarded-execution) also supports explicitly opted-in execution budgets and an enforced tool-finalization gate. This is not yet wired to delegate configuration or defaults; ordinary delegation remains steer-only. Guarded runs cannot reuse legacy savings calibrations.
 
-The same API accepts an optional [text-headroom policy](child-runtime/README.md#opt-in-text-headroom): it bounds outgoing tool-result text, reserves declared output space, closes the work gate under pressure, and refuses unsafe provider requests. Native history stays unchanged. This conservative byte policy is not tokenizer-exact and has no delegate configuration/default activation yet.
+The opt-in [shared-capacity API](delegate/README.md#shared-capacity-api) coordinates local workers across parent sessions on Linux. Explicit resource groups share kernel-owned leases that survive parent death while an inherited child descriptor remains open. Configuration/default activation is still separate; ordinary delegation retains per-parent limits.
 
-Tests use mocked workers or isolated offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.
+The same API accepts an optional [text-headroom policy](child-runtime/README.md#opt-in-text-headroom): it bounds outgoing tool-result text, reserves declared output space, closes the work gate under pressure, and refuses unsafe provider requests. Native history stays unchanged. This conservative byte policy is not tokenizer-exact and has no delegate configuration/default activation yet. Headroom and shared leases can be combined; both readiness proofs are required before task dispatch.
+
+Tests use mocked workers, isolated offline Node processes for kernel-lease checks, or offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.

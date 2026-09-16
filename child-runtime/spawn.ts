@@ -7,6 +7,7 @@ import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
 import { AnswerHistory, answerExplanation } from "./answers.ts";
 import { StreamedAnswer } from "./streamed-answer.ts";
+import { verifyLease, type InheritedLease } from "./lease.ts";
 import { ChildFinalizer, type FinalizationFailure } from "./child-finalizer.ts";
 import { GUARD_ENV, validateGuardedExecution, type GuardedExecution, type FinalizationProgress } from "./guard-protocol.ts";
 import { HEADROOM_EXIT_CODE, parseHeadroomRefusal, type HeadroomProgress } from "./headroom-protocol.ts";
@@ -87,6 +88,8 @@ export interface RunPiChildInput {
 	beforePrompt?: (signal: AbortSignal) => Promise<void>;
 	/** Explicit opt-in runtime API; delegate configuration/default activation is separate. */
 	execution?: GuardedExecution;
+	/** Borrowed locked descriptor, inherited by the child; requires guarded startup acknowledgement. */
+	resourceLease?: InheritedLease;
 	spawnFn?: SpawnFn;
 	killTree?: (proc: ChildProcess) => void;
 }
@@ -316,13 +319,20 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	if (execution && (!Number.isSafeInteger(input.hardTimeoutMs) || input.hardTimeoutMs < 0 || input.hardTimeoutMs > 2_147_483_647)) {
 		throw new Error("Invalid guarded hardTimeoutMs: must be a supported timer duration.");
 	}
+	const lease = input.resourceLease !== undefined ? { ...input.resourceLease } : undefined;
+	if (lease) {
+		if (!execution) throw new Error("Inherited resource leases require guarded child execution.");
+		verifyLease(lease.fd, lease);
+	}
 	const nonce = execution ? randomUUID() : undefined;
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 	if (execution) {
 		if (!args.includes("--no-extensions")) args.push("--no-extensions");
 		args.push("--extension", fileURLToPath(new URL("./guard.ts", import.meta.url)));
-		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools, ...(execution.headroom ? { headroom: execution.headroom } : {}) });
+		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools,
+			...(lease ? { lease: { dev: lease.dev, ino: lease.ino } } : {}),
+			...(execution.headroom ? { headroom: execution.headroom } : {}) });
 	}
 	const invocation = getPiInvocation(args);
 	const started = Date.now();
@@ -355,7 +365,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			cwd: input.cwd,
 			env: childEnv,
 			shell: false,
-			stdio: ["pipe", "pipe", "pipe"],
+			stdio: ["pipe", "pipe", "pipe", ...(lease ? [lease.fd] : [])],
 			detached: process.platform !== "win32",
 		});
 		pid = proc.pid;
@@ -420,7 +430,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				try { input.onEvent?.({ type: "delegate_finalization", state }); }
 				catch { /* Progress observers cannot alter enforcement. */ }
 			},
-		});
+		}, undefined, lease);
 
 		const consume = (line: string): void => {
 			if (closed || stopKind || (failure && !drainRefusalOutput) || !line.trim()) return;

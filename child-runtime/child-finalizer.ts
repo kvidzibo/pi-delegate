@@ -1,5 +1,6 @@
 import { GUARD_COMMAND, GUARD_REQUEST_ID, parseGuardNotice,
 	type GuardedExecution, type FinalizationProgress, type FinalizationReason } from "./guard-protocol.ts";
+import { sameLease, validateLeaseIdentity, type LeaseIdentity } from "./lease.ts";
 
 import { headroomPolicyId } from "./headroom.ts";
 import { copyHeadroomProgress, type HeadroomProgress } from "./headroom-protocol.ts";
@@ -23,6 +24,7 @@ export class ChildFinalizer {
 	private readonly policy: GuardedExecution;
 	private readonly nonce: string;
 	private readonly clock: FinalizerClock;
+	private readonly expectedLease?: LeaseIdentity;
 	private bindings?: Bindings;
 	private state: FinalizationProgress = { phase: "starting" };
 	private ready = false;
@@ -40,8 +42,9 @@ export class ChildFinalizer {
 	private graceTimer?: unknown;
 	private waiters = new Set<() => void>();
 
-	constructor(policy: GuardedExecution, nonce: string, bindings: Bindings, timer: FinalizerClock = clock) {
+	constructor(policy: GuardedExecution, nonce: string, bindings: Bindings, timer: FinalizerClock = clock, expectedLease?: LeaseIdentity) {
 		this.policy = policy; this.nonce = nonce; this.bindings = bindings; this.clock = timer;
+		this.expectedLease = expectedLease ? validateLeaseIdentity(expectedLease) : undefined;
 		if (policy.headroom) {
 			this.headroomId = headroomPolicyId(policy.headroom);
 			this.state.headroom = { policyId: this.headroomId, phase: "starting", limited: false };
@@ -120,6 +123,7 @@ export class ChildFinalizer {
 				return;
 			}
 			if (notice.event === "ready") {
+				if (!sameLease(this.expectedLease, notice.lease)) throw new Error("Child runtime guard did not acknowledge the expected inherited resource lease.");
 				if (this.ready || notice.state.phase !== "running" || notice.state.activeTools !== 0 || !Array.isArray(notice.tools)
 					|| notice.tools.length !== this.policy.tools.length || !this.policy.tools.every(name => notice.tools!.includes(name))) {
 					throw new Error("Child runtime guard readiness does not match the requested tool set.");

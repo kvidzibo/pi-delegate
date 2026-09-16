@@ -75,6 +75,14 @@ Unsafe requests synchronously exit the dedicated child **before transport**. Ord
 
 The guard runs last among explicit child file extensions and requires trusted compatible Pi transports that invoke `before_provider_request`. It does not cover custom streams/direct model calls that bypass that hook, earlier extensions' own compaction calls, server-side work, or arbitrary hostile code. It is not a sandbox. Offline tests exercise real Pi serialization and stream parsing through mocked HTTP, including swallowed hook errors, hard refusal and native evidence preservation.
 
+## Inherited resource leases
+
+On Linux, `runPiChild` and `runChild` accept a borrowed `resourceLease: { fd, dev, ino }` from the shared-capacity broker. Guarded execution is mandatory. The parent validates the owned/private regular file, inherits the open descriptor as child FD 3, and withholds the task until the guard acknowledges its expected device/inode identity. Missing/mismatched acknowledgement fails as `guard-error`; the runtime never silently drops the lease.
+
+The broker/scheduler owns the parent descriptor and releases it only after the runner settles. Neither the runtime nor a caller-provided runner may close a borrowed descriptor. The inherited child descriptor preserves kernel occupancy if the parent dies; it closes with the child. This coordinates cooperating live child processes, not unrelated work or lingering server-side requests. Default runs inherit no resource descriptor and keep their original three-pipe stdio setup. See [shared capacity](../delegate/README.md#shared-capacity-api) for backend requirements and scope.
+
+A lease can be combined with `execution.headroom`. The same readiness notice must acknowledge the requested tools, inherited device/inode and exact headroom policy hash. Neither proof substitutes for the other. Context pressure/refusal does not release the borrowed parent descriptor; its owner still holds it through runner closure.
+
 ## Tests
 
 ```bash

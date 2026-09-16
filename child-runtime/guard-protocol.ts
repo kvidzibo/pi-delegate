@@ -1,6 +1,7 @@
 import type { FinalizationState } from "./finalization.ts";
 import { validateHeadroomPolicy, type HeadroomPolicy } from "./headroom.ts";
 import { copyHeadroomProgress, type HeadroomProgress } from "./headroom-protocol.ts";
+import { validateLeaseIdentity, type LeaseIdentity } from "./lease.ts";
 
 export const GUARD_ENV = "PI_DELEGATE_RUNTIME_GUARD";
 export const GUARD_COMMAND = "delegate-runtime-finalize";
@@ -17,7 +18,7 @@ export interface GuardedExecution {
 	headroom?: HeadroomPolicy;
 }
 
-export interface GuardConfig { nonce: string; tools: string[]; headroom?: HeadroomPolicy }
+export interface GuardConfig { nonce: string; tools: string[]; lease?: LeaseIdentity; headroom?: HeadroomPolicy }
 export type FinalizationReason = "wrap" | "execution_budget" | "context_budget";
 export type FinalizationProgress = {
 	phase: "starting" | "requested" | FinalizationState["phase"];
@@ -33,6 +34,7 @@ export type GuardNotice = {
 	state: FinalizationState;
 	tools?: string[];
 	headroom?: HeadroomProgress;
+	lease?: LeaseIdentity;
 };
 
 export function validateGuardConfig(value: unknown): GuardConfig {
@@ -43,7 +45,9 @@ export function validateGuardConfig(value: unknown): GuardConfig {
 		|| new Set(raw.tools).size !== raw.tools.length) {
 		throw new Error("Runtime guard requires a nonce and a distinct supported builtin tool list.");
 	}
-	return { nonce: raw.nonce, tools: [...raw.tools], ...(raw.headroom === undefined ? {} : { headroom: validateHeadroomPolicy(raw.headroom) }) };
+	return { nonce: raw.nonce, tools: [...raw.tools],
+		...(raw.lease === undefined ? {} : { lease: validateLeaseIdentity(raw.lease) }),
+		...(raw.headroom === undefined ? {} : { headroom: validateHeadroomPolicy(raw.headroom) }) };
 }
 
 export function validateGuardedExecution(value: GuardedExecution): GuardedExecution {
@@ -86,5 +90,6 @@ export function parseGuardNotice(event: unknown, nonce: string): GuardNotice | u
 		throw new Error("Invalid runtime guard acknowledgement.");
 	}
 	if (notice.headroom !== undefined && !copyHeadroomProgress(notice.headroom)) throw new Error("Invalid runtime headroom acknowledgement.");
+	if (notice.lease !== undefined) validateLeaseIdentity(notice.lease);
 	return notice as GuardNotice;
 }

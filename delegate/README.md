@@ -25,7 +25,7 @@ A per-call `model` override changes only the model. The kind keeps its tools, pr
 
 ### Limits
 
-Limits apply to this parent session, not other Pi sessions or unrelated GPU processes.
+Default limits apply to this parent session, not other Pi sessions or unrelated GPU processes. The separately opted-in shared-capacity API below adds cross-session coordination without replacing these limits.
 
 | Setting | Default | Meaning |
 |---|---:|---|
@@ -39,9 +39,33 @@ Limits apply to this parent session, not other Pi sessions or unrelated GPU proc
 | `hardTimeoutMs` | 0 | Kill timeout measured from process start; `0` disables it |
 | `maxOutputBytes` | 65536 | Returned-answer cap, including a truncation notice |
 
-Local providers are `local-qwen*`, `llama.cpp` and `ollama`. A running local child holds its slot until it finishes or is cancelled. Eligible jobs start in acceptance order; hosted work can pass a local job waiting for a local slot. The extension never starts/stops local servers or changes GPU fans.
+Local providers are `local-qwen*`, `llama.cpp` and `ollama`. A running local child holds its slot until its runner settles after process closure; requesting cancellation does not free it early. Eligible jobs start in acceptance order; hosted work can pass a local job waiting for a local slot. The extension never starts/stops local servers or changes GPU fans.
 
 `localAlternatives` maps local models to hosted pricing references, **not fallbacks**. An overlay replaces the whole map; `{}` disables it. `calibrationProfiles` replaces the list of absolute profile paths and defaults to `[]`. See [calibration](../bench/README.md).
+
+## Shared-capacity API
+
+`JobScheduler` optionally accepts a `CapacityBroker`. The Linux `FileCapacityBroker` coordinates cooperating schedulers across processes and working directories:
+
+```ts
+const capacity = new FileCapacityBroker("/absolute/private/shared-root");
+const scheduler = new JobScheduler({ maxConcurrent: 8, maxLocalConcurrent: 1,
+  maxQueued: 16, capacity, resourcePollMs: 250 });
+// Every local enqueue supplies resourceGroup: { key: "server-a", capacity: 1 }.
+// Its runner forwards handle.resourceLease to runChild with explicit guarded execution.
+```
+
+This is a runtime API, **not yet a configuration setting or default**. Models, tools and saved prompts are unchanged. All cooperating clients must use the same absolute root and explicit resource key for the same server/resource pool, including different model IDs on that pool. This is host-local coordination, not a distributed lock or proof of server-side inference idleness. It does not coordinate older/unconfigured clients, unrelated GPU work, or servers themselves; it never starts/stops servers or changes fans.
+
+- Keys are 1–128 safe ASCII characters; capacity is an integer 1–64. Capacity is independent of model ID. Parent `maxConcurrent` and `maxLocalConcurrent` still apply.
+- Every local job needs an explicit group when a broker is enabled; a missing group or broker is refused, never silently uncoordinated. Hosted jobs bypass this local-only broker. Eligible hosted/independent-group work can pass a busy group. Shared-resource waiters count toward `maxQueued`; queue time is not execution time.
+- Polling runs only while otherwise-eligible resource waiters exist (250 ms default, configurable 10–60000 ms). A busy group/capacity pair is probed once per pass, preserving acceptance order within it.
+- Linux `/usr/bin/flock` holds stable private lock-file descriptors. The utility does not own the lease after it exits: the parent and then the Pi child share its open-file description. Readiness verifies the expected inherited descriptor before any task is sent. Release closes descriptors, never unlinks lock files or forcibly unlocks another holder. Parent death cannot free a lease still held by the child.
+- Capacity changes require every existing slot to be idle. Conflicting live limits, missing locking support, corrupt/insecure state or failed descriptor acknowledgement fail closed. There is no PID/mtime expiry, age-based takeover or uncoordinated fallback. Keep the root on a local filesystem with Linux `flock` semantics; do not delete or replace live lock files.
+- Cancellation/shutdown retain running leases until runner completion after process closure. A runner borrows its descriptor and must not close it; the scheduler owns release. A failed release is reported separately without rewriting the child outcome.
+- With `localAdmission`, both gates must accept before a runner starts. A denied/failed local admission releases provisional capacity immediately. Uncertain rollback fails the queued job rather than retrying and leaking more leases; an already-cancelled outcome remains unchanged.
+
+Snapshots/results distinguish `resource` waits and `waiting`, `held`, `released`, `not-acquired` or `release-unknown` resource states. UI cards identify the waiting group; release uncertainty remains a visible warning. Broker acquisition failures use `resource-error`; inherited-descriptor startup failures use `guard-error`. Root setup/ownership checks happen on acquisition, not construction.
 
 ## Local delegation switch
 
@@ -53,7 +77,7 @@ Local providers are `local-qwen*`, `llama.cpp` and `ollama`. A running local chi
 
 State lives in `<agent-dir>/delegate-local/` (normally `~/.pi/agent/delegate-local/`), separately from `delegate.json` and archive overrides. An atomic `state.json` stores the switch; private `active/` reservation files track admitted local jobs. The default is ON; OFF survives shutdown, reload and restart until explicitly enabled. No model calls are made by the command. No saved prompts, model configuration, servers or fans are changed.
 
-**Scope:** same user, machine, local filesystem and agent directory, with this feature loaded in every participating Pi session. Older versions, other agent directories, parent models, the opt-in calibration runner and unrelated GPU clients are not controlled or counted. Install/update and reload each session once before using the switch; subsequent toggles need no reload. Concurrency limits remain per-parent, not a cross-process capacity lock.
+**Scope:** same user, machine, local filesystem and agent directory, with this feature loaded in every participating Pi session. Older versions, other agent directories, parent models, the opt-in calibration runner and unrelated GPU clients are not controlled or counted. Install/update and reload each session once before using the switch; subsequent toggles need no reload. The switch is not a cross-process capacity lock. Concurrency limits remain per-parent unless the separately opted-in shared-capacity API above is also supplied.
 
 **Before benchmarking:** select Off and wait for `OFF · idle`; separately stop or coordinate clients outside this scope. A crashed parent may leave an orphaned child. Its reservation is retained and reported as **unverified (not idle)**, rather than silently expired. Inspect the processes/archives and remove only the corresponding files in `delegate-local/active/` after confirming the work has stopped. PID reuse can conservatively keep a stale reservation counted as active. Do not delete active reservations or the state directory to force an idle report.
 
@@ -203,4 +227,4 @@ npm run test:unit
 xvfb-run -a npm test
 ```
 
-Unit tests mock children and process termination. CLI/UI checks use isolated offline Pi processes and mocked runners, never model requests; CI runs unit tests only because its runners lack Pi. See the [test contract](SPEC.md#tests) for coverage and regression requirements.
+Unit tests mock Pi children and process termination; Linux lease tests additionally use owned offline Node processes and real kernel locks. CLI/UI checks use isolated offline Pi processes and mocked runners, never model requests; CI runs unit tests only because its runners lack Pi. See the [test contract](SPEC.md#tests) for coverage and regression requirements.

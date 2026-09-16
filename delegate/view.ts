@@ -44,7 +44,9 @@ function statusLine(state: RowState): { color: string; text: string } {
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
 	if (d.status === "queued") {
-		const waiting = d.reason === "local-off" ? "local delegation OFF" : d.reason === "local-unavailable" ? "local control unavailable" : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
+		const group = d.resource && typeof d.resource === "object" ? str(d.resource as CardDetails, "key") : "";
+		const waiting = d.reason === "local-off" ? "local delegation OFF" : d.reason === "local-unavailable" ? "local control unavailable"
+			: d.reason === "resource" ? `waiting for shared resource${group ? ` ${group}` : ""}` : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
 		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	if (d.status === "running") {
@@ -115,7 +117,7 @@ export function renderChildResult(input: RowInput): ChildView {
 			}
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
-		for (const key of ["recordingError", "displayWarning"]) if (d[key]) add(displayText(str(d, key)), "warning");
+		for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) add(displayText(str(d, key)), "warning");
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
 		const contentText = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
@@ -173,7 +175,7 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 			const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
 			const current = asActivityItem(d.current);
 			const extras: string[] = [];
-			for (const key of ["recordingError", "displayWarning"]) if (d[key]) extras.push(theme.fg("warning", displayText(str(d, key))));
+			for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) extras.push(theme.fg("warning", displayText(str(d, key))));
 			if (expanded) {
 				for (const item of activity) extras.push(paintActivity(theme, item));
 				if (current && current.name !== "thinking") extras.push(paintActivity(theme, current));

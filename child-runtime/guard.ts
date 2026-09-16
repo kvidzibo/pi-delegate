@@ -6,6 +6,7 @@ import {
 import { FinalizationGate } from "./finalization.ts";
 import { installHeadroomGuard } from "./headroom-guard.ts";
 import type { HeadroomProgress } from "./headroom-protocol.ts";
+import { CHILD_LEASE_FD, verifyLease } from "./lease.ts";
 import { GUARD_COMMAND, GUARD_ENV, GUARD_NOTICE, validateGuardConfig, type GuardConfig } from "./guard-protocol.ts";
 
 const factories: Record<string, (cwd: string) => ToolDefinition<any, any>> = {
@@ -21,7 +22,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 	let ready = false;
 	const notify = (event: "ready" | "state" | "headroom", progress?: HeadroomProgress) => {
 		ctx?.ui.notify(JSON.stringify({ type: GUARD_NOTICE, version: 1, nonce: config.nonce, event,
-			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools] } : {}),
+			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools], ...(config.lease ? { lease: config.lease } : {}) } : {}),
 			...(progress ? { headroom: progress } : {}) }), "info");
 	};
 	const gate = new FinalizationGate(() => { if (ready) notify("state"); });
@@ -42,6 +43,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 	pi.on("session_start", (_event, next) => {
 		if (ready || next.mode !== "rpc") throw new Error("Runtime guard requires a fresh RPC child.");
 		ctx = next;
+		if (config.lease) verifyLease(CHILD_LEASE_FD, config.lease);
 		headroom?.checkModel(next.model);
 		for (const name of config.tools) {
 			const tool = factories[name](next.cwd);
