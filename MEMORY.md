@@ -1,5 +1,17 @@
 # Validated lessons
 
+- Startup readiness can be invalidated during a caller handshake or between promise callbacks. Recheck synchronously at actual task dispatch; an early finalization must finish draining first.
+- Track an open assistant turn separately from its text. Thinking-only/open-empty turns are incomplete too, and streamed evidence keeps the phase in which the turn started.
+
+- Terminal open streams supplement, never replace, their phase's last finalized response and error metadata. At tiny output caps, reserve the cause before spending bytes on a truncation notice.
+
+- Classify child cancellation at the process boundary, not after asynchronous archival work: a later abort must not relabel an earlier completed child outcome. Campaign-level cancellation is a separate decision.
+- Keep a wrap pending until child control accepts it; registration can arrive after the request. Guard synchronous observer reentrancy while acceptance is in progress. Accepted repeats must not resend it or extend grace.
+- Authoritative `text_end` snapshots replace streamed deltas, including their truncation state; old clipping must not mislabel a corrected complete block.
+- Execution-policy changes invalidate legacy calibration even when models, tools and prompts still match. Keep measured usage, but discard incompatible estimates in live state and archive rebuilds.
+
+- A GitHub CLI PR-creation 401 can be specific to that command even when authenticated API probes succeed. Verify the actor and absence of an existing PR before using the REST create endpoint; do not reset credentials or retry creation blindly.
+
 - A shared admission gate can refuse after a scheduler finds a free slot. Recheck the queue bound after dispatch attempts, or repeated admission failures can grow the queue beyond its configured limit.
 
 - A queued steering request is not a delivered phase boundary. Preserve the preceding answer until its matching user-message event, then retain labelled follow-ups with independent space in the return budget; test both wrap/report event orderings.
@@ -21,3 +33,4 @@
 - A cancelled child may resolve normally: recheck the abort signal after persisting its evidence and before publishing a campaign result, especially on the final iteration. Test cancellation on the last child, not only between jobs.
 - Freeze accepted live transcript snapshots, not just invalidations: unrelated repaints can reread them and make Pi's regular renderer clear scrollback. Keep progress in a single mounted widget, finalize history once, and test off-screen cards with the real renderer.
 - ANSI-aware truncation emits resets even with an identity theme. Strip terminal sequences from plain RPC previews, and test background coverage after resets as well as on trailing padding.
+- Admission callbacks may cancel or close the scheduler before returning a reservation. Retain it only after rechecking job state; otherwise release it without restarting the job or changing its stop cause.

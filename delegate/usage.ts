@@ -71,6 +71,9 @@ export class UsageMeter {
 	private savings?: SavingsSnapshot;
 	constructor(model: string, savings?: SavingsSnapshot) { this.model = model; this.savings = savings; }
 
+	/** Runtime policies not represented in a calibration key cannot inherit its estimate. */
+	disableSavings(): void { this.savings = undefined; delete this.completed.estimate; }
+
 	observe(event: unknown): { changed: boolean; checkpoint: boolean } {
 		const e = record(event);
 		const m = record(e.message);

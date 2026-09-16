@@ -38,7 +38,7 @@ export function savingsTotals(runs: RunRecord[]): { usd: number; priced: number;
 		if (run.status !== "done" || !(run.usage.local.total > 0 || isLocalModel(run.requestedModel))) continue;
 		eligible++;
 		const estimate = run.usage.estimate;
-		if (run.status !== "done" || run.usage.incomplete || run.recordingError || !validSnapshot(run.savings)
+		if (run.finalization !== undefined || run.status !== "done" || run.usage.incomplete || run.recordingError || !validSnapshot(run.savings)
 			|| !validEstimate(estimate) || estimate.requests < 1 || estimate.unpriced) continue;
 		usd += estimate.usd; priced++;
 	}

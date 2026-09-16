@@ -51,6 +51,8 @@ No model allowlist. No fallback chain.
 
 Eligible-first FIFO: a hosted job may start while a local job waits on the GPU slot.
 
+Retain wrap requests made before the runner provides control. First message wins; accepted wraps are idempotent, and queued wraps still cancel without spawning. Never reattach control after cancellation or completion. Let the child runtime classify terminal causes; a cancellation during asynchronous post-exit recording must not rewrite an earlier completed outcome.
+
 One child per call. No nesting (`PI_DELEGATE_CHILD`).
 
 Foreground spawn waits for a slot (parent blocked). Local foreground also takes the local slot.
@@ -108,7 +110,7 @@ Always:
 
 `--offline` only when the agent config has `offline: true`.
 
-Never `-p`, `--no-session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
+Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Default delegation has no explicit `--extension`; the opt-in runtime guard and benchmark guard below are exceptions. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
 
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
@@ -121,6 +123,10 @@ Build the completed model identifier from Pi's separate `message.provider` and `
 The stdout reader bounds each LF-delimited record to 8 MiB, independently of `maxOutputBytes` and pipe chunk boundaries. Discard recognized oversized non-answer events (including cumulative transcripts and tool-result images); never silently discard an oversized assistant/control record or unknown layout. Those fail as `protocol-error` with an explicit limit message. Log discarded records as `oversized_event_skipped`. Final answer extraction joins all text blocks of the last assistant message in each delivered wrap phase in source order, excluding thinking/tools. Correlate sent wrap text with delivered user-message events; send time and RPC acknowledgement are not phase boundaries. Keep the preceding report and labelled follow-up separate, with assistant-event ordinals and task/wrap phase provenance. Do not select reports by length or wording. A retry replaces earlier errors within its phase; errors from the final phase precede all retained evidence. Empty/missing wrap-up output is explicit and failed. Preserve the no-wrap last-message contract.
 
 Bound individual text/error snapshots at ingestion without mutating raw events. Keep at most eight phases (first plus latest seven), label omissions and preserve full native archives. Share the combined output budget so a long report cannot hide the follow-up; tiny caps must disclose truncation. Bound pending wrap-text correlation to 64 distinct digests and refuse excess distinct requests rather than silently lose provenance.
+
+Opt-in library guarded execution (`RunPiChildInput.execution`, passed through by `runChild`) is separate from delegate config/default activation. Withhold the task until the private guard's readiness matches its nonce/version/builtin tool set. For an early wrap, acknowledge gate closure before task dispatch and steer only after dispatch. RPC command success is not enforcement acknowledgement. Use public builtin definition factories, preserving schemas and prompt metadata; check the finalization gate at actual tool-body entry, including prepared parallel calls. Drain active bodies; disallow fresh ones. This is not a filesystem/process sandbox.
+
+Expose requested versus enforced `draining`/`answering` states, including acknowledged active counts, in events and result details. First request and grace deadline win; no reopening or increased active counts after acknowledgement. A process-start soft budget excludes queue/wait time and requests finalization. Enforce grace until process exit, including a shutdown grace after natural settlement; an independent stricter hard limit still wins. Kill/reap before releasing scheduler capacity. Preserve partial reports and bounded text-only open-stream evidence, labelling streams incomplete rather than finalized; never retain thinking/tool arguments as answer text. New failed stop reasons: `guard-error`, `finalization_timeout`, `execution_budget`, `incomplete-output`. Keep existing terminal-cause precedence. Guarded metadata invalidates legacy calibration snapshots/estimates, including reload/rebuild, without losing measured usage.
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
@@ -151,6 +157,8 @@ Only benchmark children explicitly load `bench/guard.ts`. They require a success
 Unit children and termination are mocked; never send OS signals for fake PIDs. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
 
 Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, explicit bounded failure for oversized useful/junk records, provider errors ahead of partial output, token-limit failures, and qualified model identities. Wrap regressions cover report/steering races, acknowledgements, shorter corrections, repeated wrap phases, empty/missing/error replies, successful retries, abort/protocol failure, bounded retention and caps that reserve follow-up space. The factory result probe passes a real runtime-produced mocked wrap result through foreground and collection paths.
+
+Guard regressions cover startup withholding, early/repeated controls, acknowledgement rejection/loss, preflight/body races, active drain, budget/grace/hard deadlines, cancellation, incomplete streams, stale controls, held occupancy until closure, and cleanup. An offline real-Pi probe checks private guard startup, early finalization acknowledgement, preserved builtin metadata, drained shell work and blocked prepared writes without sending a task or making a model call.
 
 Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible. Accounting regressions cover native session compatibility, live/footer and resume behavior, multi-turn/cached/retry/compaction totals, missing usage, duplicate collects, crash tails, queued cancellation, concurrent processes, private permissions, write failures and non-expiring retention. CLI probes keep RPC stdin open until asynchronous command completion, then close it.
 

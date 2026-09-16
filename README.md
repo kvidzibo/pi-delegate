@@ -76,7 +76,7 @@ Use the returned job ID in another `delegate` call (`d0001` below is illustrativ
 | Request wrap-up | `{ "jobId": "d0001", "wrap": true }` |
 | Cancel | `{ "jobId": "d0001", "cancel": true }` |
 
-`timeoutMs` limits waiting, **not runtime**. A foreground timeout leaves the child running in the background. Collect again to wait longer; wrap requests a finish without interrupting the current tool, while cancel kills the child. Avoid overlapping parent/child edits.
+`timeoutMs` limits waiting, **not runtime**. A foreground timeout leaves the child running in the background. Collect again to wait longer; wrap requests a finish without interrupting the current tool, while cancel kills the child. Early wrap requests wait for child control readiness; repeated requests do not resend an accepted wrap. Avoid overlapping parent/child edits.
 
 Defaults: **8 running jobs, 1 local worker, 16 queued jobs**. Hosted work can run while local work waits; a full queue rejects new work. See [job lifecycle](delegate/README.md#job-lifecycle) for overrides and notifications.
 
@@ -102,5 +102,7 @@ The switch persists across restarts and applies without reload to participating 
 npm run test:unit       # no Pi required; used in CI
 xvfb-run -a npm test    # unit + offline CLI/UI checks; needs Pi and Xvfb
 ```
+
+The [child-runtime API](child-runtime/README.md#opt-in-guarded-execution) also supports explicitly opted-in execution budgets and an enforced tool-finalization gate. This is not yet wired to delegate configuration or defaults; ordinary delegation remains steer-only. Guarded runs cannot reuse legacy savings calibrations.
 
 Tests use mocked workers or isolated offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.

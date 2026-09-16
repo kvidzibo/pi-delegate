@@ -57,7 +57,7 @@ State lives in `<agent-dir>/delegate-local/` (normally `~/.pi/agent/delegate-loc
 
 **Before benchmarking:** select Off and wait for `OFF · idle`; separately stop or coordinate clients outside this scope. A crashed parent may leave an orphaned child. Its reservation is retained and reported as **unverified (not idle)**, rather than silently expired. Inspect the processes/archives and remove only the corresponding files in `delegate-local/active/` after confirming the work has stopped. PID reuse can conservatively keep a stale reservation counted as active. Do not delete active reservations or the state directory to force an idle report.
 
-Unreadable/corrupt control state blocks local admission and produces an unavailable warning; hosted work remains independent. `/delegate-local on` or `off` can replace a malformed state file, but never clears reservations. Cleanup failures leave a warning and a conservative reservation. Concurrent command changes are last-writer-wins; status is a snapshot, not an exclusive benchmark reservation.
+Unreadable/corrupt control state blocks local admission and produces an unavailable warning; hosted work remains independent. Scheduler admission callbacks must return a release function; malformed grants cannot start work. Cancellation/shutdown during admission releases the provisional reservation without restarting the job or replacing its stop cause. `/delegate-local on` or `off` can replace a malformed state file, but never clears reservations. Cleanup failures leave a warning and a conservative reservation. Concurrent command changes are last-writer-wins; status is a snapshot, not an exclusive benchmark reservation.
 
 ## Job lifecycle
 
@@ -82,8 +82,12 @@ For collection:
 
 - Omit `timeoutMs` to wait until completion or 60 seconds of quiet by default. Progress keeps the wait open without repeated parent receipts.
 - Set a positive `timeoutMs` to bound that wait, or `0` to peek.
-- Use `wrap` to steer the child toward finishing; the current tool may complete first.
+- Use `wrap` to steer the child toward finishing; the current tool may complete first. Requests made before control readiness are retained; repeated accepted wraps are idempotent.
 - Use `cancel` to stop it. `hardTimeoutMs` is the separate, optional process-start kill limit.
+
+The child runtime determines cancellation and deadline causes; a zero exit after an applied stop remains unsuccessful. A later cancellation during post-exit recording does not relabel an already-completed child. Available text stays collectible; capacity remains held until the runner settles after process closure.
+
+The runtime library separately offers [explicit guarded execution](../child-runtime/README.md#opt-in-guarded-execution): a readiness handshake, execution-body tool gate, soft execution budget and bounded finalization grace. It is not yet connected to agent configuration or enabled by default. For opted-in runners, result details distinguish a finalization request from acknowledged enforcement and retain incomplete streaming evidence on forced stops. Legacy calibration estimates are disabled for these runs.
 
 Finished results remain collectible within the session. In TUI/RPC, background completion may inject a short follow-up after the parent becomes idle; collect via `jobId` for the full result. Collecting a finished job suppresses the notice. Success notices stay hidden in the transcript; failures are visible. Print/JSON is pull-only. Shutdown stops children and queued work without completion notices.
 

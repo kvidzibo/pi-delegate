@@ -83,6 +83,10 @@ export function isFailedChildResult(result: { exitCode: number; stopReason?: str
 		stop === "timeout" ||
 		stop === "hard_timeout" ||
 		stop === "protocol-error" ||
+		stop === "guard-error" ||
+		stop === "finalization_timeout" ||
+		stop === "execution_budget" ||
+		stop === "incomplete-output" ||
 		stop === "no-assistant-output"
 	) {
 		return true;

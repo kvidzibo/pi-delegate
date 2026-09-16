@@ -117,6 +117,34 @@ test("native reconstruction and archive reload/rebuild preserve captured prices,
 	assert.match(infobar([archive.data, { ...archive.data, runId: "other", savings: undefined }]), /!estimate/);
 });
 
+for (const delivery of ["progress", "result"] as const) {
+	test(`guarded execution invalidates legacy calibration via ${delivery}, including archive rebuild`, async t => {
+		const dir = temp(t), prompt = join(dir, "prompt.md"); writeFileSync(prompt, "prompt");
+		const archive = new ArchivedRun(dir, { parentSessionId: "p", toolCallId: "t", kind: "recon", cwd: dir,
+			requestedModel: key.localModel, thinking: "off", tools: ["read"], savings: savings() }, "task", prompt);
+		archive.start("d1"); const m = message();
+		appendFileSync(archive.paths.session, JSON.stringify({ type: "message", id: "m1", message: m }) + "\n");
+		archive.observe({ type: "message_end", message: m });
+		const finalization = { phase: "running" as const, activeTools: 0 };
+		if (delivery === "progress") {
+			archive.observe({ type: "delegate_finalization", state: finalization });
+			assert.equal(archive.meter.snapshot().estimate, undefined);
+		}
+		archive.observe({ type: "agent_settled" });
+		await archive.finish({ status: "done", ...(delivery === "result" ? { finalization } : {}) });
+		assert.equal(archive.data.usage.local.total, 220); assert.equal(archive.data.usage.incomplete, false);
+		assert.equal(archive.data.usage.estimate, undefined); assert.equal(archive.data.savings, undefined);
+		assert.match(archive.data.savingsUnavailable!, /guarded execution/);
+		assert.equal(savingsTotals([archive.data]).priced, 0);
+		// Even a stale/hand-edited saved pricing snapshot must not be reused for guarded metadata.
+		const saved = JSON.parse(readFileSync(archive.paths.metadata, "utf8")); saved.savings = savings();
+		writeFileSync(archive.paths.metadata, JSON.stringify(saved));
+		const loaded = (await loadRuns(dir, { rebuild: true })).runs[0];
+		assert.deepEqual(loaded.finalization, finalization); assert.equal(loaded.usage.estimate, undefined);
+		assert.equal(loaded.savings, undefined); assert.equal(savingsTotals([loaded]).priced, 0);
+	});
+}
+
 test("alternative config is backwards-compatible and overlays replace maps explicitly", () => {
 	const base = loadDelegateConfig({ shippedPath: new URL("../config.json", import.meta.url).pathname });
 	const next = mergeDelegateConfig(base, { localAlternatives: { "ollama/qwen": "openai/luna" }, calibrationProfiles: ["/tmp/profile.json"] }, "test");

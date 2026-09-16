@@ -149,6 +149,23 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		running.resolve(success);
 		await call({ jobId: accepted.details.jobId });
 
+		// Optional guarded runners distinguish request from enforcement in live receipts and terminal details.
+		const guarded = await launch(); const guardedRun = runs.at(-1)!;
+		for (const [state, expected] of [
+			[{ phase: "requested", reason: "wrap" }, /enforcement not yet acknowledged/],
+			[{ phase: "draining", reason: "wrap", activeTools: 1 }, /finalization enforced; 1 current tools draining/],
+			[{ phase: "answering", reason: "wrap", activeTools: 0 }, /finalization enforced; waiting for the final answer/],
+		] as const) {
+			guardedRun.input.onEvent?.({ type: "delegate_finalization", state });
+			const receipt = await call({ jobId: guarded.details.jobId, timeoutMs: 0 });
+			assert.deepEqual(receipt.details.finalization, state); assert.match(receipt.content[0].text, expected);
+		}
+		guardedRun.resolve({ ...success, stopReason: "finalization_timeout", text: "Grace expired; partial evidence.",
+			finalization: { phase: "answering", reason: "wrap", activeTools: 0 } });
+		const guardResult = await call({ jobId: guarded.details.jobId });
+		assert.equal(guardResult.details.ok, false); assert.equal(guardResult.details.stopReason, "finalization_timeout");
+		assert.equal(guardResult.details.finalization.phase, "answering"); assert.match(guardResult.content[0].text, /partial evidence/);
+
 		// A foreground timeout promotes rather than aborts; queue reason and cancellation survive.
 		const foregroundSignal = new AbortController();
 		const timed = await launch({ background: false, timeoutMs: 1000 }, foregroundSignal.signal);
@@ -183,5 +200,5 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.equal(notices.length, 1); assert.equal(notices[0].details.jobId, uncollected.details.jobId);
 		await call({ jobId: uncollected.details.jobId });
 	} finally { await handlers.get("session_shutdown")?.(); }
-	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, noModelCalls: true };
+	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, finalizationProgress: true, noModelCalls: true };
 }
