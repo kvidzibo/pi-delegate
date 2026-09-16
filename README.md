@@ -11,7 +11,7 @@ One tool, four kinds of child. One child per call; no nesting.
 | `review` | Review code without editing |
 | `oracle` | Last-resort analysis without editing |
 
-> **No sandbox.** Children have your system permissions, including `bash` access. “Read-only” is prompt policy, not enforcement. `offline` skips Pi startup networking; it does not block tool network access. Install only trusted code.
+> **No sandbox.** Children have your system permissions; shipped profiles include `bash`. “Read-only” is prompt policy, not write protection. `offline` skips Pi startup networking; it does not block tool network access. Install only trusted code.
 
 ## Install
 
@@ -91,6 +91,7 @@ The switch persists across restarts and applies without reload to participating 
 ## Results and history
 
 - Active cards stay above the editor; finished results appear in the transcript. **Ctrl+O** expands details and shows the archived session path.
+- Receipts include [configured capabilities](delegate/README.md#configured-capabilities): requested tools, shell/write tools and explicit **not verified / not sandboxed** limits. Model overrides do not grant tools.
 - `/delegate-stats [session|today|all|rebuild]` reports recorded child usage without model calls.
 - **Archives are retained indefinitely** under `~/.pi/agent/delegate/`. They can contain sensitive prompts, code, thinking and tool output. See [storage and privacy](delegate/README.md#archives-and-privacy).
 - `saved ~$X` is an optional **calibrated API-equivalent estimate**, not measured net savings. [Calibration and opt-in benchmarks](bench/README.md) explain setup and limits.

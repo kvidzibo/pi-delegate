@@ -1,6 +1,7 @@
 import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { assertKind, type Kind } from "./config.ts";
+import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { LOCAL_OFF_MESSAGE, type LocalAdmission } from "./local-control.ts";
 import {
 	applyProgress,
@@ -34,6 +35,7 @@ export type ArchiveRef = { runId: string; sessionFile: string };
 
 export type JobSnapshot = {
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	recordingError?: string;
 	id: string;
 	kind: Kind;
@@ -58,6 +60,7 @@ export type JobSnapshot = {
 
 export type EnqueueInput = {
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	kind: Kind;
 	model: string;
 	local: boolean;
@@ -102,6 +105,7 @@ export type ParsedCall =
 
 type InternalJob = {
 	archive?: ArchiveRef;
+	capabilities?: CapabilityManifest;
 	id: string;
 	kind: Kind;
 	model: string;
@@ -239,6 +243,7 @@ export class JobScheduler {
 		this.seq += 1;
 		const job: InternalJob = {
 			archive: input.archive,
+			capabilities: copyCapabilities(input.capabilities),
 			id: `d${this.seq.toString(16).padStart(4, "0")}`,
 			kind: input.kind,
 			model: input.model,
@@ -502,6 +507,7 @@ export class JobScheduler {
 			current: job.status === "running" ? job.progress.current : undefined,
 			background: job.background,
 		};
+		if (job.capabilities) snap.capabilities = copyCapabilities(job.capabilities);
 		if (job.recordingError) snap.recordingError = job.recordingError;
 		if (job.localAdmissionError) snap.recordingError = `Local dispatch unavailable: ${job.localAdmissionError}`;
 		if (job.wrapped) snap.wrapped = true;
