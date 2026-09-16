@@ -1,5 +1,8 @@
 # Validated lessons
 
+- Startup readiness can be invalidated during a caller handshake or between promise callbacks. Recheck synchronously at actual task dispatch; an early finalization must finish draining first.
+- Track an open assistant turn separately from its text. Thinking-only/open-empty turns are incomplete too, and streamed evidence keeps the phase in which the turn started.
+
 - Terminal open streams supplement, never replace, their phase's last finalized response and error metadata. At tiny output caps, reserve the cause before spending bytes on a truncation notice.
 
 - Classify child cancellation at the process boundary, not after asynchronous archival work: a later abort must not relabel an earlier completed child outcome. Campaign-level cancellation is a separate decision.

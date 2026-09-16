@@ -72,6 +72,18 @@ test("wrap before guard readiness is retained and acknowledged before task dispa
 	assert.match(result.text, /Stopped before investigation/);
 });
 
+test("wrap during the caller startup handshake is acknowledged before task dispatch", async t => {
+	let release!: () => void; const handshake = new Promise<void>(resolve => { release = resolve; });
+	const child = start(t, { beforePrompt: () => handshake });
+	child.guard("ready"); await tick(); assert.equal(child.proc.stdinBytes.includes('"id":"p1"'), false);
+	child.wrap(); release(); await tick();
+	assert.equal(child.proc.stdinBytes.includes('"id":"p1"'), false);
+	child.guard("state", "answering"); await tick();
+	assert.equal(child.proc.stdinBytes.includes('"id":"p1"'), true);
+	child.deliverWrap(); child.answer("Stopped before investigation."); child.settle();
+	assert.equal((await child.pending).finalization?.phase, "answering");
+});
+
 test("manual finalization distinguishes request from acknowledgement and preserves the preceding report", async t => {
 	const child = start(t); await child.ready(); child.answer("Original report.");
 	child.wrap();
@@ -186,6 +198,30 @@ test("an unfinished retry preserves the latest finalized provider error and its 
 	child.proc.close(0); const result = await child.pending;
 	assert.equal(result.stopReason, "error"); assert.match(result.text, /^Provider unavailable/);
 	assert.match(result.text, /Prior partial findings/); assert.match(result.text, /Retry incomplete/);
+});
+
+for (const prior of [false, true]) {
+	test(`an open thinking-only turn cannot look complete (prior report: ${prior})`, async t => {
+		const child = start(t); await child.ready(); if (prior) child.answer("Original report.");
+		child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+		child.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "PRIVATE thinking" } });
+		child.proc.close(0); const result = await child.pending;
+		assert.equal(result.stopReason, "incomplete-output"); assert.equal(result.diag?.sawAssistant, true);
+		assert.match(result.text, /incomplete streamed response/); assert.doesNotMatch(result.text, /PRIVATE/);
+		if (prior) assert.match(result.text, /Original report/);
+	});
+}
+
+test("a stream retains its starting phase if a wrap echo arrives before message_end", async t => {
+	const signal = new AbortController(); const child = start(t, { signal: signal.signal });
+	await child.ready(); child.answer("Original report.");
+	child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "In-flight task response." } });
+	child.wrap(); child.guard("state", "answering"); child.deliverWrap(); signal.abort();
+	const result = await child.pending;
+	assert.match(result.text, /Task response \(incomplete streamed response\):\nIn-flight task response/);
+	assert.doesNotMatch(result.text, /Wrap-up 1 \(incomplete streamed response\)/);
+	assert.match(result.text, /Wrap-up 1: \[No assistant message received\]/);
 });
 
 test("a zero exit with only an open stream is not mistaken for a complete answer", async t => {

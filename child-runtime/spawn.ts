@@ -449,7 +449,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 						}
 					}
 				}
-				streamed?.observe(parsed);
+				streamed?.observe(parsed, answers.currentPhase);
 				const next = applyAssistantSnapshot(state, parsed, input.maxOutputBytes);
 				if (next !== state) { state = next; answers.observe(state); }
 				if (isAgentSettled(parsed) && !settled) {
@@ -539,8 +539,17 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			reader.end();
 			finish(code ?? 1);
 		});
+		const startupFailure = (error: unknown) => {
+			if (!closed && !stopKind && !failure) fail("error", `Child startup handshake failed: ${String(error)}`);
+		};
 		const startPrompt = () => {
-			if (closed || stopKind || failure) return;
+			if (closed || taskDispatched || stopKind || failure) return;
+			// Controls can arrive during beforePrompt or between its promise and this callback.
+			// Recheck synchronously at dispatch, not only at the initial readiness await.
+			if (finalizer && !finalizer.canDispatchTask()) {
+				void finalizer.waitReady(startup.signal).then(startPrompt, startupFailure);
+				return;
+			}
 			taskDispatched = send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
 			if (taskDispatched) finalizer?.markTaskSent();
 			else if (execution) fail("guard-error", "Could not send the guarded child task.");
@@ -550,16 +559,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			Promise.resolve().then(async () => {
 				if (finalizer) await finalizer.waitReady(startup.signal);
 				if (input.beforePrompt) await input.beforePrompt(startup.signal);
-			}).then(startPrompt, error => {
-				if (!closed && !stopKind && !failure) fail("error", `Child startup handshake failed: ${String(error)}`);
-			});
+			}).then(startPrompt, startupFailure);
 		} else startPrompt();
 	});
 
-	const partial = streamed?.text();
-	if (partial) answers.observePartial(partial);
+	const openStream = streamed?.open ?? false;
+	if (openStream) answers.observePartial(streamed!.text() ?? "", streamed!.originPhase);
 	const completedError = !answers.awaitingResponse && (state.stopReason === "error" || state.stopReason === "length");
-	let stopReason = !stopKind && !failure && partial && !completedError ? "incomplete-output"
+	let stopReason = !stopKind && !failure && openStream && !completedError ? "incomplete-output"
 		: !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
 			: resolveStopReason({ stopKind, failure, state });
 	const finalization = finalizer?.snapshot();
@@ -583,7 +590,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		durationMs: Date.now() - started,
 		eventCount,
 		events,
-		sawAssistant: state.sawAssistant || Boolean(partial),
+		sawAssistant: state.sawAssistant || openStream,
 	};
 	if (pid !== undefined) diag.pid = pid;
 	const dump = summarizeChildRun({
