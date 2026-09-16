@@ -7,6 +7,7 @@ import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
 import { AnswerHistory, answerExplanation } from "./answers.ts";
 import { StreamedAnswer } from "./streamed-answer.ts";
+import type { ResponseEvidence } from "./evidence.ts";
 import { verifyLease, type InheritedLease } from "./lease.ts";
 import { ChildFinalizer, type FinalizationFailure } from "./child-finalizer.ts";
 import { GUARD_ENV, validateGuardedExecution, type GuardedExecution, type FinalizationProgress } from "./guard-protocol.ts";
@@ -37,6 +38,7 @@ export interface ChildResult {
 	diag?: ChildDiag;
 	recordingError?: string;
 	finalization?: FinalizationProgress;
+	evidence?: ResponseEvidence;
 }
 
 export interface AssistantSnapshot {
@@ -355,6 +357,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	let drainRefusalOutput = false;
 	let finalizer: ChildFinalizer | undefined;
 	let taskDispatched = false;
+	let openResponse = false;
 	let settled = false;
 	let pid: number | undefined;
 	let eventCount = 0;
@@ -461,6 +464,10 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 							answers.beginWrap();
 						}
 					}
+				}
+				if (parsed.message?.role === "assistant") {
+					if (type === "message_start") openResponse = true;
+					else if (type === "message_end") openResponse = false;
 				}
 				streamed?.observe(parsed, answers.currentPhase);
 				const next = applyAssistantSnapshot(state, parsed, input.maxOutputBytes);
@@ -638,6 +645,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		model: state.model,
 		stopReason,
 		diag,
+		evidence: answers.evidence(taskDispatched, openResponse, settled),
 		...(finalization ? { finalization } : {}),
 	};
 }

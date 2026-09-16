@@ -2,6 +2,7 @@ import { addTokens, emptyUsage, totalTokens, type UsageSummary } from "./usage.t
 import { runPaths, type RunRecord } from "./archive.ts";
 import { validSnapshot, validEstimate } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
+import { copyOutcome } from "./outcomes.ts";
 
 export type StatsScope = "session" | "today" | "all";
 export const displayText = (text: string): string => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
@@ -56,15 +57,18 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 	const counts = (bucket: UsageSummary["local"]) => `${bucket.total.toLocaleString("en-US")} (input ${bucket.input}, output ${bucket.output}, cache read ${bucket.cacheRead}, cache write ${bucket.cacheWrite})`;
 	const pending = runs.filter((run) => run.status === "queued" || run.status === "running").length;
 	const incomplete = runs.filter((run) => run.usage.incomplete || run.recordingError || run.status === "running" || run.status === "queued").length;
+	const outcomes = runs.flatMap(run => { const outcome = copyOutcome(run.outcome); return outcome ? [outcome] : []; });
 	const lines = [
 		`Delegate usage — ${scope}`,
 		`Delegated: ${totalTokens(usage).toLocaleString("en-US")} tokens`,
 		`Local: ${counts(usage.local)}`, `Hosted: ${counts(usage.hosted)}`,
 		`Runs: ${runs.length}; done ${runs.filter((r) => r.status === "done").length}; failed ${runs.filter((r) => r.status === "failed").length}; queued/running ${pending}; incomplete ${incomplete}`,
+		`Runtime outcomes: ${outcomes.length} recorded; ${runs.length - outcomes.length} missing/legacy; limited ${outcomes.filter(outcome => outcome.execution === "limited").length}; unsettled responses ${outcomes.filter(outcome => outcome.responses === "unsettled").length}.`,
+		"Task correctness is not assessed by delegate. Done means worker completion, not verified task success.",
 		`Reported usage records: ${usage.reported}; missing usage records: ${usage.missing}; completed runtime: ${(runs.reduce((n, r) => n + r.durationMs, 0) / 1000).toFixed(1)}s`,
 		savings.priced ? `Saved: ~${formatUsd(savings.usd)} API-equivalent estimate; ${savings.priced}/${savings.eligible} eligible local runs priced.`
 			: "Saved: unavailable — requires matching calibration and known alternative API prices.",
-		"Savings price a calibrated cloud-child alternative, not parent-only execution or a subscription refund. Only complete successful local runs count; failures remain in usage/outcomes. !estimate means partial estimate coverage, not a confidence bound.",
+		"Savings price a calibrated cloud-child alternative, not parent-only execution or a subscription refund. Only complete local runs with successful worker status count; task quality is not verified. Failures remain in usage/outcomes. !estimate means partial estimate coverage, not a confidence bound.",
 		"Calibration is a successful-pair heuristic; model behavior, cache use and request-size tiers may differ in production. No electricity/hardware costs are subtracted.",
 		"Input/output/cache buckets are summed once; reasoning is included in output. Unfinished/incomplete figures are known lower bounds.",
 		"Today groups runs by launch date in local time. Recorded runs only; pre-install usage cannot be recovered.",
@@ -75,6 +79,8 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 	if (recent.length) lines.push("Latest runs (full history remains in the archive):");
 	for (const run of recent) {
 		lines.push(`${run.jobId ?? "queued"} ${run.kind} ${run.actualModel ?? run.requestedModel} ${run.status} ${totalTokens(run.usage)} tokens${run.usage.incomplete ? " (partial)" : ""}`);
+		const outcome = copyOutcome(run.outcome);
+		if (outcome) lines.push(`  Worker: ${outcome.execution}; response lifecycle: ${outcome.responses}${outcome.limitations.length ? `; limitations: ${outcome.limitations.join(", ")}` : ""}`);
 		lines.push(`  ${runPaths(root, run.runId).session}`);
 		if (run.recordingError) lines.push(`  ${run.recordingError}`);
 		if (run.savingsUnavailable) lines.push(`  Savings unavailable: ${run.savingsUnavailable}`);

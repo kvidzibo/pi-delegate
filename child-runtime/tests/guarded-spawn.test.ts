@@ -168,6 +168,8 @@ test("an unfinished final-answer stream is retained and labelled, alongside the 
 	signal.abort(); const result = await child.pending;
 	assert.equal(result.stopReason, "aborted"); assert.match(result.text, /Original report/);
 	assert.match(result.text, /incomplete streamed response.*\nUnfinished correction/s); assert.doesNotMatch(result.text, /PRIVATE/);
+	assert.deepEqual(result.evidence, { source: "rpc", taskSent: true, agentSettled: false, finalizedMessages: 1,
+		retainedResponses: 1, omittedPhases: 0, unansweredWrap: true, openResponse: true, partialResponseRetained: true });
 });
 
 test("an open stream without a delivered wrap retains the last finalized report", async t => {
@@ -212,6 +214,8 @@ for (const prior of [false, true]) {
 		child.proc.close(0); const result = await child.pending;
 		assert.equal(result.stopReason, "incomplete-output"); assert.equal(result.diag?.sawAssistant, true);
 		assert.match(result.text, /incomplete streamed response/); assert.doesNotMatch(result.text, /PRIVATE/);
+		assert.equal(result.evidence?.finalizedMessages, prior ? 1 : 0); assert.equal(result.evidence?.retainedResponses, prior ? 1 : 0);
+		assert.equal(result.evidence?.openResponse, true); assert.equal(result.evidence?.partialResponseRetained, true);
 		if (prior) assert.match(result.text, /Original report/);
 	});
 }

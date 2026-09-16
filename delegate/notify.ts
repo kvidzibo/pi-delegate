@@ -61,6 +61,7 @@ export function buildNotifyPayload(snap: JobSnapshot, max = NOTIFY_PREVIEW_MAX):
 	};
 	const lines = [
 		`bg ${snap.id} ${status}`,
+		"Worker state only; task correctness was not assessed by delegate.",
 		`${snap.kind} → ${aliasForModel(snap.model)} (${snap.model})`,
 		preview,
 		"",
@@ -77,7 +78,7 @@ export function buildNotifyPayload(snap: JobSnapshot, max = NOTIFY_PREVIEW_MAX):
 export function paintNotify(theme: ThemeFg, details: NotifyDetails, expanded = false): string {
 	const icon = details.failed ? "✗" : "✓";
 	const color = details.failed ? "error" : "success";
-	let line = `${theme.fg(color, icon)} ${theme.bold("delegate")} ${theme.fg("dim", details.status)}`;
+	let line = `${theme.fg(color, icon)} ${theme.bold("delegate")} ${theme.fg("dim", `worker ${details.status} · task unverified`)}`;
 	line += `  ${theme.fg("accent", details.jobId)}`;
 	if (details.kind) line += `  ${theme.fg("dim", details.kind)}`;
 	if (expanded) {
