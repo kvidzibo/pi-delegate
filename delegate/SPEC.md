@@ -14,7 +14,7 @@ Background spawn returns `jobId` immediately. Local/GPU children share `maxLocal
 delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts dock.ts panel.ts tg.ts jobs.ts notify.ts
-  archive.ts usage.ts accounting.ts stats.ts calibration.ts capabilities.ts
+  archive.ts usage.ts accounting.ts stats.ts calibration.ts capacity.ts capabilities.ts
   prompts/{recon,implement,review,oracle}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
@@ -50,6 +50,12 @@ No model allowlist. No fallback chain.
 `hardTimeoutMs` = optional process-start kill (default `0` = off). Distinct `hard_timeout`. Overlay only.
 
 Eligible-first FIFO: a hosted job may start while a local job waits on the GPU slot.
+
+Shared-capacity runtime API is opt-in, separate from configuration/default activation. A scheduler with a broker requires explicit `{ key, capacity }` groups for local jobs; never derive the group key from a model ID or silently omit a required group. Keep parent concurrency/local/queue limits. Hosted jobs and independent groups can bypass a blocked resource. Probe each busy group/capacity pair once per pass, poll only otherwise-eligible waiters, and stop polling on idle/shutdown. Coordination failures are explicit `resource-error`; release uncertainty is separate from child outcome.
+
+The Linux file broker uses private stable lock inodes, a serialized catalog, and inherited `flock` open-file descriptions, not PID/mtime ownership guesses. Capacity changes require quiescence across all extant slots, including after metadata loss. Permission/symlink/metadata/tool failures fail closed. Close leases exactly once at terminal cleanup, never unlink live files or unlock shared descriptions. Parent death must not free capacity while its child still holds the inherited lease. Guarded startup verifies the inherited FD identity before any task; no lease means no descriptor change for ordinary runs. This coordinates cooperating local clients using the same root, not distributed/server-side requests or unrelated processes. No server/fan controls.
+
+Retain wrap requests made before the runner provides control. First message wins; accepted wraps are idempotent, and queued wraps still cancel without spawning. Never reattach control after cancellation or completion. Let the child runtime classify terminal causes; a cancellation during asynchronous post-exit recording must not rewrite an earlier completed outcome.
 
 One child per call. No nesting (`PI_DELEGATE_CHILD`).
 
@@ -114,7 +120,7 @@ Always:
 
 `--offline` only when the agent config has `offline: true`.
 
-Never `-p`, `--no-session`, `--continue`, `--fork`, `--extension`, `--append-system-prompt`. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
+Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Default delegation has no explicit `--extension`; the opt-in runtime guard and benchmark guard below are exceptions. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
 
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
@@ -127,6 +133,10 @@ Build the completed model identifier from Pi's separate `message.provider` and `
 The stdout reader bounds each LF-delimited record to 8 MiB, independently of `maxOutputBytes` and pipe chunk boundaries. Discard recognized oversized non-answer events (including cumulative transcripts and tool-result images); never silently discard an oversized assistant/control record or unknown layout. Those fail as `protocol-error` with an explicit limit message. Log discarded records as `oversized_event_skipped`. Final answer extraction joins all text blocks of the last assistant message in each delivered wrap phase in source order, excluding thinking/tools. Correlate sent wrap text with delivered user-message events; send time and RPC acknowledgement are not phase boundaries. Keep the preceding report and labelled follow-up separate, with assistant-event ordinals and task/wrap phase provenance. Do not select reports by length or wording. A retry replaces earlier errors within its phase; errors from the final phase precede all retained evidence. Empty/missing wrap-up output is explicit and failed. Preserve the no-wrap last-message contract.
 
 Bound individual text/error snapshots at ingestion without mutating raw events. Keep at most eight phases (first plus latest seven), label omissions and preserve full native archives. Share the combined output budget so a long report cannot hide the follow-up; tiny caps must disclose truncation. Bound pending wrap-text correlation to 64 distinct digests and refuse excess distinct requests rather than silently lose provenance.
+
+Opt-in library guarded execution (`RunPiChildInput.execution`, passed through by `runChild`) is separate from delegate config/default activation. Withhold the task until the private guard's readiness matches its nonce/version/builtin tool set. For an early wrap, acknowledge gate closure before task dispatch and steer only after dispatch. RPC command success is not enforcement acknowledgement. Use public builtin definition factories, preserving schemas and prompt metadata; check the finalization gate at actual tool-body entry, including prepared parallel calls. Drain active bodies; disallow fresh ones. This is not a filesystem/process sandbox.
+
+Expose requested versus enforced `draining`/`answering` states, including acknowledged active counts, in events and result details. First request and grace deadline win; no reopening or increased active counts after acknowledgement. A process-start soft budget excludes queue/wait time and requests finalization. Enforce grace until process exit, including a shutdown grace after natural settlement; an independent stricter hard limit still wins. Kill/reap before releasing scheduler capacity. Preserve partial reports and bounded text-only open-stream evidence, labelling streams incomplete rather than finalized; never retain thinking/tool arguments as answer text. New failed stop reasons: `guard-error`, `finalization_timeout`, `execution_budget`, `incomplete-output`. Keep existing terminal-cause precedence. Guarded metadata invalidates legacy calibration snapshots/estimates, including reload/rebuild, without losing measured usage.
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
@@ -154,9 +164,13 @@ Only benchmark children explicitly load `bench/guard.ts`. They require a success
 
 `xvfb-run -a npm test` (unit + offline CLI load/UI checks on Linux). `npm run test:unit` does not need Pi.
 
-Unit children and termination are mocked; never send OS signals for fake PIDs. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
+Pi unit children and termination are mocked; never send OS signals for fake PIDs. Linux capacity tests may spawn/stop their own offline Node fixtures, never model workers or unrelated processes. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
 
 Runtime regressions cover prompt rejection and slot release, signal isolation, multi-block answers, per-record/chunk framing, UTF-8/CRLF, large useful records, skipped transcripts/images, explicit bounded failure for oversized useful/junk records, provider errors ahead of partial output, token-limit failures, and qualified model identities. Wrap regressions cover report/steering races, acknowledgements, shorter corrections, repeated wrap phases, empty/missing/error replies, successful retries, abort/protocol failure, bounded retention and caps that reserve follow-up space. The factory result probe passes a real runtime-produced mocked wrap result through foreground and collection paths.
+
+Guard regressions cover startup withholding, early/repeated controls, acknowledgement rejection/loss, preflight/body races, active drain, budget/grace/hard deadlines, cancellation, incomplete streams, stale controls, held occupancy until closure, and cleanup. An offline real-Pi probe checks private guard startup, early finalization acknowledgement, preserved builtin metadata, drained shell work and blocked prepared writes without sending a task or making a model call.
+
+Shared-capacity regressions use independent processes and different working directories, distinct groups/model IDs, parent death and inherited-child occupancy, stable inode reuse, live-capacity conflicts, metadata loss, unsafe permissions/symlinks and missing locking support. Scheduler tests cover queue bounds/FIFO, hosted/independent-group bypass, parent-local limits, acquisition/release errors, reentrant observers, held occupancy until runner closure and poll cleanup. An offline real-Pi probe releases the parent descriptor after verified startup, confirms the child still blocks another acquisition, then verifies release on child closure; it stops before task dispatch/model requests.
 
 Lifecycle regressions verify that success, failure, thrown runners, cancellation, and shutdown release runner/control references while snapshots remain collectible. Accounting regressions cover native session compatibility, live/footer and resume behavior, multi-turn/cached/retry/compaction totals, missing usage, duplicate collects, crash tails, queued cancellation, concurrent processes, private permissions, write failures and non-expiring retention. CLI probes keep RPC stdin open until asynchronous command completion, then close it.
 

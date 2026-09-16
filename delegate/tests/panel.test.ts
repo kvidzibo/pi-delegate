@@ -35,6 +35,15 @@ test("panel preserves active acceptance order, queue/wrap/warnings and local rat
 	assert.equal(projectJobBoard([job({ tg: "tg 90/s" })], limits)!.cards[0].tg, undefined);
 });
 
+test("resource waiting projects its group without copying lease handles or unrendered capacity data", () => {
+	const initial = job({ status: "queued", reason: "resource", resource: { key: "shared-server", capacity: 1, state: "waiting" } });
+	const state = projectJobBoard([initial], limits)!;
+	assert.equal(state.cards[0].reason, "resource"); assert.deepEqual(state.cards[0].resource, { key: "shared-server" });
+	initial.resource!.key = "changed";
+	assert.deepEqual(state.cards[0].resource, { key: "shared-server" });
+	assert.doesNotMatch(JSON.stringify(state), /capacity|inherited|descriptor/);
+});
+
 test("equivalent full-card snapshots reuse the mounted component; expansion is read on each render", () => {
 	let component: any, expanded = false, paints = 0, mounts = 0;
 	const ui: any = { getToolsExpanded: () => expanded, setWidget(_key: string, factory: any) {

@@ -48,6 +48,22 @@ test("private native sessions, tasks, and prompts are retained after completion;
 	assert.equal((await loadRuns(root)).runs[0].usage.local.total, 120);
 });
 
+test("context refusal progress survives archive reload and rebuild without rewriting native evidence", async t => {
+	const { root, run } = setup(t); run.start("d0001"); assistant(run);
+	const native = readFileSync(run.paths.session, "utf8");
+	const finalization = { phase: "answering" as const, reason: "context_budget" as const, activeTools: 0,
+		headroom: { policyId: "a".repeat(64), phase: "refused" as const, limited: true, detail: "Non-tool context cannot fit." } };
+	run.observe({ type: "delegate_finalization", state: finalization });
+	await run.finish({ status: "failed", stopReason: "context_budget", exitCode: 79, finalization });
+	finalization.headroom.detail = "mutated caller data";
+	for (const rebuild of [false, true]) {
+		const restored = (await loadRuns(root, { rebuild })).runs[0];
+		assert.equal(restored.stopReason, "context_budget");
+		assert.equal(restored.finalization?.headroom?.detail, "Non-tool context cannot fit.");
+	}
+	assert.equal(readFileSync(run.paths.session, "utf8"), native);
+});
+
 test("queued cancellation has a durable record and known zero usage without pretending to have run", async (t) => {
 	const { root, run } = setup(t);
 	run.finishQueued("d0001", { status: "failed", stopReason: "aborted", exitCode: 1 });

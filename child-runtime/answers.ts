@@ -1,4 +1,4 @@
-import { truncateOutput } from "./policy.ts";
+import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 
 interface Answer {
 	text: string;
@@ -10,6 +10,7 @@ interface PhaseAnswer extends Answer {
 	phase: number;
 	/** Ordinal of message_end assistant events, not a native session entry ID. */
 	message?: number;
+	partial?: boolean;
 }
 
 export function answerExplanation(answer: Answer): string | undefined {
@@ -24,17 +25,27 @@ export class AnswerHistory {
 	private phase = 0;
 	private sequence = 0;
 	private current?: PhaseAnswer;
+	private partial?: PhaseAnswer;
 	private previous: PhaseAnswer[] = [];
 	private omitted = 0;
 
 	constructor(maxBytes: number) { this.maxBytes = maxBytes; }
 
 	observe(answer: Answer): void {
+		this.partial = undefined;
 		this.current = {
 			phase: this.phase, message: ++this.sequence,
 			text: truncateOutput(answer.text, this.maxBytes), stopReason: answer.stopReason,
 			errorMessage: answer.errorMessage === undefined ? undefined : truncateOutput(answer.errorMessage, this.maxBytes),
 		};
+	}
+
+	get currentPhase(): number { return this.phase; }
+
+	/** Record a stopped open stream for terminal formatting, not as a finalized message. */
+	observePartial(text: string, phase = this.phase): void {
+		if (!Number.isSafeInteger(phase) || phase < 0 || phase > this.phase) throw new Error("Unknown partial response phase.");
+		this.partial = { phase, partial: true, text: truncateOutput(text, this.maxBytes) };
 	}
 
 	beginWrap(): void {
@@ -44,21 +55,29 @@ export class AnswerHistory {
 			if (this.previous.length > 7) { this.previous.splice(1, 1); this.omitted++; }
 		}
 		this.current = undefined;
+		this.partial = undefined;
 		this.phase++;
 	}
 
 	get awaitingResponse(): boolean { return this.phase > 0 && !this.current; }
 
 	format(unwrappedText: string, cause?: string): string {
-		if (this.phase === 0) return unwrappedText;
-		const latest = this.current ?? { phase: this.phase, text: "" };
-		const answers = [...this.previous, latest];
+		if (this.phase === 0 && !this.partial) return unwrappedText;
+		const completed = this.current ?? { phase: this.phase, text: "" };
+		// An open stream is extra evidence, never a replacement for finalized text in its phase.
+		const answers = [...this.previous, ...(this.current || !this.partial || this.partial.phase !== this.phase ? [completed] : [])];
+		if (this.partial) {
+			const later = answers.findIndex(answer => answer.phase > this.partial!.phase);
+			answers.splice(later < 0 ? answers.length : later, 0, this.partial);
+		}
+		const latest = answers.at(-1);
 		const headers = answers.map(answer => {
 			const phase = answer.phase === 0 ? "Task response" : `Wrap-up ${answer.phase}`;
+			if (answer.partial) return `${phase} (incomplete streamed response):\n`;
 			return answer.message === undefined ? `${phase}: ` : `${phase} (assistant ${answer.message}):\n`;
 		});
 		const bodies = answers.map(answer => {
-			if (answer.message === undefined) return "[No assistant message received]";
+			if (answer.message === undefined && !answer.partial) return "[No assistant message received]";
 			const text = answer.text || "[No assistant text]";
 			const explanation = answerExplanation(answer);
 			return explanation && answer !== latest ? `${explanation}\n\n${text}` : text;
@@ -71,9 +90,10 @@ export class AnswerHistory {
 			// Very small caps cannot fit every label/body. Say so instead of silently hiding a correction.
 			const notice = `${prefix}[Responses truncated; see archived session.]\n`;
 			const room = this.maxBytes - Buffer.byteLength(notice);
-			return room > 0
-				? notice + truncateOutput(`${headers.at(-1)}${bodies.at(-1)}`, room)
-				: truncateOutput(notice, this.maxBytes);
+			if (room > 0) return notice + truncateOutput(`${headers.at(-1)}${bodies.at(-1)}`, room);
+			// A verbose truncation counter must not crowd out a cause that fits by itself.
+			const suffix = Buffer.byteLength(prefix + "[truncated]") <= this.maxBytes ? "[truncated]" : "…";
+			return truncateToUtf8Bytes(prefix ? prefix + suffix : notice, this.maxBytes);
 		}
 		// Share the budget, redistributing unused space from short replies to longer reports.
 		const lengths = bodies.map(text => Buffer.byteLength(text));

@@ -64,7 +64,7 @@ export class Accounting {
 			archive.start(jobId);
 			this.paint();
 			const result = await execute((event) => { if (archive.observe(event)) this.paint(); });
-			await archive.finish({ status: isFailedChildResult(result) ? "failed" : "done", stopReason: result.stopReason, exitCode: result.exitCode });
+			await archive.finish({ status: isFailedChildResult(result) ? "failed" : "done", stopReason: result.stopReason, exitCode: result.exitCode, finalization: result.finalization });
 			return { ...result, ...(archive.data.recordingError ? { recordingError: archive.data.recordingError } : {}) };
 		} catch (error) {
 			await archive.finish({ status: "failed", stopReason: "error", exitCode: 1 });

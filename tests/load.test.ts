@@ -53,6 +53,20 @@ test("real isolated Pi child loads the explicit budget guard before any task is 
 	assert.deepEqual((await runPiProbe("delegate-guard-startup-probe")).result, { guardLoaded: true, promptWithheld: true, noModelCalls: true });
 });
 
+test("explicit runtime guard preserves builtins, drains current tools and blocks prepared execution", async () => {
+	assert.deepEqual((await runPiProbe("delegate-finalization-probe")).result, {
+		realGuardHandshake: true, leaseInherited: true, currentToolDrained: true, preparedToolBlocked: true,
+		metadataPreserved: true, promptWithheld: true, noModelCalls: true,
+	});
+});
+
+test("headroom guard bounds real serialized payloads and vetoes unsafe transport despite swallowed hook errors", async () => {
+	assert.deepEqual((await runPiProbe("delegate-headroom-probe")).result, {
+		nativeTransportBoundary: true, unsafeDispatchBlocked: true, compactionBlocked: true, sharedCapacity: true,
+		priorReportPreserved: true, nativeEvidencePreserved: true, noModelCalls: true,
+	});
+});
+
 test("calibrated pricing resolves in the real factory, restores snapshots and loads opt-in benchmarking", async () => {
 	assert.deepEqual((await runPiProbe("delegate-savings-probe")).result, {
 		calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true,
@@ -81,7 +95,7 @@ test("delegate card backgrounds fill each row, follow status/theme and leave rec
 
 test("all delegate return paths preserve result, promotion and notification contracts", async () => {
 	assert.deepEqual((await runPiProbe("delegate-result-probe")).result, {
-		terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, noModelCalls: true,
+		terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, finalizationProgress: true, noModelCalls: true,
 	});
 });
 
