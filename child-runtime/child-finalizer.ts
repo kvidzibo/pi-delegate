@@ -1,5 +1,6 @@
 import { GUARD_COMMAND, GUARD_REQUEST_ID, parseGuardNotice,
 	type GuardedExecution, type FinalizationProgress, type FinalizationReason } from "./guard-protocol.ts";
+import { sameLease, validateLeaseIdentity, type LeaseIdentity } from "./lease.ts";
 
 export type FinalizationFailure = "guard-error" | "finalization_timeout";
 export interface FinalizerClock {
@@ -20,6 +21,7 @@ export class ChildFinalizer {
 	private readonly policy: GuardedExecution;
 	private readonly nonce: string;
 	private readonly clock: FinalizerClock;
+	private readonly expectedLease?: LeaseIdentity;
 	private bindings?: Bindings;
 	private state: FinalizationProgress = { phase: "starting" };
 	private ready = false;
@@ -35,8 +37,9 @@ export class ChildFinalizer {
 	private graceTimer?: unknown;
 	private waiters = new Set<() => void>();
 
-	constructor(policy: GuardedExecution, nonce: string, bindings: Bindings, timer: FinalizerClock = clock) {
+	constructor(policy: GuardedExecution, nonce: string, bindings: Bindings, timer: FinalizerClock = clock, expectedLease?: LeaseIdentity) {
 		this.policy = policy; this.nonce = nonce; this.bindings = bindings; this.clock = timer;
+		this.expectedLease = expectedLease ? validateLeaseIdentity(expectedLease) : undefined;
 	}
 
 	start(defaultWrapMessage: string): void {
@@ -86,6 +89,7 @@ export class ChildFinalizer {
 			const notice = parseGuardNotice(event, this.nonce);
 			if (!notice) return;
 			if (notice.event === "ready") {
+				if (!sameLease(this.expectedLease, notice.lease)) throw new Error("Child runtime guard did not acknowledge the expected inherited resource lease.");
 				if (this.ready || notice.state.phase !== "running" || notice.state.activeTools !== 0 || !Array.isArray(notice.tools)
 					|| notice.tools.length !== this.policy.tools.length || !this.policy.tools.every(name => notice.tools!.includes(name))) {
 					throw new Error("Child runtime guard readiness does not match the requested tool set.");

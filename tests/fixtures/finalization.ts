@@ -7,6 +7,7 @@ import { installRuntimeGuard } from "../../child-runtime/guard.ts";
 import { GUARD_COMMAND, type FinalizationProgress } from "../../child-runtime/guard-protocol.ts";
 import { runPiChild } from "../../child-runtime/spawn.ts";
 import { buildChildArgs, buildChildEnv } from "../../delegate/spawn.ts";
+import { FileCapacityBroker } from "../../delegate/capacity.ts";
 
 export async function finalizationProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const handlers = new Map<string, Function>(), commands = new Map<string, any>(), tools = new Map<string, any>();
@@ -58,22 +59,31 @@ export async function finalizationProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 	const prompt = join(ctx.cwd, "runtime-guard-prompt.md"); writeFileSync(prompt, "Offline startup fixture; no model requests.");
 	let acknowledged = false;
 	const states: FinalizationProgress[] = [];
-	const result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", hardTimeoutMs: 10000, maxOutputBytes: 65536,
+	const broker = new FileCapacityBroker(join(ctx.cwd, "resource-state")), group = { key: "offline-probe", capacity: 1 };
+	const lease = broker.tryAcquire(group); assert.ok(lease);
+	let result;
+	try { result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", hardTimeoutMs: 10000, maxOutputBytes: 65536,
 		promptSourcePath: prompt, env: buildChildEnv(process.env),
 		buildArgs: promptPath => buildChildArgs({ model, thinking: "off", tools: ["read", "bash"], promptPath,
 			sessionFile: join(ctx.cwd, "runtime-guard-session.jsonl"), offline: true }),
 		execution: { tools: ["read", "bash"], finalizeAfterMs: 0, finalizationGraceMs: 10000, startupTimeoutMs: 8000 },
+		resourceLease: lease.inherited,
 		onControl: ctl => { assert.equal(ctl.wrap(), true); },
 		onEvent: (event: any) => { if (event.type === "delegate_finalization") states.push(event.state); },
 		beforePrompt: async () => {
 			acknowledged = states.at(-1)?.phase === "answering";
+			// Simulate loss of the parent descriptor: the real Pi child must retain occupancy.
+			lease.release();
+			const available = broker.tryAcquire(group); available?.release();
+			assert.equal(available, undefined, "Pi must retain its inherited resource descriptor");
 			throw new Error("offline test stopped after enforced finalization acknowledgement");
 		},
-	});
+	}); } finally { lease.release(); }
 	assert.equal(acknowledged, true, result.text);
 	assert.equal(result.diag?.sawAssistant, false);
 	assert.match(result.text, /offline test stopped after enforced finalization acknowledgement/);
 	assert.equal(result.finalization?.phase, "answering");
-	return { realGuardHandshake: true, currentToolDrained: true, preparedToolBlocked: true,
+	const available = broker.tryAcquire(group); assert.ok(available, "child closure releases inherited occupancy"); available.release();
+	return { realGuardHandshake: true, leaseInherited: true, currentToolDrained: true, preparedToolBlocked: true,
 		metadataPreserved: true, promptWithheld: true, noModelCalls: true };
 }

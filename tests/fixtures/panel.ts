@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, CURSOR_MARKER, Spacer, Text, TuiMainScreen, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { JobBoard } from "../../delegate/board.ts";
-import { renderJobBoard, renderJobBoardLine } from "../../delegate/view.ts";
+import { renderChildResult, renderJobBoard, renderJobBoardLine } from "../../delegate/view.ts";
 import { projectJobBoard } from "../../delegate/panel.ts";
 import type { JobSnapshot } from "../../delegate/jobs.ts";
 import delegate from "../../delegate/index.ts";
@@ -33,6 +33,20 @@ function widgetHost(onRender: () => void = () => {}, tui?: TUI) {
 		onRender();
 	} };
 	return { ui, widgets, calls, container, setExpanded: (value: boolean) => { expanded = value; onRender(); }, repaints: () => repaints, render: (width = 200) => container.render(width) };
+}
+
+function checkResourcePresentation() {
+	const job: JobSnapshot = { id: "d0001", kind: "recon", model: "local/model", task: "resource fixture", status: "queued",
+		local: true, failed: false, background: true, activity: [], reason: "resource", resource: { key: "same-server", capacity: 1, state: "waiting" } };
+	const board = projectJobBoard([job], { maxLocalConcurrent: 1 })!;
+	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /Queued — waiting for shared resource same-server/);
+	const warning = renderChildResult({ theme, read: () => ({ details: { status: "done", resourceError: "Lease release not confirmed" },
+		collect: false, live: false, isPartial: false, expanded: false }) });
+	assert.match(warning.render(100).join("\n"), /Lease release not confirmed/);
+	for (const width of [1, 2, 8, 16, 80]) {
+		assert.ok(renderJobBoard(board, width, 8, theme, true, "").every(line => visibleWidth(line) <= width));
+		assert.ok(warning.render(width).every(line => visibleWidth(line) <= width));
+	}
 }
 
 function checkBoardGeometry() {
@@ -190,6 +204,7 @@ function checkFullCardAnchoring() {
 }
 
 export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
+	checkResourcePresentation();
 	checkBoardGeometry();
 	checkBottomAnchoring();
 	checkFullCardAnchoring();

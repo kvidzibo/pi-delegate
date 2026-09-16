@@ -1,4 +1,5 @@
 import type { FinalizationState } from "./finalization.ts";
+import { validateLeaseIdentity, type LeaseIdentity } from "./lease.ts";
 
 export const GUARD_ENV = "PI_DELEGATE_RUNTIME_GUARD";
 export const GUARD_COMMAND = "delegate-runtime-finalize";
@@ -14,7 +15,7 @@ export interface GuardedExecution {
 	startupTimeoutMs: number;
 }
 
-export interface GuardConfig { nonce: string; tools: string[] }
+export interface GuardConfig { nonce: string; tools: string[]; lease?: LeaseIdentity }
 export type FinalizationReason = "wrap" | "execution_budget";
 export type FinalizationProgress = {
 	phase: "starting" | "requested" | FinalizationState["phase"];
@@ -28,6 +29,7 @@ export type GuardNotice = {
 	event: "ready" | "state";
 	state: FinalizationState;
 	tools?: string[];
+	lease?: LeaseIdentity;
 };
 
 export function validateGuardConfig(value: unknown): GuardConfig {
@@ -38,7 +40,7 @@ export function validateGuardConfig(value: unknown): GuardConfig {
 		|| new Set(raw.tools).size !== raw.tools.length) {
 		throw new Error("Runtime guard requires a nonce and a distinct supported builtin tool list.");
 	}
-	return { nonce: raw.nonce, tools: [...raw.tools] };
+	return { nonce: raw.nonce, tools: [...raw.tools], ...(raw.lease !== undefined ? { lease: validateLeaseIdentity(raw.lease) } : {}) };
 }
 
 export function validateGuardedExecution(value: GuardedExecution): GuardedExecution {
@@ -77,5 +79,6 @@ export function parseGuardNotice(event: unknown, nonce: string): GuardNotice | u
 		|| (state.phase === "draining" && state.activeTools === 0)) {
 		throw new Error("Invalid runtime guard acknowledgement.");
 	}
+	if (notice.lease !== undefined) validateLeaseIdentity(notice.lease);
 	return notice as GuardNotice;
 }

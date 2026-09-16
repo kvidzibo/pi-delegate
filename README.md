@@ -105,4 +105,6 @@ xvfb-run -a npm test    # unit + offline CLI/UI checks; needs Pi and Xvfb
 
 The [child-runtime API](child-runtime/README.md#opt-in-guarded-execution) also supports explicitly opted-in execution budgets and an enforced tool-finalization gate. This is not yet wired to delegate configuration or defaults; ordinary delegation remains steer-only. Guarded runs cannot reuse legacy savings calibrations.
 
-Tests use mocked workers or isolated offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.
+The opt-in [shared-capacity API](delegate/README.md#shared-capacity-api) coordinates local workers across parent sessions on Linux. Explicit resource groups share kernel-owned leases that survive parent death while an inherited child descriptor remains open. Configuration/default activation is still separate; ordinary delegation retains per-parent limits.
+
+Tests use mocked workers, isolated offline Node processes for kernel-lease checks, or offline Pi processes, never model calls. See the [runtime reference](delegate/README.md), [child-process helpers](child-runtime/README.md) and [implementation contract](delegate/SPEC.md) for details.

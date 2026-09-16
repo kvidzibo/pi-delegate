@@ -46,6 +46,12 @@ Completed phase reports survive guarded failure. If a guarded child dies before 
 
 Guarded runs invalidate legacy savings estimates, including on archive reload/rebuild. Existing calibration keys do not represent execution policy; a policy-aware calibration is required before estimates can cover these runs.
 
+## Inherited resource leases
+
+On Linux, `runPiChild` and `runChild` accept a borrowed `resourceLease: { fd, dev, ino }` from the shared-capacity broker. Guarded execution is mandatory. The parent validates the owned/private regular file, inherits the open descriptor as child FD 3, and withholds the task until the guard acknowledges its expected device/inode identity. Missing/mismatched acknowledgement fails as `guard-error`; the runtime never silently drops the lease.
+
+The broker/scheduler owns the parent descriptor and releases it only after the runner settles. Neither the runtime nor a caller-provided runner may close a borrowed descriptor. The inherited child descriptor preserves kernel occupancy if the parent dies; it closes with the child. This coordinates cooperating live child processes, not unrelated work or lingering server-side requests. Default runs inherit no resource descriptor and keep their original three-pipe stdio setup. See [shared capacity](../delegate/README.md#shared-capacity-api) for backend requirements and scope.
+
 ## Tests
 
 ```bash
