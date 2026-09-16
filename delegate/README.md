@@ -63,8 +63,25 @@ This is a runtime API, **not yet a configuration setting or default**. Models, t
 - Linux `/usr/bin/flock` holds stable private lock-file descriptors. The utility does not own the lease after it exits: the parent and then the Pi child share its open-file description. Readiness verifies the expected inherited descriptor before any task is sent. Release closes descriptors, never unlinks lock files or forcibly unlocks another holder. Parent death cannot free a lease still held by the child.
 - Capacity changes require every existing slot to be idle. Conflicting live limits, missing locking support, corrupt/insecure state or failed descriptor acknowledgement fail closed. There is no PID/mtime expiry, age-based takeover or uncoordinated fallback. Keep the root on a local filesystem with Linux `flock` semantics; do not delete or replace live lock files.
 - Cancellation/shutdown retain running leases until runner completion after process closure. A runner borrows its descriptor and must not close it; the scheduler owns release. A failed release is reported separately without rewriting the child outcome.
+- With `localAdmission`, both gates must accept before a runner starts. A denied/failed local admission releases provisional capacity immediately. Uncertain rollback fails the queued job rather than retrying and leaking more leases; an already-cancelled outcome remains unchanged.
 
 Snapshots/results distinguish `resource` waits and `waiting`, `held`, `released`, `not-acquired` or `release-unknown` resource states. UI cards identify the waiting group; release uncertainty remains a visible warning. Broker acquisition failures use `resource-error`; inherited-descriptor startup failures use `guard-error`. Root setup/ownership checks happen on acquisition, not construction.
+
+## Local delegation switch
+
+`/delegate-local` opens Pi's native picker (TUI or RPC). Its title shows **ON/OFF** and the active local-job count across participating processes; the current choice is marked and listed first. Choose **On** or **Off**, or Esc to leave the state unchanged. Direct forms: `/delegate-local on|off|status`.
+
+- **Off:** refuse new local launches immediately, including local `model` overrides on any kind. Existing queued local jobs remain queued with an explicit OFF reason. Running jobs are not interrupted.
+- **On:** allow new local work and resume held jobs. Shared-state polling refreshes queues and the OFF footer within about one second; every admission checks the switch directly, without relying on polling.
+- **Status:** show active/draining jobs or idle. The OFF footer updates from `draining N jobs` to `idle`. Admission reservations count as active until runner cleanup finishes. Hosted jobs do not use this gate and are never selected as an automatic fallback.
+
+State lives in `<agent-dir>/delegate-local/` (normally `~/.pi/agent/delegate-local/`), separately from `delegate.json` and archive overrides. An atomic `state.json` stores the switch; private `active/` reservation files track admitted local jobs. The default is ON; OFF survives shutdown, reload and restart until explicitly enabled. No model calls are made by the command. No saved prompts, model configuration, servers or fans are changed.
+
+**Scope:** same user, machine, local filesystem and agent directory, with this feature loaded in every participating Pi session. Older versions, other agent directories, parent models, the opt-in calibration runner and unrelated GPU clients are not controlled or counted. Install/update and reload each session once before using the switch; subsequent toggles need no reload. The switch is not a cross-process capacity lock. Concurrency limits remain per-parent unless the separately opted-in shared-capacity API above is also supplied.
+
+**Before benchmarking:** select Off and wait for `OFF · idle`; separately stop or coordinate clients outside this scope. A crashed parent may leave an orphaned child. Its reservation is retained and reported as **unverified (not idle)**, rather than silently expired. Inspect the processes/archives and remove only the corresponding files in `delegate-local/active/` after confirming the work has stopped. PID reuse can conservatively keep a stale reservation counted as active. Do not delete active reservations or the state directory to force an idle report.
+
+Unreadable/corrupt control state blocks local admission and produces an unavailable warning; hosted work remains independent. `/delegate-local on` or `off` can replace a malformed state file, but never clears reservations. Cleanup failures leave a warning and a conservative reservation. Concurrent command changes are last-writer-wins; status is a snapshot, not an exclusive benchmark reservation.
 
 ## Job lifecycle
 

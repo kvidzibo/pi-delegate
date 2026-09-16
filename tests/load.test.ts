@@ -10,8 +10,26 @@ test("package manifest loads only delegate through the installed Pi CLI", async 
 	assert.deepEqual((await runPiProbe("delegate-load-probe")).result, { tools: ["delegate"] });
 });
 
+test("local delegation picker uses native dialogs, drains work and gates model overrides without fallback", async () => {
+	let selects = 0;
+	const result = await runPiProbe("delegate-local-probe", ({ title, options }) => {
+		selects++;
+		assert.match(title, /All Pi sessions/);
+		if (selects === 1) {
+			assert.match(title, /ON · 1 job active/);
+			assert.deepEqual(options, ["On ✓ current", "Off"]);
+			return "Off";
+		}
+		assert.match(title, /OFF · idle/);
+		assert.deepEqual(options, ["Off ✓ current", "On"]);
+		return selects === 2 ? undefined : "On";
+	});
+	assert.equal(selects, 3);
+	assert.deepEqual(result.result, { picker: true, shared: true, draining: true, overridesBlocked: true, hostedUnchanged: true, noModelCalls: true });
+});
+
 test("package reload restores a single delegate tool through the real session lifecycle", async () => {
-	assert.deepEqual((await runPiProbe("delegate-reload-probe")).result, { tools: ["delegate"], reloaded: true });
+	assert.deepEqual((await runPiProbe("delegate-reload-probe")).result, { tools: ["delegate"], reloaded: true, localOffPersists: true });
 });
 
 test("real isolated Pi child loads the explicit budget guard before any task is dispatched", async () => {

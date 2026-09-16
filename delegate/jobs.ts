@@ -4,6 +4,7 @@ import { copyFinalizationProgress, type FinalizationProgress } from "../child-ru
 import { assertKind, type Kind } from "./config.ts";
 import { validateResourceGroup, type CapacityBroker, type ResourceGroup, type ResourceLease } from "./capacity.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
+import { LOCAL_OFF_MESSAGE, type LocalAdmission } from "./local-control.ts";
 import {
 	applyProgress,
 	createProgress,
@@ -14,7 +15,7 @@ import {
 import { applyTgEvent, createTgMeter, visibleChildTg, type TgMeter } from "./tg.ts";
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
-export type QueueReason = "gpu" | "slot" | "resource";
+export type QueueReason = "gpu" | "slot" | "resource" | "local-off" | "local-unavailable";
 export type ResourceProgress = ResourceGroup & {
 	state: "waiting" | "held" | "released" | "not-acquired" | "release-unknown";
 	slot?: number;
@@ -149,6 +150,8 @@ type InternalJob = {
 	startedAt?: number;
 	lastEventAt?: number;
 	control?: ChildControl;
+	releaseLocal?: () => void;
+	localAdmissionError?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -229,8 +232,9 @@ export class JobScheduler {
 	private readonly onChange?: (snap?: JobSnapshot) => void;
 	private readonly onTerminal?: (snap: JobSnapshot) => void;
 	private readonly onSettled?: (snap: JobSnapshot) => string | void;
+	private readonly localAdmission?: LocalAdmission;
 
-	constructor(input: SchedulerLimits & { capacity?: CapacityBroker; resourcePollMs?: number;
+	constructor(input: SchedulerLimits & { capacity?: CapacityBroker; resourcePollMs?: number; localAdmission?: LocalAdmission;
 		onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
@@ -243,10 +247,19 @@ export class JobScheduler {
 		this.onChange = input.onChange;
 		this.onTerminal = input.onTerminal;
 		this.onSettled = input.onSettled;
+		this.localAdmission = input.localAdmission;
+	}
+
+	/** Called by the shared-switch observer; does not reset queue/wait budgets. */
+	refreshLocalState(): void {
+		if (this.closed) return;
+		this.pump();
+		for (const job of this.jobs) if (job.local && job.status === "queued") this.notify(job);
 	}
 
 	enqueue(input: EnqueueInput): JobSnapshot {
 		if (this.closed) throw new Error("delegate refused: scheduler shutdown.");
+		if (input.local && this.localAdmission && !this.localAdmission.enabled()) throw new Error(LOCAL_OFF_MESSAGE);
 		let resourceGroup: ResourceGroup | undefined;
 		if (input.local && (this.capacity || input.resourceGroup !== undefined)) {
 			if (!this.capacity) throw new Error("delegate refused: resource group requires a capacity broker.");
@@ -294,14 +307,16 @@ export class JobScheduler {
 		}
 		this.jobs.push(job);
 		this.pump();
-		// Resource availability is known only after the eligible-first pump probes it.
-		// Refuse an excess waiter without spawning, notifying completion, or retaining its runner.
+		// Both shared capacity and local admission can refuse after a process slot looked free.
+		// Refuse excess waiters without spawning, retaining runners, or bypassing the queue bound.
 		if (job.status === "queued" && this.queuedCount() > this.limits.maxQueued) {
 			this.jobs.splice(this.jobs.indexOf(job), 1);
 			this.releaseRuntime(job);
 			this.armResourcePoll();
 			this.notify();
-			throw new Error(`delegate refused: ${this.queuedCount()} already queued (max ${this.limits.maxQueued}).`);
+			throw new Error(job.resourceGroup
+				? `delegate refused: ${this.queuedCount()} already queued (max ${this.limits.maxQueued}).`
+				: `delegate refused: queue full (max ${this.limits.maxQueued}).`);
 		}
 		this.notify(job);
 		return this.snapshot(job);
@@ -487,8 +502,13 @@ export class JobScheduler {
 		return this.jobs.filter((job) => job.status === "running");
 	}
 
+	private localBlockReason(): "local-off" | "local-unavailable" | undefined {
+		try { return this.localAdmission && !this.localAdmission.enabled() ? "local-off" : undefined; }
+		catch { return "local-unavailable"; }
+	}
+
 	private canStart(local: boolean): boolean {
-		if (this.closed) return false;
+		if (this.closed || (local && this.localBlockReason())) return false;
 		const running = this.runningJobs();
 		if (running.length >= this.limits.maxConcurrent) return false;
 		if (local && running.filter((job) => job.local).length >= this.limits.maxLocalConcurrent) return false;
@@ -497,6 +517,9 @@ export class JobScheduler {
 
 	private queueReason(job: InternalJob): QueueReason | undefined {
 		if (job.status !== "queued") return undefined;
+		const blocked = job.local ? this.localBlockReason() : undefined;
+		if (blocked) return blocked;
+		if (job.localAdmissionError) return "local-unavailable";
 		const running = this.runningJobs();
 		if (job.local && running.filter((item) => item.local).length >= this.limits.maxLocalConcurrent) return "gpu";
 		if (running.length >= this.limits.maxConcurrent) return "slot";
@@ -542,6 +565,7 @@ export class JobScheduler {
 		};
 		if (job.resourceError) snap.resourceError = job.resourceError;
 		if (job.recordingError) snap.recordingError = job.recordingError;
+		if (job.localAdmissionError) snap.recordingError = `Local dispatch unavailable: ${job.localAdmissionError}`;
 		if (job.wrapped) snap.wrapped = true;
 		if (job.finalization) snap.finalization = { ...job.finalization };
 		if (job.status === "running" || job.status === "queued") {
@@ -557,7 +581,7 @@ export class JobScheduler {
 			snap.exitCode = job.result.exitCode;
 			snap.stopReason = job.result.stopReason;
 			snap.stderrTail = job.result.stderrTail;
-			if (job.result.recordingError) snap.recordingError = job.result.recordingError;
+			if (job.result.recordingError) snap.recordingError = [snap.recordingError, job.result.recordingError].filter(Boolean).join("\n");
 		} else if (job.status === "failed") {
 			snap.exitCode = job.exitCode ?? 1;
 			snap.stopReason = job.stopReason;
@@ -580,8 +604,8 @@ export class JobScheduler {
 	private notify(job?: InternalJob): void {
 		if (job && this.terminal(job) && !job.accountingSettled) {
 			job.accountingSettled = true;
-			try { job.recordingError = this.onSettled?.(this.snapshot(job)) || undefined; }
-			catch { job.recordingError = "Delegate recording incomplete: terminal accounting callback failed."; }
+			try { job.recordingError = [job.recordingError, this.onSettled?.(this.snapshot(job))].filter(Boolean).join("\n") || undefined; }
+			catch { job.recordingError = [job.recordingError, "Delegate recording incomplete: terminal accounting callback failed."].filter(Boolean).join("\n"); }
 		}
 		if (job) this.emit(job);
 		try {
@@ -613,6 +637,14 @@ export class JobScheduler {
 		job.control = undefined;
 		job.run = undefined;
 		job.wrapMessage = undefined;
+		const release = job.releaseLocal;
+		job.releaseLocal = undefined;
+		if (release) this.releaseLocal(job, release);
+	}
+
+	private releaseLocal(job: InternalJob, release: () => void): void {
+		try { release(); }
+		catch { job.recordingError = [job.recordingError, "Local delegation activity cleanup failed; /delegate-local status may still show this job."].filter(Boolean).join("\n"); }
 	}
 
 	private pump(): void {
@@ -644,17 +676,16 @@ export class JobScheduler {
 								// A custom broker can synchronously trigger cancellation/shutdown observers.
 								if (job.status !== "queued" || this.closed || !this.canStart(job.local)) continue;
 								job.lease = lease; job.resourceSlot = slot; retained = true;
-							} finally { if (!retained) this.releaseLease(job, lease); }
-						} catch (error) {
-							if (!this.terminal(job)) {
-								job.status = "failed"; job.stopReason = "resource-error"; job.exitCode = 1;
-								job.errorMessage = `Shared resource unavailable: ${String(error)}`;
-								this.releaseRuntime(job); this.notify(job); this.emitTerminal(job);
+							} finally {
+								if (!retained && !this.releaseLease(job, lease)) throw new Error("Resource acquisition cleanup failed.");
 							}
+						} catch (error) {
+							this.failResource(job, error);
 							continue;
 						}
 					}
-					this.start(job);
+					// A local admission refusal must not leave this queued job owning shared capacity.
+					if (!this.start(job) && !this.releaseLeaseOnly(job)) this.failResource(job, "Resource acquisition cleanup failed.");
 				}
 			} while (this.pumpAgain);
 		} finally {
@@ -663,14 +694,22 @@ export class JobScheduler {
 		}
 	}
 
-	private releaseLeaseOnly(job: InternalJob): void {
-		if (!job.lease) return;
-		const lease = job.lease; job.lease = undefined;
-		this.releaseLease(job, lease);
+	private failResource(job: InternalJob, error: unknown): void {
+		if (this.terminal(job)) return;
+		job.status = "failed"; job.stopReason = "resource-error"; job.exitCode = 1;
+		job.errorMessage = `Shared resource unavailable: ${String(error)}`;
+		this.releaseRuntime(job); this.notify(job); this.emitTerminal(job);
 	}
 
-	private releaseLease(job: InternalJob, lease: ResourceLease): void {
-		try { lease.release(); } catch (error) { job.resourceError = `Resource lease release could not be confirmed: ${String(error)}`; }
+	private releaseLeaseOnly(job: InternalJob): boolean {
+		if (!job.lease) return true;
+		const lease = job.lease; job.lease = undefined;
+		return this.releaseLease(job, lease);
+	}
+
+	private releaseLease(job: InternalJob, lease: ResourceLease): boolean {
+		try { lease.release(); return true; }
+		catch (error) { job.resourceError = `Resource lease release could not be confirmed: ${String(error)}`; return false; }
 	}
 
 	private clearResourcePoll(): void {
@@ -684,7 +723,20 @@ export class JobScheduler {
 		this.resourceTimer = setTimeout(() => { this.resourceTimer = undefined; this.pump(); this.notify(); }, this.resourcePollMs);
 	}
 
-	private start(job: InternalJob): void {
+	private start(job: InternalJob): boolean {
+		if (job.status !== "queued" || this.closed) return false;
+		if (job.local && this.localAdmission) {
+			let release: (() => void) | undefined, retained = false;
+			try {
+				release = this.localAdmission.acquire();
+				if (release !== undefined && typeof release !== "function") throw new Error("Invalid local admission reservation.");
+				job.localAdmissionError = undefined;
+				// Admission is an opaque callback: cancellation/shutdown can occur before it returns.
+				if (!release || !this.canStart(job.local) || job.status !== "queued" || this.closed) return false;
+				job.releaseLocal = release; retained = true;
+			} catch (error) { job.localAdmissionError = String(error); return false; }
+			finally { if (typeof release === "function" && !retained) this.releaseLocal(job, release); }
+		}
 		job.status = "running";
 		job.startedAt = Date.now();
 		job.lastEventAt = job.startedAt;
@@ -693,6 +745,7 @@ export class JobScheduler {
 		} finally {
 			void this.execute(job);
 		}
+		return true;
 	}
 
 	private async execute(job: InternalJob): Promise<void> {
