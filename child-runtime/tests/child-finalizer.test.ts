@@ -67,6 +67,14 @@ test("early/repeated wrap waits for readiness and enforcement, and sends steerin
 	assert.equal(clock.jobs.size, 0);
 });
 
+test("an early wrap grace shorter than readiness times out with the first deadline", async () => {
+	const { child, clock, failures, sent } = start({ finalizationGraceMs: 10, startupTimeoutMs: 50 });
+	const ready = child.waitReady(new AbortController().signal);
+	child.request("Finish now."); clock.advance(10); await assert.rejects(ready, /startup stopped/);
+	assert.equal(failures[0].reason, "finalization_timeout"); assert.equal(sent.length, 0);
+	clock.advance(100); assert.equal(failures.length, 1); assert.equal(clock.jobs.size, 0);
+});
+
 test("execution budget begins at runtime start and is separate from finalization grace", () => {
 	const { child, sent, failures, clock } = start({ finalizeAfterMs: 80 });
 	child.accept(notice()); child.markTaskSent();

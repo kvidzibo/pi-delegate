@@ -226,6 +226,22 @@ test("even tiny output caps stay bounded and disclose missing history where spac
 	}
 });
 
+test("terminal open streams supplement finalized text and tiny caps preserve the cause", () => {
+	const history = new AnswerHistory(1000);
+	history.observe({ text: "Original report." }); history.observePartial("Incomplete correction.");
+	const text = history.format("unused", "Failure cause.");
+	assert.match(text, /^Failure cause\./); assert.match(text, /Original report/); assert.match(text, /incomplete streamed response/);
+	assert.match(text, /Incomplete correction/);
+	history.observe({ text: "Final correction." }); assert.equal(history.format("Final correction."), "Final correction.");
+	for (let cap = 1; cap < 400; cap++) {
+		const capped = new AnswerHistory(cap);
+		capped.observe({ text: "Original " + "界".repeat(1000) }); capped.observePartial("Incomplete " + "界".repeat(1000));
+		const output = capped.format("unused", "Failure cause.");
+		assert.ok(Buffer.byteLength(output) <= cap);
+		if (cap >= 14) assert.match(output, /^Failure cause\./);
+	}
+});
+
 test("no wrap keeps the existing last-message contract", async t => {
 	const child = start(t);
 	child.answer("Draft."); child.answer("Final."); child.settle();

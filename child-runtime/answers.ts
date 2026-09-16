@@ -1,4 +1,4 @@
-import { truncateOutput } from "./policy.ts";
+import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 
 interface Answer {
 	text: string;
@@ -25,12 +25,14 @@ export class AnswerHistory {
 	private phase = 0;
 	private sequence = 0;
 	private current?: PhaseAnswer;
+	private partial?: PhaseAnswer;
 	private previous: PhaseAnswer[] = [];
 	private omitted = 0;
 
 	constructor(maxBytes: number) { this.maxBytes = maxBytes; }
 
 	observe(answer: Answer): void {
+		this.partial = undefined;
 		this.current = {
 			phase: this.phase, message: ++this.sequence,
 			text: truncateOutput(answer.text, this.maxBytes), stopReason: answer.stopReason,
@@ -40,7 +42,7 @@ export class AnswerHistory {
 
 	/** A killed guarded stream is evidence, not a finalized assistant message. */
 	observePartial(text: string): void {
-		this.current = { phase: this.phase, partial: true, text: truncateOutput(text, this.maxBytes) };
+		this.partial = { phase: this.phase, partial: true, text: truncateOutput(text, this.maxBytes) };
 	}
 
 	beginWrap(): void {
@@ -50,15 +52,19 @@ export class AnswerHistory {
 			if (this.previous.length > 7) { this.previous.splice(1, 1); this.omitted++; }
 		}
 		this.current = undefined;
+		this.partial = undefined;
 		this.phase++;
 	}
 
 	get awaitingResponse(): boolean { return this.phase > 0 && !this.current; }
 
 	format(unwrappedText: string, cause?: string): string {
-		if (this.phase === 0) return unwrappedText;
-		const latest = this.current ?? { phase: this.phase, text: "" };
-		const answers = [...this.previous, latest];
+		if (this.phase === 0 && !this.partial) return unwrappedText;
+		const completed = this.current ?? { phase: this.phase, text: "" };
+		// An open stream is extra evidence, never a replacement for finalized text in its phase.
+		const answers = [...this.previous, ...(this.current || !this.partial ? [completed] : []),
+			...(this.partial ? [this.partial] : [])];
+		const latest = answers.at(-1);
 		const headers = answers.map(answer => {
 			const phase = answer.phase === 0 ? "Task response" : `Wrap-up ${answer.phase}`;
 			if (answer.partial) return `${phase} (incomplete streamed response):\n`;
@@ -78,9 +84,10 @@ export class AnswerHistory {
 			// Very small caps cannot fit every label/body. Say so instead of silently hiding a correction.
 			const notice = `${prefix}[Responses truncated; see archived session.]\n`;
 			const room = this.maxBytes - Buffer.byteLength(notice);
-			return room > 0
-				? notice + truncateOutput(`${headers.at(-1)}${bodies.at(-1)}`, room)
-				: truncateOutput(notice, this.maxBytes);
+			if (room > 0) return notice + truncateOutput(`${headers.at(-1)}${bodies.at(-1)}`, room);
+			// A verbose truncation counter must not crowd out a cause that fits by itself.
+			const suffix = Buffer.byteLength(prefix + "[truncated]") <= this.maxBytes ? "[truncated]" : "…";
+			return truncateToUtf8Bytes(prefix ? prefix + suffix : notice, this.maxBytes);
 		}
 		// Share the budget, redistributing unused space from short replies to longer reports.
 		const lengths = bodies.map(text => Buffer.byteLength(text));

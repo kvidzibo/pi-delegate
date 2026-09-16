@@ -1,5 +1,7 @@
 # Validated lessons
 
+- Terminal open streams supplement, never replace, their phase's last finalized response and error metadata. At tiny output caps, reserve the cause before spending bytes on a truncation notice.
+
 - Classify child cancellation at the process boundary, not after asynchronous archival work: a later abort must not relabel an earlier completed child outcome. Campaign-level cancellation is a separate decision.
 - Keep a wrap pending until child control accepts it; registration can arrive after the request. Guard synchronous observer reentrancy while acceptance is in progress. Accepted repeats must not resend it or extend grace.
 - Authoritative `text_end` snapshots replace streamed deltas, including their truncation state; old clipping must not mislabel a corrected complete block.

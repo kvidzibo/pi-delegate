@@ -549,15 +549,13 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	});
 
 	const partial = streamed?.text();
-	if (partial) {
-		state = { ...state, text: partial, errorMessage: undefined, stopReason: "incomplete-output", sawAssistant: true };
-		answers.observePartial(partial);
-	}
-	let stopReason = !stopKind && !failure && answers.awaitingResponse
-		? "no-assistant-output" : resolveStopReason({ stopKind, failure, state });
+	if (partial) answers.observePartial(partial);
+	const completedError = !answers.awaitingResponse && (state.stopReason === "error" || state.stopReason === "length");
+	let stopReason = !stopKind && !failure && partial && !completedError ? "incomplete-output"
+		: !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
+			: resolveStopReason({ stopKind, failure, state });
 	const finalization = finalizer?.snapshot();
-	if (!stopKind && !failure && state.stopReason !== "error" && state.stopReason !== "length"
-		&& finalization?.reason === "execution_budget") stopReason = "execution_budget";
+	if (!stopKind && !failure && !completedError && finalization?.reason === "execution_budget") stopReason = "execution_budget";
 	// Put the cause before partial output so the answer cap cannot hide it.
 	const explanation = answerExplanation({ ...state, stopReason })
 		?? (execution && stopReason === "hard_timeout" ? "Child hard runtime limit expired; available evidence may be incomplete."
@@ -577,7 +575,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		durationMs: Date.now() - started,
 		eventCount,
 		events,
-		sawAssistant: state.sawAssistant,
+		sawAssistant: state.sawAssistant || Boolean(partial),
 	};
 	if (pid !== undefined) diag.pid = pid;
 	const dump = summarizeChildRun({

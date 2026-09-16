@@ -154,6 +154,40 @@ test("an unfinished final-answer stream is retained and labelled, alongside the 
 	assert.match(result.text, /incomplete streamed response.*\nUnfinished correction/s); assert.doesNotMatch(result.text, /PRIVATE/);
 });
 
+test("an open stream without a delivered wrap retains the last finalized report", async t => {
+	const child = start(t); await child.ready(); child.answer("Original report.");
+	child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Unfinished correction." } });
+	child.proc.close(0); const result = await child.pending;
+	assert.equal(result.stopReason, "incomplete-output"); assert.match(result.text, /Original report/);
+	assert.match(result.text, /incomplete streamed response.*\nUnfinished correction/s);
+});
+
+for (const cause of ["aborted", "hard_timeout", "finalization_timeout"] as const) {
+	test(`${cause} before wrap delivery preserves completed and unfinished responses`, async t => {
+		const signal = new AbortController();
+		const child = start(t, { signal: signal.signal, hardTimeoutMs: cause === "hard_timeout" ? 20 : 0,
+			execution: { tools: ["read"], finalizeAfterMs: 0, finalizationGraceMs: cause === "finalization_timeout" ? 20 : 1000, startupTimeoutMs: 1000 } });
+		await child.ready(); child.answer("Original report."); child.wrap(); child.guard("state", "answering");
+		child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+		child.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Unfinished correction." } });
+		if (cause === "aborted") signal.abort();
+		const result = await child.pending;
+		assert.equal(result.stopReason, cause); assert.match(result.text, /Original report/); assert.match(result.text, /Unfinished correction/);
+		assert.match(result.text, /incomplete streamed response/); assert.doesNotMatch(result.text, /Wrap-up 1/);
+	});
+}
+
+test("an unfinished retry preserves the latest finalized provider error and its evidence", async t => {
+	const child = start(t); await child.ready();
+	child.answer("Prior partial findings.", { stopReason: "error", errorMessage: "Provider unavailable" });
+	child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Retry incomplete." } });
+	child.proc.close(0); const result = await child.pending;
+	assert.equal(result.stopReason, "error"); assert.match(result.text, /^Provider unavailable/);
+	assert.match(result.text, /Prior partial findings/); assert.match(result.text, /Retry incomplete/);
+});
+
 test("a zero exit with only an open stream is not mistaken for a complete answer", async t => {
 	const child = start(t); await child.ready();
 	child.emit({ type: "message_start", message: { role: "assistant", content: [] } });
