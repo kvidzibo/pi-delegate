@@ -50,12 +50,14 @@ type ViewContext = {
 
 function receiptText(snap: JobSnapshot): string {
 	if (snap.status === "queued") {
-		const why = snap.reason === "gpu" ? " gpu" : snap.reason === "slot" ? " slot" : "";
-		const wait = snap.reason === "gpu" ? "Waiting for gpu." : snap.reason === "slot" ? "Waiting for slot." : "Waiting.";
+		const why = snap.reason === "gpu" ? " gpu" : snap.reason === "resource" ? " resource" : snap.reason === "slot" ? " slot" : "";
+		const wait = snap.reason === "gpu" ? "Waiting for gpu." : snap.reason === "resource" ? `Waiting for shared resource${snap.resource ? ` ${snap.resource.key}` : ""}.` : snap.reason === "slot" ? "Waiting for slot." : "Waiting.";
 		return `bg ${snap.id} queued${why}\nquietForMs: ${snap.quietForMs ?? 0}\n${wait} jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.`;
 	}
 	if (snap.status === "running") {
 		const lines = [`bg ${snap.id} running`, `quietForMs: ${snap.quietForMs ?? 0}`];
+		if (snap.resource) lines.push(`resource: ${snap.resource.key} · shared capacity ${snap.resource.capacity} · ${snap.resource.state}`);
+		if (snap.resourceError) lines.push(snap.resourceError);
 		if (snap.finalization?.phase === "requested") lines.push("finalization requested; enforcement not yet acknowledged");
 		else if (snap.finalization?.phase === "draining") lines.push(`finalization enforced; ${snap.finalization.activeTools ?? "unknown"} current tools draining`);
 		else if (snap.finalization?.phase === "answering") lines.push("finalization enforced; waiting for the final answer");
@@ -69,7 +71,8 @@ function receiptText(snap: JobSnapshot): string {
 		lines.push("Slot still held. jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.");
 		return lines.join("\n");
 	}
-	return snap.answer || snap.stderrTail || snap.stopReason || "(no output)";
+	const answer = snap.answer || snap.stderrTail || snap.stopReason || "(no output)";
+	return snap.resourceError ? `${snap.resourceError}\n\n${answer}` : answer;
 }
 
 function formatOutput(input: {
@@ -122,6 +125,8 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.quietForMs !== undefined) details.quietForMs = snap.quietForMs;
 	if (snap.wrapped) details.wrapped = true;
 	if (snap.finalization) details.finalization = { ...snap.finalization };
+	if (snap.resource) details.resource = { ...snap.resource };
+	if (snap.resourceError) details.resourceError = snap.resourceError;
 	return details;
 }
 

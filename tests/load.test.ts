@@ -20,7 +20,7 @@ test("real isolated Pi child loads the explicit budget guard before any task is 
 
 test("explicit runtime guard preserves builtins, drains current tools and blocks prepared execution", async () => {
 	assert.deepEqual((await runPiProbe("delegate-finalization-probe")).result, {
-		realGuardHandshake: true, currentToolDrained: true, preparedToolBlocked: true,
+		realGuardHandshake: true, leaseInherited: true, currentToolDrained: true, preparedToolBlocked: true,
 		metadataPreserved: true, promptWithheld: true, noModelCalls: true,
 	});
 });

@@ -2,6 +2,8 @@ import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
+import { validateResourceGroup, type CapacityBroker, type ResourceGroup, type ResourceLease } from "./capacity.ts";
+import type { InheritedLease } from "../child-runtime/lease.ts";
 import {
 	applyProgress,
 	createProgress,
@@ -12,9 +14,15 @@ import {
 import { applyTgEvent, createTgMeter, visibleChildTg, type TgMeter } from "./tg.ts";
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
-export type QueueReason = "gpu" | "slot";
+export type QueueReason = "gpu" | "slot" | "resource";
+export type ResourceProgress = ResourceGroup & {
+	state: "waiting" | "held" | "released" | "not-acquired" | "release-unknown";
+	slot?: number;
+};
 
 export type JobHandle = {
+	/** Pass to runChild/runPiChild; do not close this borrowed descriptor. */
+	resourceLease?: InheritedLease;
 	id: string;
 	kind: Kind;
 	model: string;
@@ -33,6 +41,8 @@ export type JobRun = (
 export type ArchiveRef = { runId: string; sessionFile: string };
 
 export type JobSnapshot = {
+	resource?: ResourceProgress;
+	resourceError?: string;
 	archive?: ArchiveRef;
 	recordingError?: string;
 	id: string;
@@ -58,6 +68,8 @@ export type JobSnapshot = {
 };
 
 export type EnqueueInput = {
+	/** Explicit server/resource group, never derived from a model ID. Local jobs only. */
+	resourceGroup?: ResourceGroup;
 	archive?: ArchiveRef;
 	kind: Kind;
 	model: string;
@@ -102,6 +114,10 @@ export type ParsedCall =
 	  };
 
 type InternalJob = {
+	resourceGroup?: ResourceGroup;
+	resourceSlot?: number;
+	resourceError?: string;
+	lease?: ResourceLease;
 	archive?: ArchiveRef;
 	id: string;
 	kind: Kind;
@@ -207,16 +223,23 @@ export class JobScheduler {
 	private pumpAgain = false;
 	private readonly jobs: InternalJob[] = [];
 	private readonly limits: SchedulerLimits;
+	private readonly capacity?: CapacityBroker;
+	private readonly resourcePollMs: number;
+	private resourceTimer?: ReturnType<typeof setTimeout>;
 	private readonly onChange?: (snap?: JobSnapshot) => void;
 	private readonly onTerminal?: (snap: JobSnapshot) => void;
 	private readonly onSettled?: (snap: JobSnapshot) => string | void;
 
-	constructor(input: SchedulerLimits & { onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
+	constructor(input: SchedulerLimits & { capacity?: CapacityBroker; resourcePollMs?: number;
+		onChange?: (snap?: JobSnapshot) => void; onTerminal?: (snap: JobSnapshot) => void; onSettled?: (snap: JobSnapshot) => string | void }) {
 		this.limits = {
 			maxConcurrent: input.maxConcurrent,
 			maxLocalConcurrent: input.maxLocalConcurrent,
 			maxQueued: input.maxQueued,
 		};
+		this.capacity = input.capacity;
+		this.resourcePollMs = input.resourcePollMs ?? 250;
+		if (!Number.isSafeInteger(this.resourcePollMs) || this.resourcePollMs < 10 || this.resourcePollMs > 60000) throw new Error("Invalid resource poll interval.");
 		this.onChange = input.onChange;
 		this.onTerminal = input.onTerminal;
 		this.onSettled = input.onSettled;
@@ -224,13 +247,19 @@ export class JobScheduler {
 
 	enqueue(input: EnqueueInput): JobSnapshot {
 		if (this.closed) throw new Error("delegate refused: scheduler shutdown.");
-		if (!this.canStart(input.local) && this.queuedCount() >= this.limits.maxQueued) {
+		let resourceGroup: ResourceGroup | undefined;
+		if (input.local && (this.capacity || input.resourceGroup !== undefined)) {
+			if (!this.capacity) throw new Error("delegate refused: resource group requires a capacity broker.");
+			resourceGroup = validateResourceGroup(input.resourceGroup!);
+		}
+		if (!input.cancelOnAbort?.aborted && !this.canStart(input.local) && this.queuedCount() >= this.limits.maxQueued) {
 			throw new Error(
 				`delegate refused: ${this.queuedCount()} already queued (max ${this.limits.maxQueued}).`,
 			);
 		}
 		this.seq += 1;
 		const job: InternalJob = {
+			resourceGroup,
 			archive: input.archive,
 			id: `d${this.seq.toString(16).padStart(4, "0")}`,
 			kind: input.kind,
@@ -265,6 +294,15 @@ export class JobScheduler {
 		}
 		this.jobs.push(job);
 		this.pump();
+		// Resource availability is known only after the eligible-first pump probes it.
+		// Refuse an excess waiter without spawning, notifying completion, or retaining its runner.
+		if (job.status === "queued" && this.queuedCount() > this.limits.maxQueued) {
+			this.jobs.splice(this.jobs.indexOf(job), 1);
+			this.releaseRuntime(job);
+			this.armResourcePoll();
+			this.notify();
+			throw new Error(`delegate refused: ${this.queuedCount()} already queued (max ${this.limits.maxQueued}).`);
+		}
 		this.notify(job);
 		return this.snapshot(job);
 	}
@@ -405,6 +443,7 @@ export class JobScheduler {
 
 	async shutdown(): Promise<void> {
 		this.closed = true;
+		this.clearResourcePoll();
 		const running: Promise<void>[] = [];
 		for (const job of this.jobs) {
 			if (job.status === "queued") this.cancel(job.id);
@@ -460,11 +499,13 @@ export class JobScheduler {
 		if (job.status !== "queued") return undefined;
 		const running = this.runningJobs();
 		if (job.local && running.filter((item) => item.local).length >= this.limits.maxLocalConcurrent) return "gpu";
-		return "slot";
+		if (running.length >= this.limits.maxConcurrent) return "slot";
+		return job.resourceGroup ? "resource" : "slot";
 	}
 
 	private handle(job: InternalJob): JobHandle {
 		return {
+			...(job.lease ? { resourceLease: { ...job.lease.inherited } } : {}),
 			id: job.id,
 			kind: job.kind,
 			model: job.model,
@@ -494,6 +535,12 @@ export class JobScheduler {
 			current: job.status === "running" ? job.progress.current : undefined,
 			background: job.background,
 		};
+		if (job.resourceGroup) snap.resource = { ...job.resourceGroup,
+			state: job.lease ? "held" : job.status === "queued" ? "waiting" : job.resourceError ? "release-unknown"
+				: job.resourceSlot === undefined ? "not-acquired" : "released",
+			...(job.resourceSlot !== undefined ? { slot: job.resourceSlot } : {}),
+		};
+		if (job.resourceError) snap.resourceError = job.resourceError;
 		if (job.recordingError) snap.recordingError = job.recordingError;
 		if (job.wrapped) snap.wrapped = true;
 		if (job.finalization) snap.finalization = { ...job.finalization };
@@ -561,6 +608,7 @@ export class JobScheduler {
 
 	private releaseRuntime(job: InternalJob): void {
 		this.detachAbort(job);
+		this.releaseLeaseOnly(job);
 		// Keep collectible snapshots, not closures retaining the process and uncapped RPC state.
 		job.control = undefined;
 		job.run = undefined;
@@ -573,18 +621,67 @@ export class JobScheduler {
 			return;
 		}
 		this.pumping = true;
+		this.clearResourcePoll();
 		try {
 			do {
 				this.pumpAgain = false;
-				while (true) {
-					const next = this.jobs.find((job) => job.status === "queued" && this.canStart(job.local));
-					if (!next) break;
-					this.start(next);
+				const blocked = new Set<string>();
+				for (const job of this.jobs) {
+					if (job.status !== "queued" || !this.canStart(job.local)) continue;
+					if (job.resourceGroup) {
+						const resourceKey = `${job.resourceGroup.key}/${job.resourceGroup.capacity}`;
+						if (blocked.has(resourceKey)) continue;
+						try {
+							const lease = this.capacity!.tryAcquire({ ...job.resourceGroup });
+							if (!lease) { blocked.add(resourceKey); continue; }
+							let retained = false;
+							try {
+								const claim = lease.claim, slot = claim.slot;
+								if (claim.key !== job.resourceGroup.key || claim.capacity !== job.resourceGroup.capacity
+									|| !Number.isSafeInteger(slot) || slot < 0 || slot >= job.resourceGroup.capacity) {
+									throw new Error("Capacity broker returned a mismatched resource claim.");
+								}
+								// A custom broker can synchronously trigger cancellation/shutdown observers.
+								if (job.status !== "queued" || this.closed || !this.canStart(job.local)) continue;
+								job.lease = lease; job.resourceSlot = slot; retained = true;
+							} finally { if (!retained) this.releaseLease(job, lease); }
+						} catch (error) {
+							if (!this.terminal(job)) {
+								job.status = "failed"; job.stopReason = "resource-error"; job.exitCode = 1;
+								job.errorMessage = `Shared resource unavailable: ${String(error)}`;
+								this.releaseRuntime(job); this.notify(job); this.emitTerminal(job);
+							}
+							continue;
+						}
+					}
+					this.start(job);
 				}
 			} while (this.pumpAgain);
 		} finally {
 			this.pumping = false;
+			this.armResourcePoll();
 		}
+	}
+
+	private releaseLeaseOnly(job: InternalJob): void {
+		if (!job.lease) return;
+		const lease = job.lease; job.lease = undefined;
+		this.releaseLease(job, lease);
+	}
+
+	private releaseLease(job: InternalJob, lease: ResourceLease): void {
+		try { lease.release(); } catch (error) { job.resourceError = `Resource lease release could not be confirmed: ${String(error)}`; }
+	}
+
+	private clearResourcePoll(): void {
+		if (this.resourceTimer !== undefined) clearTimeout(this.resourceTimer);
+		this.resourceTimer = undefined;
+	}
+
+	private armResourcePoll(): void {
+		this.clearResourcePoll();
+		if (this.closed || !this.jobs.some(job => job.status === "queued" && job.resourceGroup && this.canStart(job.local))) return;
+		this.resourceTimer = setTimeout(() => { this.resourceTimer = undefined; this.pump(); this.notify(); }, this.resourcePollMs);
 	}
 
 	private start(job: InternalJob): void {

@@ -4,6 +4,7 @@ import {
 	type ExtensionAPI, type ExtensionContext, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { FinalizationGate } from "./finalization.ts";
+import { CHILD_LEASE_FD, verifyLease } from "./lease.ts";
 import { GUARD_COMMAND, GUARD_ENV, GUARD_NOTICE, validateGuardConfig, type GuardConfig } from "./guard-protocol.ts";
 
 const factories: Record<string, (cwd: string) => ToolDefinition<any, any>> = {
@@ -19,7 +20,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 	let ready = false;
 	const notify = (event: "ready" | "state") => {
 		ctx?.ui.notify(JSON.stringify({ type: GUARD_NOTICE, version: 1, nonce: config.nonce, event,
-			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools] } : {}) }), "info");
+			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools], ...(config.lease ? { lease: config.lease } : {}) } : {}) }), "info");
 	};
 	const gate = new FinalizationGate(() => { if (ready) notify("state"); });
 
@@ -36,6 +37,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 	pi.on("session_start", (_event, next) => {
 		if (ready || next.mode !== "rpc") throw new Error("Runtime guard requires a fresh RPC child.");
 		ctx = next;
+		if (config.lease) verifyLease(CHILD_LEASE_FD, config.lease);
 		for (const name of config.tools) {
 			const tool = factories[name](next.cwd);
 			pi.registerTool({ ...tool, execute: (...args) => gate.execute(() => tool.execute(...args)) });
