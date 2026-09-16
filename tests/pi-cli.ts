@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Exercise the installed CLI/loader, never private unbundled Pi entrypoints. */
-export async function runPiProbe(command: string): Promise<Record<string, unknown>> {
+export async function runPiProbe(command: string, select?: (request: { title: string; options: string[] }) => string | undefined): Promise<Record<string, unknown>> {
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-load-"));
 	try {
 		return await new Promise((resolve, reject) => {
@@ -39,6 +39,13 @@ export async function runPiProbe(command: string): Promise<Record<string, unknow
 					const line = tail.slice(0, end); tail = tail.slice(end + 1);
 					try {
 						const event = JSON.parse(line);
+						if (event.type === "extension_ui_request" && event.method === "select" && select) {
+							try {
+								const value = select(event);
+								child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id: event.id, ...(value === undefined ? { cancelled: true } : { value }) })}\n`);
+							} catch (error) { failure = error instanceof Error ? error : new Error(String(error)); child.kill("SIGKILL"); }
+							continue;
+						}
 						if (event.type !== "extension_ui_request" || event.method !== "notify") continue;
 						const notice = JSON.parse(event.message);
 						if (notice.type === "delegate_test_probe" && notice.command === command) {

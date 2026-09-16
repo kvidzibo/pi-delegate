@@ -23,6 +23,8 @@ import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage
 import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
 import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
+import { LocalControl } from "./local-control.ts";
+import { LocalCommand } from "./local-command.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -50,8 +52,10 @@ type ViewContext = {
 
 function receiptText(snap: JobSnapshot): string {
 	if (snap.status === "queued") {
-		const why = snap.reason === "gpu" ? " gpu" : snap.reason === "slot" ? " slot" : "";
-		const wait = snap.reason === "gpu" ? "Waiting for gpu." : snap.reason === "slot" ? "Waiting for slot." : "Waiting.";
+		const why = snap.reason ? ` ${snap.reason}` : "";
+		const wait = snap.reason === "local-off" ? "Local delegation is OFF; waiting for /delegate-local on."
+			: snap.reason === "local-unavailable" ? "Local delegation control unavailable; dispatch paused."
+			: snap.reason === "gpu" ? "Waiting for gpu." : snap.reason === "slot" ? "Waiting for slot." : "Waiting.";
 		return `bg ${snap.id} queued${why}\nquietForMs: ${snap.quietForMs ?? 0}\n${wait} jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.`;
 	}
 	if (snap.status === "running") {
@@ -136,6 +140,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				: join(agentDir(), "delegate.json"),
 	});
 	const accounting = new Accounting(archiveRoot(agentDir()));
+	const localControl = new LocalControl(join(agentDir(), "delegate-local"));
 	const cards = new JobCards();
 	const origins = new Map<string, string>();
 	const uiDetails = (snap: JobSnapshot, extra: CardDetails = {}): CardDetails => detailsFromSnap(snap, {
@@ -183,6 +188,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 
 	const scheduler = new JobScheduler({
+		localAdmission: localControl,
 		maxConcurrent: config.maxConcurrent,
 		maxLocalConcurrent: config.maxLocalConcurrent,
 		maxQueued: config.maxQueued,
@@ -192,6 +198,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			status: snap.failed ? "failed" : "done", stopReason: snap.stopReason, exitCode: snap.exitCode,
 		}),
 	});
+
+	const localCommand = new LocalCommand(localControl, () => scheduler.refreshLocalState());
 
 	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
@@ -229,10 +237,16 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
 		bindUi(ctx);
+		localCommand.start(ctx);
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
+	pi.registerCommand("delegate-local", {
+		description: "Show the shared local-delegation on/off picker, or set on|off|status. Existing jobs drain; hosted work is unchanged.",
+		getArgumentCompletions: (prefix) => ["on", "off", "status"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+		handler: (args, ctx) => localCommand.command(args, ctx),
+	});
 	pi.registerCommand("delegate-stats", {
 		description: "Recorded child usage: session (default), today, all, or rebuild the export ledger. No model calls.",
 		getArgumentCompletions: (prefix) => ["session", "today", "all", "rebuild"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
@@ -254,6 +268,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		localCommand.stop();
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();
@@ -354,6 +369,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
 					const resolved = resolveAgent(kind, parsed.modelOverride, config);
 					const local = isLocalModel(resolved.model);
+					if (local) localControl.assertEnabled();
 					update({
 						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }],
 						details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background },

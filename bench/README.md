@@ -57,7 +57,7 @@ Both models receive fresh copies of identical fixtures, tasks and strict expecte
 
 A profile is published only after the full campaign completes with at least four distinct mutually successful, fully recorded tasks. This is a **small recon pilot**, not evidence of general coding/review quality. Broader workloads need their own profiles and suites.
 
-`/delegate-calibrate-cancel` or closing the benchmark session cancels work and retains evidence. The runner never starts/stops servers, changes GPU fans or imports old comparisons. Run it with the local server ready and other local work idle; it does not coordinate local slots with other Pi sessions.
+`/delegate-calibrate-cancel` or closing the benchmark session cancels work and retains evidence. The runner never starts/stops servers, changes GPU fans or imports old comparisons. Run it with the local server ready and other local work idle; it does not coordinate local slots with other Pi sessions. Use `/delegate-local off` and wait for `OFF · idle` to pause ordinary delegates in participating sessions sharing the agent directory. This opt-in runner deliberately bypasses that switch; other local clients still need separate coordination. Restore `/delegate-local on` afterward.
 
 ### Budget and permission limits
 
