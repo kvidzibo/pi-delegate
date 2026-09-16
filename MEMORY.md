@@ -1,5 +1,9 @@
 # Validated lessons
 
+- Immediate Pi exit can drop an asynchronous RPC notice. Send a bounded correlated stderr receipt, latch its terminal cause, and keep draining earlier stdout reports; verify with the real offline transport boundary.
+- Request-only clipping needs stable replay projections, not repeated newest-first rewrites of old inputs. Test SDK cache-marker movement and grammar-tool output shapes against serialized payloads.
+- Adding nested progress data requires updating every snapshot copier, not just event ingestion and archival copies. Mutate returned scheduler snapshots in regression tests to expose aliases.
+
 - Startup readiness can be invalidated during a caller handshake or between promise callbacks. Recheck synchronously at actual task dispatch; an early finalization must finish draining first.
 - Track an open assistant turn separately from its text. Thinking-only/open-empty turns are incomplete too, and streamed evidence keeps the phase in which the turn started.
 
@@ -37,3 +41,4 @@
 - Cache busy resources by both group and requested capacity within a scheduling pass. Key-only caching can hide a conflicting live limit behind an ordinary waiter instead of reporting the configuration conflict.
 - Keep acquired resources provisional through validation and enclosing cleanup. A throwing claim getter or mutex close must release the provisional lease; multi-descriptor cleanup must attempt every close even if one fails.
 - With independent admission gates, keep capacity provisional until both accept. Roll back refusals immediately and stop retrying if release cannot be confirmed; do not replace an earlier cancellation.
+- Individually mergeable runtime branches can conflict at shared readiness gates. Validate tools, lease identity and context policy together before dispatch, then test scheduler-to-child forwarding and lease retention through refusal.

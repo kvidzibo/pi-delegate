@@ -59,6 +59,21 @@ test("guard progress snapshots distinguish requested and enforced finalization a
 	assert.equal((await scheduler.wait(job.id)).finalization?.phase, "answering");
 });
 
+test("scheduler preserves detached context receipts and classifies a zero-exit context limit as failed", async t => {
+	const { scheduler, job, emit, finish } = setup();
+	t.after(async () => { finish(); await scheduler.shutdown(); });
+	const finalization = { phase: "requested" as const, reason: "context_budget" as const,
+		headroom: { policyId: "a".repeat(64), phase: "limited" as const, limited: true, clippedToolResults: 1 } };
+	emit({ type: "delegate_finalization", state: finalization });
+	finalization.headroom.clippedToolResults = 99;
+	const snapshot = scheduler.get(job.id); assert.equal(snapshot.finalization?.headroom?.clippedToolResults, 1);
+	snapshot.finalization!.headroom!.clippedToolResults = 88;
+	assert.equal(scheduler.get(job.id).finalization?.headroom?.clippedToolResults, 1);
+	finish({ ...ok, stopReason: "context_budget", finalization: { ...snapshot.finalization!, headroom: { ...snapshot.finalization!.headroom!, clippedToolResults: 1 } } });
+	const result = await scheduler.wait(job.id); assert.equal(result.status, "failed"); assert.equal(result.answer, ok.text);
+	assert.equal(result.finalization?.headroom?.clippedToolResults, 1);
+});
+
 for (const action of ["cancel", "shutdown"] as const) {
 	test(`${action} cannot reattach late control or dispatch another wrap`, async t => {
 		const { scheduler, job, control, finish } = setup();

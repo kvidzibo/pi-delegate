@@ -4,6 +4,8 @@ import {
 	type ExtensionAPI, type ExtensionContext, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { FinalizationGate } from "./finalization.ts";
+import { installHeadroomGuard } from "./headroom-guard.ts";
+import type { HeadroomProgress } from "./headroom-protocol.ts";
 import { CHILD_LEASE_FD, verifyLease } from "./lease.ts";
 import { GUARD_COMMAND, GUARD_ENV, GUARD_NOTICE, validateGuardConfig, type GuardConfig } from "./guard-protocol.ts";
 
@@ -18,11 +20,15 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 	config = validateGuardConfig(config);
 	let ctx: ExtensionContext | undefined;
 	let ready = false;
-	const notify = (event: "ready" | "state") => {
+	const notify = (event: "ready" | "state" | "headroom", progress?: HeadroomProgress) => {
 		ctx?.ui.notify(JSON.stringify({ type: GUARD_NOTICE, version: 1, nonce: config.nonce, event,
-			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools], ...(config.lease ? { lease: config.lease } : {}) } : {}) }), "info");
+			state: gate.snapshot(), ...(event === "ready" ? { tools: [...config.tools], ...(config.lease ? { lease: config.lease } : {}) } : {}),
+			...(progress ? { headroom: progress } : {}) }), "info");
 	};
 	const gate = new FinalizationGate(() => { if (ready) notify("state"); });
+	const headroom = config.headroom ? installHeadroomGuard(pi, config.headroom, {
+		nonce: config.nonce, ready: () => ready, gate, closeTools: () => pi.setActiveTools([]), notify: progress => notify("headroom", progress),
+	}) : undefined;
 
 	pi.registerCommand(GUARD_COMMAND, {
 		description: "Private delegate runtime control.",
@@ -38,6 +44,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 		if (ready || next.mode !== "rpc") throw new Error("Runtime guard requires a fresh RPC child.");
 		ctx = next;
 		if (config.lease) verifyLease(CHILD_LEASE_FD, config.lease);
+		headroom?.checkModel(next.model);
 		for (const name of config.tools) {
 			const tool = factories[name](next.cwd);
 			pi.registerTool({ ...tool, execute: (...args) => gate.execute(() => tool.execute(...args)) });
@@ -48,7 +55,7 @@ export function installRuntimeGuard(pi: ExtensionAPI, config: GuardConfig): void
 			throw new Error("Runtime guard could not establish the requested tool set.");
 		}
 		ready = true;
-		notify("ready");
+		notify("ready", headroom ? { policyId: headroom.policyId, phase: "ready", limited: false } : undefined);
 	});
 	pi.on("session_shutdown", () => { ready = false; gate.request(); ctx = undefined; });
 }

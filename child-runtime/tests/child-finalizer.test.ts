@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChildFinalizer, type FinalizerClock } from "../child-finalizer.ts";
+import { headroomPolicyId } from "../headroom.ts";
+import type { LeaseIdentity } from "../lease.ts";
 import { GUARD_NOTICE, GUARD_REQUEST_ID, validateGuardedExecution, type GuardedExecution } from "../guard-protocol.ts";
 
 class Clock implements FinalizerClock {
@@ -25,15 +27,36 @@ const notice = (event = "ready", phase = "running", activeTools = 0, fields: obj
 	type: "extension_ui_request", method: "notify", message: JSON.stringify({ type: GUARD_NOTICE, nonce, version: 1,
 		event, tools: policy.tools, state: { phase, activeTools }, ...fields }),
 });
-function start(overrides: Partial<GuardedExecution> = {}, writes = true) {
+function start(overrides: Partial<GuardedExecution> = {}, writes = true, lease?: LeaseIdentity) {
 	const clock = new Clock(), sent: any[] = [], steers: string[] = [], failures: any[] = [], states: any[] = [];
 	const child = new ChildFinalizer({ ...policy, ...overrides }, nonce, {
 		send: command => { sent.push(command); return writes; }, steer: text => { steers.push(text); return writes; },
 		fail: (reason, text) => failures.push({ reason, text }), onState: state => states.push(state),
-	}, clock);
+	}, clock, lease);
 	child.start("Finish now.");
 	return { child, clock, sent, steers, failures, states };
 }
+
+test("combined lease/headroom readiness requires both proofs and preserves later context finalization", () => {
+	const headroom = { maxInputBytes: 65536, maxToolResultBytes: 512, maxToolBatchBytes: 768, reserveTokens: 4096 };
+	const policyId = headroomPolicyId(headroom), lease = { dev: "1", ino: "2" };
+	const progress = { policyId, phase: "ready", limited: false };
+	for (const fields of [{ headroom: progress }, { lease: { ...lease, ino: "3" }, headroom: progress }, { lease },
+		{ lease, headroom: { ...progress, policyId: "a".repeat(64) } }, { lease, headroom: { ...progress, phase: "checked" } }]) {
+		const { child, failures, clock } = start({ headroom }, true, lease);
+		child.accept(notice("ready", "running", 0, fields));
+		assert.equal(child.canDispatchTask(), false); assert.equal(failures[0]?.reason, "guard-error");
+		assert.equal(clock.jobs.size, 0);
+	}
+	const { child, failures, sent } = start({ headroom }, true, lease);
+	child.accept(notice("ready", "running", 0, { lease, headroom: progress }));
+	assert.equal(child.canDispatchTask(), true); child.markTaskSent();
+	child.accept(notice("headroom", "running", 0, { headroom: { ...progress, phase: "limited", limited: true } }));
+	assert.equal(sent.length, 1); assert.equal(child.snapshot().reason, "context_budget");
+	child.accept(notice("state", "answering"));
+	assert.equal(child.snapshot().phase, "answering"); assert.equal(child.snapshot().headroom?.limited, true);
+	assert.deepEqual(failures, []); child.dispose();
+});
 
 test("readiness is required; RPC success is not enforcement acknowledgement", async () => {
 	const { child, sent, steers, clock } = start();
@@ -142,6 +165,49 @@ test("dispose aborts readiness waiters, releases timers and ignores late control
 	child.dispose(); await assert.rejects(ready, /startup stopped/);
 	child.start("finish"); child.settled(); child.accept(notice()); assert.equal(child.request("finish"), false);
 	assert.equal(sent.length, 0); assert.equal(clock.jobs.size, 0);
+});
+
+const headroom = { maxInputBytes: 65536, maxToolResultBytes: 512, maxToolBatchBytes: 768, reserveTokens: 4096 };
+const contextProgress = (phase: string, fields: object = {}) => ({ policyId: headroomPolicyId(headroom), phase,
+	limited: phase !== "ready" && phase !== "checked", ...fields });
+
+test("headroom readiness must acknowledge the exact policy before task dispatch", () => {
+	for (const progress of [undefined, contextProgress("ready", { policyId: "0".repeat(64) }), contextProgress("checked")]) {
+		const bad = start({ headroom }); bad.child.accept(notice("ready", "running", 0, { headroom: progress }));
+		assert.equal(bad.failures[0].reason, "guard-error"); assert.equal(bad.child.canDispatchTask(), false);
+	}
+	const good = start({ headroom }); good.child.accept(notice("ready", "running", 0, { headroom: contextProgress("ready") }));
+	assert.equal(good.child.canDispatchTask(), true); good.child.dispose();
+});
+
+test("headroom receipts request first-wins finalization before gate acknowledgement", () => {
+	const run = start({ headroom });
+	run.child.accept(notice("ready", "running", 0, { headroom: contextProgress("ready") })); run.child.markTaskSent();
+	run.child.accept(notice("headroom", "running", 0, { headroom: contextProgress("limited", { inputBytes: 1234, clippedToolResults: 1 }) }));
+	assert.equal(run.child.snapshot().reason, "context_budget"); assert.equal(run.child.snapshot().phase, "requested");
+	assert.equal(run.sent.length, 1); assert.equal(run.steers.length, 0);
+	run.child.accept(notice("state", "answering")); assert.deepEqual(run.steers, ["Finish now."]);
+	run.clock.advance(90); run.child.accept(notice("headroom", "answering", 0, { headroom: contextProgress("checked") }));
+	const snapshot = run.child.snapshot(); assert.equal(snapshot.headroom?.limited, true);
+	snapshot.headroom!.limited = false; assert.equal(run.child.snapshot().headroom?.limited, true);
+	run.child.accept(notice("headroom", "answering", 0, { headroom: contextProgress("limited") }));
+	run.clock.advance(10); assert.equal(run.failures[0].reason, "finalization_timeout"); assert.equal(run.sent.length, 1);
+});
+
+test("context refusal is terminal before readiness and late notices cannot replace it", () => {
+	const run = start({ headroom });
+	run.child.accept(notice("headroom", "running", 0, { headroom: contextProgress("refused", { detail: "unknown model limits" }) }));
+	assert.equal(run.failures[0].reason, "context_budget"); assert.match(run.failures[0].text, /unknown model limits/);
+	run.child.accept(notice()); run.clock.advance(1000); assert.equal(run.failures.length, 1);
+	assert.equal(run.child.snapshot().headroom?.phase, "refused");
+});
+
+test("context pressure does not replace an earlier manual wrap request or extend its grace", () => {
+	const run = start({ headroom }); run.child.accept(notice("ready", "running", 0, { headroom: contextProgress("ready") }));
+	run.child.request("Manual wrap"); run.clock.advance(90);
+	run.child.accept(notice("headroom", "running", 0, { headroom: contextProgress("limited") }));
+	assert.equal(run.child.snapshot().reason, "wrap"); run.clock.advance(10);
+	assert.equal(run.failures[0].reason, "finalization_timeout");
 });
 
 test("guarded runtime policy validates timers and tools without selecting agent defaults", () => {

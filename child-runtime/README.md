@@ -38,7 +38,7 @@ The parent withholds the task until a nonce-correlated readiness notice verifies
 
 The guard wraps public Pi builtin tool definitions, preserving schemas and prompt metadata. Finalization synchronously closes their execution-body gate: already-running bodies may drain, but fresh calls are rejected, including calls prepared by parallel preflight. Removing active tools also discourages further attempts; prompt compliance is not the enforcement boundary. This is **not a sandbox**: existing shell work and unrelated processes retain their normal permissions.
 
-The first explicit wrap or soft-budget request wins and starts one grace deadline; repeats cannot restart work or extend it. Timers begin in the running process, not the queue. `timeoutMs` is still only a parent wait budget; the caller's independent `hardTimeoutMs` can terminate sooner. On natural settlement, a child must also exit within grace. Deadline/acknowledgement failures terminate the process group (SIGTERM, then SIGKILL after five seconds); the scheduler holds capacity until the child actually closes.
+The first explicit wrap, soft-budget or context-pressure request wins and starts one grace deadline; repeats cannot restart work or extend it. Timers begin in the running process, not the queue. `timeoutMs` is still only a parent wait budget; the caller's independent `hardTimeoutMs` can terminate sooner. On natural settlement, a child must also exit within grace. Deadline/acknowledgement failures terminate the process group (SIGTERM, then SIGKILL after five seconds); the scheduler holds capacity until the child actually closes.
 
 `delegate_finalization` progress events and `ChildResult.finalization` distinguish `starting`, `running`, `requested`, `draining` and `answering`. Only `draining`/`answering` acknowledge enforcement; active-tool counts are reported then, not guessed before acknowledgement. Guard failure, grace expiry and soft-budget exhaustion produce `guard-error`, `finalization_timeout` and `execution_budget` stop reasons. Earlier runtime failure/cancellation/hard-timeout causes win races. Budget exhaustion remains unsuccessful even if the child exits zero with a useful partial report.
 
@@ -46,11 +46,42 @@ Completed phase reports survive guarded failure. If a guarded child dies before 
 
 Guarded runs invalidate legacy savings estimates, including on archive reload/rebuild. Existing calibration keys do not represent execution policy; a policy-aware calibration is required before estimates can cover these runs.
 
+## Opt-in text headroom
+
+Add `headroom` to the explicit `execution` policy to enable request-time protection. Example values, not package defaults:
+
+```ts
+headroom: {
+  maxInputBytes: 65_536,
+  maxToolResultBytes: 4_096,
+  maxToolBatchBytes: 16_384,
+  reserveTokens: 8_192,
+}
+```
+
+This remains a **library opt-in, not a delegate configuration setting or default**. Readiness must acknowledge the exact policy hash before the parent sends its task. Models, output parameters, configured tools and saved prompts are not changed.
+
+`headroom.ts` provides the pure `planHeadroom(payload, model, policy)` and stateful `HeadroomSession` used by the guard. Tool caps count JSON-encoded content individually and cumulatively across each outgoing request. Known OpenAI Completions/Responses (including Codex/Azure and grammar-tool outputs) and Anthropic Messages envelopes are supported. Only protocol-position tool-result bodies may be shortened; task, assistant/call history, signatures, schemas and other request fields are preserved. Omission markers are explicit. Native/session evidence is never rewritten.
+
+The session preserves previously presented tool-result projections rather than re-clipping an earlier response's input prefix. Newest **fresh** results get remaining space first. Cache-marker movement is allowed without accumulating obsolete markers. Changed/disappeared/ambiguous result identities, an API change, or a fixed prefix that cannot fit cause refusal. Inspection is bounded to 4 MiB of raw JSON, 50,000 nodes, depth 64 and 4,096 tool results. Retained tool content is bounded by the aggregate policy cap.
+
+Input ceiling: `min(maxInputBytes, contextWindow - reservedTokens) - 1024`, with the reserve equal to the larger of the policy minimum and actual requested output limit(s), or declared model maximum when absent. This deliberately allows at most one input byte per remaining declared token. It is **not tokenizer-exact, a full API-schema validator, or a guarantee about hidden server prompts, transport framing or inaccurate model/deployment metadata**. Azure deployment mapping must match the declared model limits. Other detectable model mismatches and Responses server-retained context references refuse. Unknown API/limits, opaque data, multimodal input and unfittable non-tool context refuse rather than guess.
+
+Any clipping or 80% occupancy requests finalization and closes the shared execution-body gate before the shaped request proceeds. The parent receives the reason before gate acknowledgement, preserves the first request/grace deadline, and sends the existing wrap instruction. Requested finalization is not a delivered user-message boundary. Default Pi compaction is cancelled instead of spending on an implicit summary; final requests still pass through the same budget check.
+
+Unsafe requests synchronously exit the dedicated child **before transport**. Ordinary Pi hook exceptions are swallowed, so throwing is not enforcement. A nonce-correlated RPC notice plus a bounded synchronous stderr receipt identifies refusal. The parent latches that cause while draining earlier stdout evidence. If both receipts are lost, reserved exit code 79 is reported explicitly as `refusal-exit`, not a confirmed receipt. Earlier terminal causes remain authoritative.
+
+`finalization.headroom` records the policy hash, phase, sticky pressure flag, latest available payload/reservation/clipping counts and bounded refusal detail. Parent receipts distinguish these from execution-gate acknowledgement; scheduler snapshots and archives retain detached copies. Pressure/refusal produces `context_budget` even after a zero exit, unless an earlier execution-budget request or terminal failure wins. Available reports remain accessible; this does not claim task completion.
+
+The guard runs last among explicit child file extensions and requires trusted compatible Pi transports that invoke `before_provider_request`. It does not cover custom streams/direct model calls that bypass that hook, earlier extensions' own compaction calls, server-side work, or arbitrary hostile code. It is not a sandbox. Offline tests exercise real Pi serialization and stream parsing through mocked HTTP, including swallowed hook errors, hard refusal and native evidence preservation.
+
 ## Inherited resource leases
 
 On Linux, `runPiChild` and `runChild` accept a borrowed `resourceLease: { fd, dev, ino }` from the shared-capacity broker. Guarded execution is mandatory. The parent validates the owned/private regular file, inherits the open descriptor as child FD 3, and withholds the task until the guard acknowledges its expected device/inode identity. Missing/mismatched acknowledgement fails as `guard-error`; the runtime never silently drops the lease.
 
 The broker/scheduler owns the parent descriptor and releases it only after the runner settles. Neither the runtime nor a caller-provided runner may close a borrowed descriptor. The inherited child descriptor preserves kernel occupancy if the parent dies; it closes with the child. This coordinates cooperating live child processes, not unrelated work or lingering server-side requests. Default runs inherit no resource descriptor and keep their original three-pipe stdio setup. See [shared capacity](../delegate/README.md#shared-capacity-api) for backend requirements and scope.
+
+A lease can be combined with `execution.headroom`. The same readiness notice must acknowledge the requested tools, inherited device/inode and exact headroom policy hash. Neither proof substitutes for the other. Context pressure/refusal does not release the borrowed parent descriptor; its owner still holds it through runner closure.
 
 ## Tests
 

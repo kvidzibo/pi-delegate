@@ -567,7 +567,7 @@ export class JobScheduler {
 		if (job.recordingError) snap.recordingError = job.recordingError;
 		if (job.localAdmissionError) snap.recordingError = `Local dispatch unavailable: ${job.localAdmissionError}`;
 		if (job.wrapped) snap.wrapped = true;
-		if (job.finalization) snap.finalization = { ...job.finalization };
+		if (job.finalization) snap.finalization = copyFinalizationProgress(job.finalization);
 		if (job.status === "running" || job.status === "queued") {
 			const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
 			snap.quietForMs = Math.max(0, Date.now() - last);

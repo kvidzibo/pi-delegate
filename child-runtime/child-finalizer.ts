@@ -2,7 +2,10 @@ import { GUARD_COMMAND, GUARD_REQUEST_ID, parseGuardNotice,
 	type GuardedExecution, type FinalizationProgress, type FinalizationReason } from "./guard-protocol.ts";
 import { sameLease, validateLeaseIdentity, type LeaseIdentity } from "./lease.ts";
 
-export type FinalizationFailure = "guard-error" | "finalization_timeout";
+import { headroomPolicyId } from "./headroom.ts";
+import { copyHeadroomProgress, type HeadroomProgress } from "./headroom-protocol.ts";
+
+export type FinalizationFailure = "guard-error" | "finalization_timeout" | "context_budget";
 export interface FinalizerClock {
 	set: (callback: () => void, ms: number) => unknown;
 	clear: (handle: unknown) => void;
@@ -32,6 +35,8 @@ export class ChildFinalizer {
 	private ended = false;
 	private disposed = false;
 	private message?: string;
+	private defaultWrapMessage?: string;
+	private readonly headroomId?: string;
 	private startupTimer?: unknown;
 	private softTimer?: unknown;
 	private graceTimer?: unknown;
@@ -40,17 +45,33 @@ export class ChildFinalizer {
 	constructor(policy: GuardedExecution, nonce: string, bindings: Bindings, timer: FinalizerClock = clock, expectedLease?: LeaseIdentity) {
 		this.policy = policy; this.nonce = nonce; this.bindings = bindings; this.clock = timer;
 		this.expectedLease = expectedLease ? validateLeaseIdentity(expectedLease) : undefined;
+		if (policy.headroom) {
+			this.headroomId = headroomPolicyId(policy.headroom);
+			this.state.headroom = { policyId: this.headroomId, phase: "starting", limited: false };
+		}
 	}
 
 	start(defaultWrapMessage: string): void {
 		if (this.disposed || this.started) return;
 		this.started = true;
+		this.defaultWrapMessage = defaultWrapMessage;
 		this.startupTimer = this.clock.set(() => this.fail("guard-error", "Child runtime guard did not become ready before its startup deadline."), this.policy.startupTimeoutMs);
 		if (this.policy.finalizeAfterMs > 0) this.softTimer = this.clock.set(() => this.request(defaultWrapMessage, "execution_budget"), this.policy.finalizeAfterMs);
 		this.notify();
 	}
 
-	snapshot(): FinalizationProgress { return { ...this.state }; }
+	snapshot(): FinalizationProgress { return { ...this.state, ...(this.state.headroom ? { headroom: { ...this.state.headroom } } : {}) }; }
+
+	/** Record correlated refusal or exit-only evidence. The parent still drains buffered stdout. */
+	refusalExit(receipt?: HeadroomProgress): void {
+		if (!this.headroomId || this.state.headroom?.phase === "refused") return;
+		if (receipt && (receipt.policyId !== this.headroomId || receipt.phase !== "refused" || !receipt.limited)) {
+			throw new Error("Child acknowledged a different headroom refusal policy.");
+		}
+		this.state.headroom = receipt ? { ...receipt } : { policyId: this.headroomId, phase: "refusal-exit", limited: true,
+			detail: "Child used the context-refusal exit code without a confirmed receipt." };
+		this.notify();
+	}
 
 	canDispatchTask(): boolean {
 		return this.ready && !this.disposed && !this.ended && (!this.state.reason || this.state.phase === "answering");
@@ -71,7 +92,7 @@ export class ChildFinalizer {
 		if (this.ended || this.disposed || !message.trim() || message.length > 20000) return false;
 		if (this.state.reason) return true; // First request, message and grace deadline win.
 		this.message = message;
-		this.state = { phase: "requested", reason };
+		this.state = { ...this.state, phase: "requested", reason };
 		this.graceTimer = this.clock.set(() => this.fail("finalization_timeout", "Child finalization grace expired; available evidence may be incomplete."), this.policy.finalizationGraceMs);
 		this.notify(); this.sendRequest();
 		return true;
@@ -88,16 +109,33 @@ export class ChildFinalizer {
 		try {
 			const notice = parseGuardNotice(event, this.nonce);
 			if (!notice) return;
+			if (notice.headroom && notice.headroom.policyId !== this.headroomId) throw new Error("Child acknowledged a different headroom policy.");
+			if (notice.event === "headroom") {
+				const progress = copyHeadroomProgress(notice.headroom);
+				if (!this.headroomId || !progress || !["checked", "limited", "compaction-blocked", "refused"].includes(progress.phase)
+					|| (progress.phase !== "checked" && !progress.limited) || (!this.ready && progress.phase !== "refused")) {
+					throw new Error("Invalid child headroom progress.");
+				}
+				this.state.headroom = { ...progress, limited: progress.limited || !!this.state.headroom?.limited };
+				this.notify();
+				if (progress.phase === "refused") this.fail("context_budget", `Child context request refused: ${progress.detail ?? "unsafe payload"}`);
+				else if (progress.limited) this.request(this.defaultWrapMessage!, "context_budget");
+				return;
+			}
 			if (notice.event === "ready") {
 				if (!sameLease(this.expectedLease, notice.lease)) throw new Error("Child runtime guard did not acknowledge the expected inherited resource lease.");
 				if (this.ready || notice.state.phase !== "running" || notice.state.activeTools !== 0 || !Array.isArray(notice.tools)
 					|| notice.tools.length !== this.policy.tools.length || !this.policy.tools.every(name => notice.tools!.includes(name))) {
 					throw new Error("Child runtime guard readiness does not match the requested tool set.");
 				}
+				if (this.headroomId && (notice.headroom?.policyId !== this.headroomId || notice.headroom.phase !== "ready" || notice.headroom.limited)) {
+					throw new Error("Child runtime guard did not acknowledge the requested headroom policy.");
+				}
 				this.ready = true;
 				this.clear("startupTimer");
 				// Running tool counts change independently; only report counts after gate closure.
 				if (!this.state.reason) this.state = { phase: "running" };
+				if (notice.headroom) this.state.headroom = { ...notice.headroom };
 				this.notify(); this.sendRequest();
 			} else {
 				if (!this.ready) throw new Error("Child runtime guard sent state before readiness.");
@@ -107,7 +145,7 @@ export class ChildFinalizer {
 						&& notice.state.activeTools > (this.state.activeTools ?? 0)) {
 						throw new Error("Child runtime guard admitted a fresh tool after finalization.");
 					}
-					this.state = { ...notice.state, reason: this.state.reason };
+					this.state = { ...notice.state, reason: this.state.reason, ...(this.state.headroom ? { headroom: this.state.headroom } : {}) };
 					this.notify(); this.sendSteer();
 				} else if (this.state.phase === "draining" || this.state.phase === "answering") {
 					throw new Error("Child runtime guard reopened after finalization.");
@@ -132,6 +170,7 @@ export class ChildFinalizer {
 		this.disposed = true;
 		this.clear("startupTimer"); this.clear("softTimer"); this.clear("graceTimer");
 		this.message = undefined;
+		this.defaultWrapMessage = undefined;
 		this.bindings = undefined;
 		for (const waiter of [...this.waiters]) waiter();
 		this.waiters.clear();
