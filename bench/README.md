@@ -29,10 +29,10 @@ The runner is not auto-loaded. With models and credentials configured, run from 
 pi -e ./bench/index.ts
 ```
 
-In that session, explicitly authorize a campaign using recon's configured thinking level (`low` below). It defaults to recon's model and mapped alternative:
+The campaign uses recon's model and mapped alternative. Pass recon's actual thinking level explicitly; shipped recon uses `off`, shown below. Omitting it uses the benchmark's `low` default, producing a profile that will not match `off` runs.
 
 ```text
-/delegate-calibrate {"out":"/tmp/delegate-calibration-new","budgetUsd":5,"localThinking":"low"}
+/delegate-calibrate {"out":"/tmp/delegate-calibration-new","budgetUsd":5,"localThinking":"off"}
 ```
 
 This makes real model calls with a **$5 API-metadata budget, not a provider billing cap**. Use provider-side limits too. `out` must be a new absolute directory with an existing parent. Artifacts persist until removed; keep them private and outside installed package clones. These profiles cover successful paired recon tasks, not general coding/review workloads.
