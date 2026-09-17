@@ -26,6 +26,7 @@ import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
 import { LocalControl } from "./local-control.ts";
 import { LocalCommand } from "./local-command.ts";
+import { ModelCommand } from "./model-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 
@@ -151,13 +152,15 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild = runChild) {
 	if (process.env.PI_DELEGATE_CHILD === "1") return;
 
-	const config = loadDelegateConfig({
+	const configPaths = {
 		shippedPath: join(EXTENSION_DIR, "config.json"),
 		userPath:
 			process.env.PI_DELEGATE_SKIP_USER_CONFIG === "1"
 				? undefined
 				: join(agentDir(), "delegate.json"),
-	});
+	};
+	const config = loadDelegateConfig(configPaths);
+	const modelCommand = new ModelCommand(config, configPaths);
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const localControl = new LocalControl(join(agentDir(), "delegate-local"));
 	const cards = new JobCards();
@@ -262,6 +265,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
+	pi.registerCommand("delegate", {
+		description: "Show each delegate role's model and choose from available Pi models. Saves defaults for new children.",
+		handler: (args, ctx) => modelCommand.command(args, ctx),
+	});
 	pi.registerCommand("delegate-local", {
 		description: "Show the shared local-delegation on/off picker, or set on|off|status. Existing jobs drain; hosted work is unchanged.",
 		getArgumentCompletions: (prefix) => ["on", "off", "status"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
@@ -288,6 +295,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		modelCommand.stop();
 		localCommand.stop();
 		gate.shutdown();
 		await scheduler.shutdown();

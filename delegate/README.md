@@ -6,7 +6,17 @@
 
 Settings load from [config.json](config.json), then `~/.pi/agent/delegate.json` (or `<PI_CODING_AGENT_DIR>/delegate.json`). A missing overlay is fine; invalid JSON or settings prevent loading. Omitted fields inherit shipped values. Keep customizations outside installed package clones, which Pi may reset during updates.
 
-Run `/reload` or restart Pi to apply changes. Reload stops outstanding children; it does not resume them.
+Manual edits require `/reload` or restart. Reload stops outstanding children; it does not resume them.
+
+### Interactive model selection
+
+`/delegate` shows all four roles and their active model IDs, marking assignments missing from Pi's available catalogue. Choose a role to open a searchable model list (provider, ID or display name); the current model is marked and listed first. Enter selects, confirmation saves, and Esc backs out of the current step. The overview returns after each selection so you can configure several roles. RPC clients get native selection dialogs instead of the searchable TUI.
+
+The list uses Pi's complete available-model registry, not the parent's scoped/cycling subset. Local model configuration/auth presence refreshes without discovery networking or inference calls. Availability means configured access, not a health check or guaranteed child access: children disable extensions, so providers registered only by a parent extension must also be configured for the child (for example in `models.json`). No credentials are displayed or copied.
+
+Saving patches only the selected role's `model` and `offline` fields in the user overlay. Hosted selections disable `offline`, explicitly shown in the confirmation; local selections keep the existing value. Tools, thinking, limits, unrelated overlay fields and shipped defaults remain untouched. Invalid/unreadable overlays and stale model edits are refused rather than overwritten; symlinked overlays retain their links.
+
+Changes apply to **new launches in the current session** without reload. Already-running and queued jobs retain their accepted model/settings. Other open sessions retain their loaded defaults until reload/restart. The parent's model is never changed. `PI_DELEGATE_SKIP_USER_CONFIG=1` disables saving.
 
 ### Per-agent settings
 
@@ -21,7 +31,7 @@ Configure these under `agents.recon`, `agents.implement`, `agents.review` or `ag
 
 All kinds default to `read`, `grep`, `find`, `ls` and `bash`; `implement` also gets `write` and `edit`. The other kinds' no-edit policy is a prompt instruction, **not a filesystem boundary**. All children retain your system permissions and can access the network through tools.
 
-A per-call `model` override changes only the model. The kind keeps its tools, prompt, thinking level and `offline` setting. When changing a local agent to a hosted model, explicitly set `offline: false` in the overlay.
+A per-call `model` override changes only the model. The kind keeps its tools, prompt, thinking level and `offline` setting. When manually changing a local agent to a hosted model, explicitly set `offline: false` in the overlay; `/delegate` does this on confirmation.
 
 ### Outcome receipts
 

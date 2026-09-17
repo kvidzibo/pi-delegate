@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { isNonEmptyStringArray } from "../child-runtime/policy.ts";
@@ -257,8 +258,47 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 	return parseDelegateConfig(merged, path);
 }
 
-export function loadDelegateConfig(input: { shippedPath: string; userPath?: string }): DelegateConfig {
+export interface ConfigPaths { shippedPath: string; userPath?: string }
+
+export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 	const shipped = parseDelegateConfig(JSON.parse(readFileSync(input.shippedPath, "utf8")), input.shippedPath);
 	if (!input.userPath || !existsSync(input.userPath)) return shipped;
 	return mergeDelegateConfig(shipped, JSON.parse(readFileSync(input.userPath, "utf8")), input.userPath);
+}
+
+/** Patch only this role's model/startup mode; never rewrite shipped defaults or other settings. */
+export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: AgentConfig, model: string): Pick<AgentConfig, "model" | "offline"> {
+	if (!paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
+	assertKind(kind);
+	if (!/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Expected a provider/model ID.");
+	let path = paths.userPath;
+	let overlay: Record<string, unknown> & { agents?: Partial<Record<Kind, Record<string, unknown>>> } = {};
+	let mode = 0o600;
+	let exists = false;
+	try { lstatSync(path); exists = true; }
+	catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	if (exists) {
+		// Preserve symlinks; a dangling link or unreadable/invalid file fails without writes.
+		path = realpathSync(path);
+		overlay = JSON.parse(readFileSync(path, "utf8"));
+		mode = statSync(path).mode & 0o777;
+	}
+	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
+	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
+	const saved = mergeDelegateConfig(shipped, overlay, path).agents[kind];
+	if (saved.model !== current.model || saved.offline !== current.offline) {
+		throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
+	}
+	const patch = { model, offline: isLocalModel(model) ? current.offline : false };
+	const next = { ...overlay, agents: { ...overlay.agents, [kind]: { ...overlay.agents?.[kind], ...patch } } };
+	mergeDelegateConfig(shipped, next, path);
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const temp = `${path}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode, flag: "wx" });
+		renameSync(temp, path);
+	} finally {
+		try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	}
+	return patch;
 }
