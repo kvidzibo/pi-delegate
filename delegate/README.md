@@ -2,6 +2,14 @@
 
 [Quick start](../README.md) · [Calibration](../bench/README.md) · [Implementation contract](SPEC.md)
 
+## Prompt policy
+
+The package owns delegation guidance. Pi includes `promptGuidelines` from [index.ts](index.ts) in its default parent system prompt while `delegate` is active. These cover when to delegate, role selection, self-contained briefs, parent responsibilities, result verification and `review loop <model>`. Model assignments stay in configuration; the guidance tells the parent to omit `model` unless the user explicitly selects one, without guessing IDs or silently substituting fallbacks.
+
+Children use [prompts/](prompts/) without the parent's conversation or context files. Include relevant project instructions and acceptance criteria in each task. Only `implement` may edit; all child prompts prohibit commits, pushes, merges, publishing, releases and scope expansion, and leave destructive or external actions to the parent. Prompt restrictions are not filesystem or shell enforcement.
+
+Do not duplicate this policy or model mappings in `AGENTS.md`. General project, safety and machine rules can remain there. Reload or restart Pi after source/prompt edits; reload stops outstanding children. Changing a child prompt changes its calibration hash, so old savings profiles no longer match new runs. Recorded usage and historical runs remain intact; recalibration is never automatic.
+
 ## Configuration
 
 Settings load from [config.json](config.json), then `~/.pi/agent/delegate.json` (or `<PI_CODING_AGENT_DIR>/delegate.json`). A missing overlay is fine; invalid JSON or settings prevent loading. Omitted fields inherit shipped values. Keep customizations outside installed package clones, which Pi may reset during updates.

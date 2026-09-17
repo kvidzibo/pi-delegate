@@ -86,6 +86,14 @@ Use the returned job ID in another `delegate` call (`d0001` below is illustrativ
 
 Defaults: **8 running jobs, 1 local worker, 16 queued jobs**. Hosted work can run while local work waits; a full queue rejects new work. See [job lifecycle](delegate/README.md#job-lifecycle) for overrides and notifications.
 
+### Delegation guidance
+
+The package supplies parent workflow through `promptGuidelines` in [delegate/index.ts](delegate/index.ts) and child restrictions through [delegate/prompts/](delegate/prompts/). No delegation block in `AGENTS.md` is required; remove duplicated role/model instructions there to avoid conflicts.
+
+The parent is instructed to choose a role and omit `model` unless the user explicitly requests another model. Defaults come from configuration, not a model list in the instructions. `review loop <model>` asks the parent to review with that model, address findings and repeat until no important findings remain, or report a blocker. It is a prompt convention, not an extension command or an enforced loop.
+
+The parent keeps responsibility for decisions, integration and verification. Child briefs must be self-contained; only `implement` may edit. All child prompts prohibit commits, pushes, merges, publishing, releases and scope expansion. These are prompt instructions, not a sandbox. See [prompt policy](delegate/README.md#prompt-policy) for source and reload details.
+
 ### Pause local delegation for benchmarks
 
 Run `/delegate-local` to open an **On / Off picker** showing the current shared setting and active local jobs. Esc leaves it unchanged. Direct commands are `/delegate-local on`, `/delegate-local off`, and `/delegate-local status`.
