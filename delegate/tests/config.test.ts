@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import {
 	mergeDelegateConfig,
 	parseDelegateConfig,
 	resolveAgent,
+	saveDelegateModel,
 	type DelegateConfig,
 } from "../config.ts";
 
@@ -93,6 +94,47 @@ test("load merges user overlay file", () => {
 	const loaded = loadDelegateConfig({ shippedPath, userPath });
 	assert.equal(loaded.agents.implement.model, "llama.cpp/qwen");
 	assert.equal(loaded.agents.recon.model, shipped().agents.recon.model);
+});
+
+test("model saves preserve overlays, reject stale/invalid config, and keep symlink targets", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-model-config-"));
+	const userPath = join(dir, "delegate.json");
+	const paths = { shippedPath, userPath };
+	try {
+		const current = shipped().agents.recon;
+		const patch = saveDelegateModel(paths, "recon", current, "hosted/first");
+		assert.deepEqual(patch, { model: "hosted/first", offline: false });
+		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
+		const overlay = { maxConcurrent: 3, note: "keep", agents: {
+			recon: { ...patch, thinking: "medium", tools: ["read"], note: "keep role" }, review: { model: "other/review" },
+		} };
+		writeFileSync(userPath, JSON.stringify(overlay));
+		const live = loadDelegateConfig(paths).agents.recon;
+		const local = saveDelegateModel(paths, "recon", live, "ollama/team/model");
+		assert.deepEqual(local, { model: "ollama/team/model", offline: false });
+		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
+			...overlay.agents, recon: { ...overlay.agents.recon, ...local },
+		} });
+		const before = readFileSync(userPath, "utf8");
+		assert.throws(() => saveDelegateModel(paths, "recon", live, "hosted/stale"), /changed on disk/);
+		assert.equal(readFileSync(userPath, "utf8"), before);
+		for (const bad of ["{broken", '{"agents":{"recon":false}}']) {
+			writeFileSync(userPath, bad);
+			assert.throws(() => saveDelegateModel(paths, "recon", live, "hosted/new"));
+			assert.equal(readFileSync(userPath, "utf8"), bad);
+		}
+		writeFileSync(userPath, before);
+		if (process.platform !== "win32") {
+			const link = join(dir, "linked.json"); symlinkSync(userPath, link);
+			saveDelegateModel({ shippedPath, userPath: link }, "recon", loadDelegateConfig(paths).agents.recon, "hosted/symlink");
+			assert.equal(lstatSync(link).isSymbolicLink(), true);
+			assert.equal(loadDelegateConfig(paths).agents.recon.model, "hosted/symlink");
+			const defaults = join(dir, "defaults.json"), alias = join(dir, "defaults-link.json");
+			writeFileSync(defaults, readFileSync(shippedPath, "utf8")); symlinkSync(defaults, alias);
+			assert.throws(() => saveDelegateModel({ shippedPath: defaults, userPath: alias }, "recon", current, "hosted/new"), /shipped delegate defaults/);
+			assert.equal(readFileSync(defaults, "utf8"), readFileSync(shippedPath, "utf8"));
+		}
+	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("broken shipped invariants refused", () => {

@@ -31,7 +31,13 @@ This README describes repository source; published releases may lag behind it.
 
 ## Config
 
-The [shipped models](delegate/config.json) are examples and become active defaults. Set models available in your Pi setup in `~/.pi/agent/delegate.json`, for example:
+Run **`/delegate`** to see the model assigned to each role (`recon`, `implement`, `review`, `oracle`). Select a role, type to search Pi's available models by provider, ID or name, and confirm the change. Esc backs out without saving that selection.
+
+Selections persist in `~/.pi/agent/delegate.json` and apply immediately to **new delegates in this session**. Running and queued jobs keep their original settings. Tools, thinking levels and the parent model are unchanged. Choosing a hosted model also sets that role's `offline` to `false`, shown before confirmation. Other open Pi sessions need `/reload` to pick up saved changes.
+
+The picker lists all models with configured access in Pi, not just the parent's scoped/cycling models. This is not a server-health check. Unavailable current assignments are marked; no automatic fallback occurs. No model calls are made.
+
+The [shipped models](delegate/config.json) are examples and become active defaults. You can also edit `~/.pi/agent/delegate.json` directly, for example:
 
 ```json
 {
@@ -46,7 +52,7 @@ The [shipped models](delegate/config.json) are examples and become active defaul
 
 Omitted settings inherit shipped values, **including `offline`**. Set it to `false` when switching a local agent to a hosted model. Invalid config prevents loading. Edit the user overlay, not an installed package clone.
 
-Run `/reload` or restart Pi after changes. **Reload stops outstanding children.** See the [configuration reference](delegate/README.md#configuration) for tools, thinking levels and limits.
+Run `/reload` or restart Pi after **manual config edits** or package updates. **Reload stops outstanding children.** UI selections need no reload in the current session. See the [configuration reference](delegate/README.md#configuration) for tools, thinking levels and limits.
 
 ## Use
 

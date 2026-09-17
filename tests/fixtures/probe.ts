@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { cardProbe } from "./cards.ts";
 import { resultProbe } from "./results.ts";
@@ -59,6 +59,109 @@ export default function probe(pi: ExtensionAPI) {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
 		return { tools: tools.map((tool) => tool.name) };
+	});
+	register("delegate-models-probe", async (ctx) => {
+		assert.ok(pi.getCommands().some(command => command.name === "delegate"));
+		const initial = JSON.parse(readFileSync(new URL("../../delegate/config.json", import.meta.url), "utf8"));
+		const oldModel = initial.agents.recon.model;
+		const slash = oldModel.indexOf("/");
+		const selected = "picker-cloud/team/new";
+		writeFileSync(join(getAgentDir(), "models.json"), JSON.stringify({ providers: {
+			[oldModel.slice(0, slash)]: { baseUrl: "http://localhost:1/v1", api: "openai-completions", apiKey: "unused",
+				models: [{ id: oldModel.slice(slash + 1) }] },
+			"picker-cloud": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", apiKey: "unused",
+				models: [{ id: "team/new", name: "Fresh Model" }] },
+			"picker-no-auth": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", models: [{ id: "hidden" }] },
+		} }));
+		const userPath = join(getAgentDir(), "delegate.json");
+		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: { recon: { thinking: "medium", tools: ["read", "bash"] } } };
+		writeFileSync(userPath, JSON.stringify(overlay));
+		const original = readFileSync(userPath, "utf8");
+		const skip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
+		let tool: any, finish: (() => void) | undefined;
+		const launches: any[] = [], notices: string[] = [];
+		const factory = () => delegate({ ...pi,
+			registerTool: (definition: unknown) => { tool = definition; },
+			registerCommand: (name: string, command: unknown) => commands.set(name, command),
+			registerMessageRenderer: () => {}, on: (event: string, handler: Function) => { handlers.set(event, handler); },
+			setModel: () => { throw new Error("Must not change the parent model"); },
+		} as unknown as ExtensionAPI, async input => {
+			launches.push(input);
+			if (input.task === "hold") await new Promise<void>(resolve => {
+				finish = resolve; input.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+			return { text: "mock complete", exitCode: 0, stderrTail: "" };
+		});
+		let rolePicks = 0, modelPicks = 0, confirms = 0, sequence = 0;
+		const testCtx: any = { ...ctx, mode: "tui", isIdle: () => false,
+			scopedModels: [{ model: { provider: oldModel.slice(0, slash), id: oldModel.slice(slash + 1) } }],
+			ui: { ...ctx.ui, setWidget: () => {}, setStatus: () => {}, notify: (text: string) => notices.push(text),
+				select: async (title: string, options: string[]) => {
+					assert.match(title, /Delegate models/);
+					assert.equal(options.length, 4);
+					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
+					if (++rolePicks <= 2) {
+						assert.equal(readFileSync(userPath, "utf8"), original, "cancel does not write");
+						return options[0];
+					}
+					assert.match(options[0], /picker-cloud\/team\/new/);
+					return undefined;
+				},
+				custom: async (create: Function) => {
+					let result: string | undefined;
+					const tui = { terminal: { rows: 30 }, requestRender: () => {} };
+					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+					try {
+						component.focused = true;
+						assert.ok(component.render(100).join("\n").includes("✓ current"));
+						assert.ok(component.render(100).join("\n").includes(selected));
+						assert.ok(!component.render(100).join("\n").includes("picker-no-auth"));
+						if (++modelPicks === 1) { component.handleInput("\x1b"); return result; }
+						for (const char of "Fresh Model") component.handleInput(char);
+						assert.match(component.render(100).join("\n"), /1\/2 available/);
+						for (const width of [12, 40, 100]) assert.ok(component.render(width).every((line: string) => visibleWidth(line) <= width));
+						tui.terminal.rows = 15;
+						assert.ok(component.render(40).length <= 15);
+						component.handleInput("\r");
+						assert.equal(result, selected);
+						return result;
+					} finally { component.dispose(); }
+				},
+				confirm: async (_title: string, text: string) => {
+					confirms++; assert.match(text, /offline: true → false/); assert.ok(text.includes(userPath)); return true;
+				},
+			},
+		};
+		const call = (params: unknown) => tool.execute(`models-${++sequence}`, params, undefined, undefined, testCtx);
+		try {
+			factory();
+			await handlers.get("session_start")?.({}, testCtx);
+			const running = await call({ kind: "recon", task: "hold", background: true });
+			const queued = await call({ kind: "recon", task: "queued", background: true });
+			assert.equal(queued.details.status, "queued");
+			await commands.get("delegate").handler("", testCtx);
+			assert.equal(confirms, 1, notices.join("\n"));
+			assert.equal(rolePicks, 3, notices.join("\n"));
+			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
+				recon: { ...overlay.agents.recon, model: selected, offline: false },
+			} });
+			const fresh = await call({ kind: "recon", task: "fresh" });
+			assert.equal(fresh.details.model, selected);
+			assert.equal(fresh.details.ok, true);
+			finish!();
+			await call({ jobId: running.details.jobId }); await call({ jobId: queued.details.jobId });
+			assert.deepEqual(launches.map(input => [input.model, input.offline]), [[oldModel, true], [selected, false], [oldModel, true]]);
+			assert.ok(launches.every(input => input.thinking === "medium" && input.tools.join(",") === "read,bash"));
+			await handlers.get("session_shutdown")?.();
+			factory(); // Reload from the saved overlay, not in-memory selections.
+			assert.equal((await call({ kind: "recon", task: "restored" })).details.model, selected);
+			return { roleModels: true, availableOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
+		} finally {
+			finish?.(); await handlers.get("session_shutdown")?.();
+			if (skip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = skip;
+		}
 	});
 	register("delegate-accounting-probe", async (ctx) => {
 		assert.ok(pi.getCommands().some((c) => c.name === "delegate-stats"));

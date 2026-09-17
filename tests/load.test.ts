@@ -27,6 +27,12 @@ test("installed Pi CLI tool selection uses exact comma-separated names, not wild
 	}
 });
 
+test("delegate model UI lists roles, searches available models and saves without changing accepted jobs", async () => {
+	assert.deepEqual((await runPiProbe("delegate-models-probe")).result, {
+		roleModels: true, availableOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true,
+	});
+});
+
 test("local delegation picker uses native dialogs, drains work and gates model overrides without fallback", async () => {
 	let selects = 0;
 	const result = await runPiProbe("delegate-local-probe", ({ title, options }) => {
