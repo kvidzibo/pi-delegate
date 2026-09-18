@@ -63,7 +63,7 @@ Foreground spawn waits for a slot (parent blocked). Local foreground also takes 
 
 Foreground `timeoutMs` expiry auto-promotes the job to background, detaches parent Esc, and returns a short nonterminal check-in (`terminal: false`, `jobId`, last tools, `quietForMs`). No thinking tail. Slot remains held. Parent continues with `jobId`, `wrap`, or `cancel`.
 
-Collect waits until terminal, wait budget, or `checkIntervalMs` with no child events. 60s sampling is internal and must not add parent-token receipts while the child is making progress.
+Collect waits until terminal, wait budget, or `checkIntervalMs` with no child events. Each wait starts a fresh quiet interval; later child events restart it. Waiting and wrap requests must not reset the reported `quietForMs` activity age. Peeks, explicit wait budgets and aborts still return sooner. 60s sampling is internal and must not add parent-token receipts while the child is making progress.
 
 `session_shutdown` aborts running jobs and drops the queue. Do not notify for shutdown-induced aborts. Terminal jobs (including queued cancellation and thrown runners) drop runner/control references, retaining only collectible snapshots rather than subprocess closures and uncapped RPC state. Late control callbacks cannot reattach to terminal jobs.
 

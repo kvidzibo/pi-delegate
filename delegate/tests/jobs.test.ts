@@ -559,6 +559,42 @@ test("quiet wait returns running; events postpone quiet", async () => {
 	await scheduler.shutdown();
 });
 
+test("post-wrap and repeated waits give quiet jobs a fresh interval without resetting activity age", async (t) => {
+	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+	const gate = deferred();
+	const scheduler = new JobScheduler(limits);
+	let wraps = 0;
+	const job = scheduler.enqueue(enq({ task: "silent tool", run: async (_job, signal, emit, onControl) => {
+		emit({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "long-running check" } });
+		onControl({ wrap: () => { wraps++; return true; } });
+		await gate.promise;
+		assert.equal(signal.aborted, false);
+		return ok;
+	} }));
+	try {
+		t.mock.timers.tick(100);
+		scheduler.wrap(job.id);
+		for (const quietForMs of [150, 200]) {
+			let returned = false;
+			const waiting = scheduler.wait(job.id, { quietMs: 50 }).then((snap) => { returned = true; return snap; });
+			t.mock.timers.tick(49);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.equal(returned, false, "old silence must not exhaust a new wait");
+			t.mock.timers.tick(1);
+			const snap = await waiting;
+			assert.equal(snap.status, "running");
+			assert.equal(snap.wrapped, true);
+			assert.equal(snap.current?.id, "bash-1");
+			assert.equal(snap.quietForMs, quietForMs, "waiting must not invent child activity");
+		}
+		assert.equal(wraps, 1);
+	} finally {
+		gate.resolve();
+		await scheduler.wait(job.id);
+		await scheduler.shutdown();
+	}
+});
+
 test("fg wait budget includes queue time", async () => {
 	const gate = deferred();
 	const scheduler = new JobScheduler(limits);
