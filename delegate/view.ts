@@ -27,7 +27,10 @@ const cleanBlock = (text: string): string => text.split("\n").map(displayText).j
 
 function receipt(state: RowState): string {
 	const d = state.details;
-	if (state.isError || d.ok === false || d.status === "failed") return "failure collected";
+	if (state.isError || d.ok === false || d.status === "failed") {
+		const reason = str(d, "stopReason");
+		return reason === "aborted" ? "cancelled" : `failure collected${reason ? ` · ${displayText(reason).replace(/_/g, " ")}` : ""}`;
+	}
 	if (d.status === "done") return "result collected";
 	const action = str(d, "operation");
 	if (state.isPartial) return action === "cancel" ? "cancelling" : action === "wrap" ? "wrapping up" : "waiting";
@@ -96,9 +99,8 @@ export function renderChildCall(input: RowInput): ChildView {
 		const state = input.read(); const d = state.details;
 		if (state.live && !state.collect && !state.pinned) return wrapTextWithAnsi(
 			`${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg("muted", "accepted — card pinned above editor")}`, width);
-		const header = state.collect
-			? `${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`
-			: paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
+		let header = paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
+		if (state.collect) header += ` · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`;
 		const lines = wrapTextWithAnsi(header, width);
 		return state.collect ? lines : paintCard(input.theme, lines, width, cardBackground(state));
 	});
@@ -111,17 +113,20 @@ export function renderChildResult(input: RowInput): ChildView {
 			? wrapTextWithAnsi(input.theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`), width) : [];
 		const lines: string[] = [];
 		const add = (text: string, color?: string) => lines.push(...wrapTextWithAnsi(color ? theme.fg(color, text) : text, width));
-		if (!state.collect) {
+		const failed = state.isError || d.ok === false || d.status === "failed";
+		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
+		const cancelled = failed && d.stopReason === "aborted";
+		if (!state.collect || failed || state.expanded) {
 			const task = str(d, "task");
 			if (task) {
 				if (state.expanded) add(`Task: ${cleanBlock(task)}`, "muted");
 				else lines.push(truncateToWidth(theme.fg("muted", `Task: ${displayText(task).replace(/\s+/g, " ").trim()}`), width, "…"));
 			}
+		}
+		if (!state.collect) {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
 		for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) add(displayText(str(d, key)), "warning");
-		const failed = state.isError || d.ok === false || d.status === "failed";
-		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
 		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
@@ -131,23 +136,27 @@ export function renderChildResult(input: RowInput): ChildView {
 		const answer = failed
 			? ((d.status === "failed" ? str(d, "answer") : "") || contentText || str(d, "answer") || "delegate failed (no error details)")
 			: (str(d, "answer") || contentText);
-		if ((failed || !pending) && answer && (!state.collect || state.expanded || failed)) {
+		// Cancelled runs may contain only internal response placeholders. Keep all raw
+		// evidence available when expanded; the compact view shows identity/task/activity.
+		if ((failed || !pending) && answer && (!state.collect || state.expanded || failed) && (!cancelled || state.expanded)) {
 			const rendered = new Markdown(cleanBlock(answer), 0, 0, getMarkdownTheme()).render(width);
 			while (rendered.length && !rendered[0].trim()) rendered.shift();
 			while (rendered.length && !rendered.at(-1)!.trim()) rendered.pop();
 			lines.push(...(state.expanded ? rendered : rendered.slice(0, 3)));
 		}
+		const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
 		if (state.expanded) {
-			if (!state.collect && !state.live) {
-				const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
+			if (state.collect || !state.live) {
 				const current = asActivityItem(d.current);
 				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
 				if (!d.historical && pending && current && current.name !== "thinking") add(paintActivity(theme, current));
 			}
 			for (const block of dataBlocks) add(cleanBlock(block.text), "dim");
 			if (d.sessionFile) add(`Session: ${displayText(str(d, "sessionFile"))}`, "dim");
-		} else if (!state.collect || failed) {
-			add(input.expandHint || "Expand for full result and tool details", "dim");
+		} else {
+			const latest = failed ? activity.at(-1) : undefined;
+			if (latest) lines.push(truncateToWidth(`Last recorded tool: ${paintActivity(theme, latest)}`, width, "…"));
+			if (!state.collect || failed) add(input.expandHint || "Expand for full result and tool details", "dim");
 		}
 		return state.collect ? lines : paintCard(theme, lines, width, cardBackground(state));
 	});

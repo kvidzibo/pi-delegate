@@ -230,6 +230,7 @@ export function parseDelegateCall(
 export class JobScheduler {
 	private seq = 0;
 	private closed = false;
+	private cancelling = false;
 	private pumping = false;
 	private pumpAgain = false;
 	private readonly jobs: InternalJob[] = [];
@@ -467,6 +468,19 @@ export class JobScheduler {
 		job.controller.abort();
 	}
 
+	/** Stop outstanding work without closing the scheduler to later parent turns. */
+	cancelAll(): void {
+		if (this.cancelling) return;
+		this.cancelling = true;
+		try {
+			// Cancelling a queued job pumps the queue; block dispatch for the whole batch.
+			for (const job of [...this.jobs]) this.cancel(job.id);
+		} finally {
+			this.cancelling = false;
+			this.pump();
+		}
+	}
+
 	async shutdown(): Promise<void> {
 		this.closed = true;
 		this.clearResourcePoll();
@@ -519,7 +533,7 @@ export class JobScheduler {
 	}
 
 	private canStart(local: boolean): boolean {
-		if (this.closed || (local && this.localBlockReason())) return false;
+		if (this.closed || this.cancelling || (local && this.localBlockReason())) return false;
 		const running = this.runningJobs();
 		if (running.length >= this.limits.maxConcurrent) return false;
 		if (local && running.filter((job) => job.local).length >= this.limits.maxLocalConcurrent) return false;

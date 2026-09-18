@@ -222,6 +222,26 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		}),
 	});
 
+	// A tool wait can end long before its child does. Observe each parent run instead
+	// of tying background cancellation to the spawn/collect call that happened to be active.
+	let parentSignal: AbortSignal | undefined;
+	const onParentAbort = (): void => {
+		// Include completed jobs whose notices are still waiting for the parent to go idle.
+		for (const snap of scheduler.list()) gate.consume(snap.id);
+		scheduler.cancelAll();
+	};
+	const detachParentAbort = (): void => {
+		parentSignal?.removeEventListener("abort", onParentAbort);
+		parentSignal = undefined;
+	};
+	pi.on("agent_start", (_event, ctx) => {
+		detachParentAbort();
+		parentSignal = ctx.signal;
+		if (parentSignal?.aborted) onParentAbort();
+		else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+	});
+	pi.on("agent_settled", detachParentAbort);
+
 	const localCommand = new LocalCommand(localControl, () => scheduler.refreshLocalState());
 
 	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
@@ -295,6 +315,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		detachParentAbort();
 		modelCommand.stop();
 		localCommand.stop();
 		gate.shutdown();

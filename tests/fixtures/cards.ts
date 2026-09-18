@@ -9,6 +9,7 @@ import type { ChildResult } from "../../child-runtime/spawn.ts";
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, italic: (text: string) => text };
 const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
 const success: ChildResult = { text: "**Review complete.**\n\nNo important findings.\n\nMore detail.\nLast detail.", model: "xai/grok-4.6", exitCode: 0, stderrTail: "" };
+const cancelledOutput = "Task response (assistant 7):\n[No assistant text]\n\nWrap-up 1 (assistant 13):\n[No assistant text]";
 
 export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const entries: any[] = [];
@@ -22,7 +23,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 			sendMessage: () => { throw new Error("busy parent should not notify"); },
 		} as unknown as ExtensionAPI, (input) => new Promise((resolve) => {
 			runs.push({ input, resolve });
-			input.signal?.addEventListener("abort", () => resolve({ text: "Cancelled by user", exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
+			input.signal?.addEventListener("abort", () => resolve({ text: cancelledOutput, exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
 		}));
 		return { tool, handlers };
 	};
@@ -89,7 +90,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const peekRow = row(first.tool, "peek", peekArgs);
 	const peek = await first.tool.execute("peek", peekArgs, undefined, peekRow.update, testCtx); peekRow.update(peek, false);
 	assert.match(peekRow.render(), /checked · running at check/);
-	assert.doesNotMatch(peekRow.render(), /test.mjs|Task:|grok/);
+	assert.match(peekRow.render(), /review · xai\/grok-4\.6/);
+	assert.doesNotMatch(peekRow.render(), /test.mjs|Task:/);
 	const before = original.row.invalidations();
 	child.resolve(success);
 	// Wait through the real scheduler/accounting, but do not collect through the tool yet.
@@ -107,6 +109,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	for (const width of [1, 2, 8, 16, 80]) original.row.render(width);
 	const collectArgs = { jobId }; const collectRow = row(first.tool, "collect", collectArgs);
 	const collected = await first.tool.execute("collect", collectArgs, undefined, collectRow.update, testCtx); collectRow.update(collected, false);
+	assert.match(collectRow.render(), /review · xai\/grok-4\.6/);
 	assert.match(collectRow.render(), /result collected/); assert.doesNotMatch(collectRow.render(), /Review complete|test.mjs/);
 	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1, "collect must not persist a duplicate card");
 	assert.match(collected.content[0].text, /Last detail/, "parent still receives the full result");
@@ -120,16 +123,35 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		runs.at(-1)!.resolve(success);
 		await restored.tool.execute(`${id}-collect`, { jobId: seed.result.details.jobId }, undefined, undefined, testCtx);
 	}
-	const next = await launch(restored.tool, "new-origin");
+	const local = { kind: "recon", model: "local-qwen38/qwen38-q4km" };
+	const next = await launch(restored.tool, "new-origin", local);
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
 	assert.match(oldRow.render(), /✓ Worker finished — task unverified/); assert.match(next.row.render(), /accepted — card pinned above editor/);
+	runs.at(-1)!.input.onEvent?.({ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "delegate/jobs.ts" } });
+	runs.at(-1)!.input.onEvent?.({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read" });
 	const cancelledArgs = { jobId, cancel: true }; const cancelledRow = row(restored.tool, "cancel", cancelledArgs);
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
-	assert.match(next.row.render(), /Cancelled/); assert.match(cancelledRow.render(), /Cancelled by user/);
+	assert.match(next.row.render(), /Cancelled/);
+	const receipt = cancelledRow.render(160);
+	assert.ok(receipt.includes(`delegate · recon · ${local.model} · ${jobId} · cancelled`));
+	assert.equal(receipt.split(local.model).length - 1, 1, "show the actual model once, not a role default or duplicate alias");
+	assert.match(receipt, /Task: Review timeout and abort handling/);
+	assert.match(receipt, /Last recorded tool: ✓ read\s+delegate\/jobs.ts/);
+	assert.doesNotMatch(receipt, /failure collected|Task response|No assistant text/);
+	assert.doesNotMatch(next.row.render(), /Task response|No assistant text/);
 	assert.equal(cancelled.details.ok, false);
+	assert.equal(cancelled.details.answer, cancelledOutput, "the display must not rewrite the collected evidence");
+	cancelledRow.context.expanded = true;
+	assert.match(cancelledRow.render(), /Task response \(assistant 7\)/);
+	assert.match(cancelledRow.render(), /No assistant text/);
+	assert.match(cancelledRow.render(), /Recent tools.*\n✓ read\s+delegate\/jobs.ts/);
+	assert.match(cancelledRow.render(), /Session:/);
+	for (const expanded of [false, true]) {
+		cancelledRow.context.expanded = expanded;
+		for (const width of [1, 2, 8, 16, 80]) cancelledRow.render(width);
+	}
 
 	// Queued jobs have no child answer: cancel/wrap must still preserve their stop reason.
-	const local = { kind: "recon", model: "local-qwen38/qwen38-q4km" };
 	const blocker = await launch(restored.tool, "blocker", local);
 	const failedCards: Array<{ id: string; row: any; result: any }> = [];
 	for (const action of ["cancel", "wrap"]) {
@@ -139,8 +161,9 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const stopped = await restored.tool.execute(`${id}-control`, { jobId: queued.result.details.jobId, [action]: true }, undefined, undefined, testCtx);
 		assert.equal(stopped.details.ok, false);
 		assert.match(queued.row.render(), /Cancelled/);
-		assert.match(queued.row.render(), /aborted/);
 		assert.doesNotMatch(queued.row.render(), /no error details/);
+		queued.row.context.expanded = true;
+		assert.match(queued.row.render(), /aborted/);
 		failedCards.push({ id, ...queued });
 	}
 	for (const [id, stderrTail, stopReason] of [["stderr-only", "Provider connection refused", "error"], ["reason-only", "", "hard_timeout"]]) {
@@ -191,6 +214,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const r = row(reloaded.tool, failed.id, failed.row.context.args); r.update(failed.result, false);
 		assert.match(r.render(), /Cancelled|Failed/);
 		assert.doesNotMatch(r.render(), /no error details|live status unavailable/);
+		if (failed.id.startsWith("queued-")) r.context.expanded = true;
 		assert.match(r.render(), /aborted|Provider connection refused|hard_timeout/);
 	}
 	const branchRow = row(reloaded.tool, "origin", original.row.context.args); branchRow.update(original.result, false);

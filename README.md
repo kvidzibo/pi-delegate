@@ -36,7 +36,7 @@ Delegate a background recon to find this repo's test files and test commands.
 Do not edit files. Collect the result when it finishes.
 ```
 
-The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. Active jobs appear above the editor; finished results appear in the transcript. **Ctrl+O** expands details.
+The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor; finished results appear in the transcript. **Ctrl+O** expands details.
 
 See [configuration and job controls](delegate/README.md) for manual settings and tool arguments.
 

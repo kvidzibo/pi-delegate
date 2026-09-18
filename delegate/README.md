@@ -45,6 +45,8 @@ An optional `cwd` selects an existing working directory; relative paths resolve 
 
 `timeoutMs` is a wait budget, **not a kill timeout**. Foreground expiry leaves the child running in the background. Each collection starts a fresh quiet interval (60 seconds by default); child events restart it, but an explicit wait budget may return sooner. `quietForMs` still reports actual child inactivity, not time spent waiting. Collect again for the final result; completion notices are previews only.
 
+**Esc interrupting the parent cancels all its running and queued delegates**, including background jobs and jobs from earlier turns. Pending completion notices are suppressed so they cannot restart the parent after cancellation. Normal parent completion and wait timeouts leave background jobs running; dismissing a menu with Esc is not a parent interrupt.
+
 Wrap is advisory: it asks the child to finish without interrupting its current turn/tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall. Cancel stops the child. The separate `hardTimeoutMs` configuration limits runtime; `0` disables it. Shutdown stops outstanding jobs.
 
 ## Local delegation switch
@@ -57,7 +59,9 @@ An **unverified** reservation is not proof of idleness. Confirm its work has sto
 
 ## Results and history
 
-**Ctrl+O** expands results and archive paths. Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
+Collected-result rows show the role, model and job ID. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.
+
+Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 
 `/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. `saved ~$X` is a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings.
 
