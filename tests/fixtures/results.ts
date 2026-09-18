@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { delegateTargetLine } from "../../delegate/display.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
@@ -189,6 +190,52 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.equal(cancelled.details.answer, "Cancelled"); assert.equal(cancelled.details.operation, "cancel");
 		assert.equal(cancelled.details.ok, false); assert.equal(cancelled.details.stopReason, "aborted");
 
+		// Esc interrupts the parent run, not just the current delegate call's wait.
+		const firstParent = new AbortController();
+		await handlers.get("agent_start")?.({}, { ...testCtx, signal: firstParent.signal });
+		const background = await launch(local, firstParent.signal), backgroundRun = runs.at(-1)!;
+		const promoted = await launch({ background: false, timeoutMs: 1000 }, firstParent.signal), promotedRun = runs.at(-1)!;
+		pending(promoted, "running", "spawn");
+		await handlers.get("agent_settled")?.({}, testCtx);
+		firstParent.abort();
+		assert.equal(backgroundRun.input.signal?.aborted, false, "normal parent completion leaves background work running");
+		assert.equal(promotedRun.input.signal?.aborted, false, "finished parent signals must be detached");
+
+		const parent = new AbortController();
+		await handlers.get("agent_start")?.({}, { ...testCtx, signal: parent.signal });
+		const queued = await launch(local, parent.signal);
+		pending(queued, "queued", "spawn");
+		const foreground = launch({ background: false }, parent.signal), foregroundRun = runs.at(-1)!;
+		const completed = await launch({}, parent.signal);
+		runs.at(-1)!.resolve(success);
+		for (let i = 0; i < 100 && !entries.some(e => e.data.runId === completed.details.runId); i++) {
+			await new Promise(resolve => setTimeout(resolve, 10));
+		}
+		assert.ok(entries.some(e => e.data.runId === completed.details.runId), "hold a completed job's notice until the parent is idle");
+		const started = runs.length;
+		const collecting = call({ jobId: background.details.jobId }, parent.signal);
+		const keybindings = new KeybindingsManager({ "app.interrupt": { defaultKeys: "escape" } });
+		const editor = new CustomEditor({ requestRender() {} } as any, {} as any, keybindings as any);
+		editor.onEscape = () => parent.abort(); // Pi's interrupt handler aborts this same run signal.
+		editor.handleInput("\x1b");
+		assert.equal(parent.signal.aborted, true, "the editor must issue the parent interrupt");
+		for (const run of [backgroundRun, promotedRun, foregroundRun]) {
+			assert.equal(run.input.signal?.aborted, true, "Esc must stop every running child, including prior-turn background jobs");
+		}
+		await collecting;
+		const foregroundResult = await foreground;
+		await handlers.get("agent_settled")?.({}, testCtx);
+		busy = false;
+		await new Promise(resolve => setTimeout(resolve, NOTIFY_HOLD_MS * 2));
+		assert.equal(notices.length, 0, "cancelled or already-pending completion notices must not restart the parent after Esc");
+		for (const job of [background, promoted, queued, foregroundResult]) {
+			const result = await call({ jobId: job.details.jobId });
+			assert.equal(result.details.stopReason, "aborted");
+			assert.equal(result.details.status, "failed");
+		}
+		assert.equal(runs.length, started, "queued jobs must be cancelled without starting");
+		assert.equal((await call({ jobId: completed.details.jobId })).details.status, "done", "keep earlier completed outcomes");
+
 		// Every terminal collect above consumes its notice; a pending peek must not consume one.
 		busy = false;
 		await new Promise(resolve => setTimeout(resolve, NOTIFY_HOLD_MS * 2));
@@ -200,5 +247,5 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.equal(notices.length, 1); assert.equal(notices[0].details.jobId, uncollected.details.jobId);
 		await call({ jobId: uncollected.details.jobId });
 	} finally { await handlers.get("session_shutdown")?.(); }
-	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, wrapPreservation: true, finalizationProgress: true, noModelCalls: true };
+	return { terminalContracts: true, pendingContracts: true, promotion: true, notificationConsumption: true, parentInterrupt: true, wrapPreservation: true, finalizationProgress: true, noModelCalls: true };
 }
