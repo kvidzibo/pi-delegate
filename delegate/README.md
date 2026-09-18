@@ -43,9 +43,9 @@ An optional `cwd` selects an existing working directory; relative paths resolve 
 | Request wrap-up | `{ "jobId": "d0001", "wrap": true }` |
 | Cancel | `{ "jobId": "d0001", "cancel": true }` |
 
-`timeoutMs` is a wait budget, **not a kill timeout**. Foreground expiry leaves the child running in the background. Collection may return before completion after a quiet interval; collect again for the final result. Completion notices are previews, not full results.
+`timeoutMs` is a wait budget, **not a kill timeout**. Foreground expiry leaves the child running in the background. Each collection starts a fresh quiet interval (60 seconds by default); child events restart it, but an explicit wait budget may return sooner. `quietForMs` still reports actual child inactivity, not time spent waiting. Collect again for the final result; completion notices are previews only.
 
-Wrap asks the child to finish without interrupting its current tool; wrapping a queued job cancels it. Cancel stops the child. The separate `hardTimeoutMs` configuration limits runtime; `0` disables it. Shutdown stops outstanding jobs.
+Wrap is advisory: it asks the child to finish without interrupting its current turn/tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall. Cancel stops the child. The separate `hardTimeoutMs` configuration limits runtime; `0` disables it. Shutdown stops outstanding jobs.
 
 ## Local delegation switch
 

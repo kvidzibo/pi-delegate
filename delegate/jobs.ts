@@ -349,6 +349,7 @@ export class JobScheduler {
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
 		const peek = input.timeoutMs === 0;
+		const waitStartedAt = Date.now();
 		const snap = this.snapshot(job);
 		this.safeSnapshot(input.onSnapshot, snap);
 		if (peek || this.terminal(job)) return snap;
@@ -369,7 +370,8 @@ export class JobScheduler {
 				}
 				if (!input.quietMs || input.quietMs <= 0) return;
 				if (job.status !== "running" && job.status !== "queued") return;
-				const last = job.lastEventAt ?? job.startedAt ?? job.queuedAt;
+				// Old silence must not exhaust a fresh wait, especially just after wrap-up.
+				const last = Math.max(waitStartedAt, job.lastEventAt ?? job.startedAt ?? job.queuedAt);
 				const remaining = input.quietMs - (Date.now() - last);
 				quietTimer = setTimeout(finish, Math.max(0, remaining));
 			};
