@@ -268,9 +268,23 @@ export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 
 /** Patch only this role's model/startup mode; never rewrite shipped defaults or other settings. */
 export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: AgentConfig, model: string): Pick<AgentConfig, "model" | "offline"> {
+	if (!/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Expected a provider/model ID.");
+	const patch = { model, offline: isLocalModel(model) ? current.offline : false };
+	saveDelegatePatch(paths, kind, current, patch);
+	return patch;
+}
+
+/** Persist reasoning independently; preserve model, startup mode and tools. */
+export function saveDelegateThinking(paths: ConfigPaths, kind: Kind, current: AgentConfig, thinking: ThinkingLevel): Pick<AgentConfig, "thinking"> {
+	if (!isThinkingLevel(thinking)) throw new Error("Unsupported thinking level.");
+	const patch = { thinking };
+	saveDelegatePatch(paths, kind, current, patch);
+	return patch;
+}
+
+function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig, patch: Partial<AgentConfig>): void {
 	if (!paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 	assertKind(kind);
-	if (!/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Expected a provider/model ID.");
 	let path = paths.userPath;
 	let overlay: Record<string, unknown> & { agents?: Partial<Record<Kind, Record<string, unknown>>> } = {};
 	let mode = 0o600;
@@ -286,10 +300,9 @@ export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: Agent
 	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
 	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
 	const saved = mergeDelegateConfig(shipped, overlay, path).agents[kind];
-	if (saved.model !== current.model || saved.offline !== current.offline) {
+	if ((Object.keys(patch) as (keyof AgentConfig)[]).some(key => saved[key] !== current[key])) {
 		throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
 	}
-	const patch = { model, offline: isLocalModel(model) ? current.offline : false };
 	const next = { ...overlay, agents: { ...overlay.agents, [kind]: { ...overlay.agents?.[kind], ...patch } } };
 	mergeDelegateConfig(shipped, next, path);
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -300,5 +313,4 @@ export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: Agent
 	} finally {
 		try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 	}
-	return patch;
 }

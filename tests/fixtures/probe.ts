@@ -61,7 +61,8 @@ export default function probe(pi: ExtensionAPI) {
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {
-		assert.ok(pi.getCommands().some(command => command.name === "delegate"));
+		assert.ok(pi.getCommands().some(command => command.name === "model-delegate"));
+		assert.ok(!pi.getCommands().some(command => command.name === "delegate"));
 		const initial = JSON.parse(readFileSync(new URL("../../delegate/config.json", import.meta.url), "utf8"));
 		const oldModel = initial.agents.recon.model;
 		const slash = oldModel.indexOf("/");
@@ -99,6 +100,11 @@ export default function probe(pi: ExtensionAPI) {
 			scopedModels: [{ model: { provider: oldModel.slice(0, slash), id: oldModel.slice(slash + 1) } }],
 			ui: { ...ctx.ui, setWidget: () => {}, setStatus: () => {}, notify: (text: string) => notices.push(text),
 				select: async (title: string, options: string[]) => {
+					if (title.startsWith("Settings for")) return options[rolePicks === 3 ? 1 : 0];
+					if (title.startsWith("Reasoning for")) {
+						assert.deepEqual(options, ["off", "minimal", "low", "medium ✓ current", "high"]);
+						return "high";
+					}
 					assert.match(title, /Delegate models/);
 					assert.equal(options.length, 4);
 					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
@@ -107,6 +113,8 @@ export default function probe(pi: ExtensionAPI) {
 						return options[0];
 					}
 					assert.match(options[0], /picker-cloud\/team\/new/);
+					if (rolePicks === 3) return options[0];
+					assert.match(options[0], /reasoning: high/);
 					return undefined;
 				},
 				custom: async (create: Function) => {
@@ -130,7 +138,9 @@ export default function probe(pi: ExtensionAPI) {
 					} finally { component.dispose(); }
 				},
 				confirm: async (_title: string, text: string) => {
-					confirms++; assert.match(text, /offline: true → false/); assert.ok(text.includes(userPath)); return true;
+					confirms++;
+					assert.match(text, confirms === 1 ? /offline: true → false/ : /medium → high/);
+					assert.ok(text.includes(userPath)); return true;
 				},
 			},
 		};
@@ -141,11 +151,11 @@ export default function probe(pi: ExtensionAPI) {
 			const running = await call({ kind: "recon", task: "hold", background: true });
 			const queued = await call({ kind: "recon", task: "queued", background: true });
 			assert.equal(queued.details.status, "queued");
-			await commands.get("delegate").handler("", testCtx);
-			assert.equal(confirms, 1, notices.join("\n"));
-			assert.equal(rolePicks, 3, notices.join("\n"));
+			await commands.get("model-delegate").handler("", testCtx);
+			assert.equal(confirms, 2, notices.join("\n"));
+			assert.equal(rolePicks, 4, notices.join("\n"));
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
-				recon: { ...overlay.agents.recon, model: selected, offline: false },
+				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "high" },
 			} });
 			const fresh = await call({ kind: "recon", task: "fresh" });
 			assert.equal(fresh.details.model, selected);
@@ -153,10 +163,12 @@ export default function probe(pi: ExtensionAPI) {
 			finish!();
 			await call({ jobId: running.details.jobId }); await call({ jobId: queued.details.jobId });
 			assert.deepEqual(launches.map(input => [input.model, input.offline]), [[oldModel, true], [selected, false], [oldModel, true]]);
-			assert.ok(launches.every(input => input.thinking === "medium" && input.tools.join(",") === "read,bash"));
+			assert.deepEqual(launches.map(input => input.thinking), ["medium", "high", "medium"]);
+			assert.ok(launches.every(input => input.tools.join(",") === "read,bash"));
 			await handlers.get("session_shutdown")?.();
 			factory(); // Reload from the saved overlay, not in-memory selections.
 			assert.equal((await call({ kind: "recon", task: "restored" })).details.model, selected);
+			assert.equal(launches.at(-1).thinking, "high");
 			return { roleModels: true, availableOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();
