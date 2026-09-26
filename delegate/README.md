@@ -22,6 +22,10 @@ Set `offline: false` when manually switching to a hosted model; the picker does 
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. Hosted work can proceed while local work waits. Limits are configurable in the user file; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
+## Cross-extension busy query
+
+Extensions may query delegate activity by emitting `pi.events.emit('delegate:query-busy', { reply: busy => ... })`. The reply is synchronous: `true` means shutdown is underway or queued/running delegate jobs exist; otherwise it is `false`. If no listener responds, availability is unknown; fail closed (treat delegate as busy). Invalid payloads are ignored. The listener is removed on session shutdown and re-registered for each session.
+
 ## Job lifecycle
 
 Example tool arguments:

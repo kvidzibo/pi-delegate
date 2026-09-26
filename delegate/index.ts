@@ -29,6 +29,7 @@ import { LocalCommand } from "./local-command.ts";
 import { ModelCommand } from "./model-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
+import { respondToBusyQuery } from "./busy-guard.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -277,8 +278,16 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			isPartial: snapshot ? !isTerminal(snapshot) : context.isPartial, isError: context.isError };
 	};
 
+	let busyUnsubscribe: (() => void) | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
+		busyUnsubscribe?.();
+		const events = pi.events;
+		if (events?.on) {
+			busyUnsubscribe = events.on("delegate:query-busy", (payload) => {
+				respondToBusyQuery(payload, shuttingDown || scheduler.active().length > 0);
+			});
+		}
 		bindUi(ctx);
 		localCommand.start(ctx);
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
@@ -315,6 +324,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		busyUnsubscribe?.();
+		busyUnsubscribe = undefined;
 		detachParentAbort();
 		modelCommand.stop();
 		localCommand.stop();
