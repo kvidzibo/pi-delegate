@@ -70,6 +70,8 @@ export type JobSnapshot = {
 	finalization?: FinalizationProgress;
 	outcome?: ExecutionOutcome;
 	quietForMs?: number;
+	queuedAt?: number;
+	startedAt?: number;
 };
 
 export type EnqueueInput = {
@@ -550,6 +552,8 @@ export class JobScheduler {
 				? visibleChildTg(job.model, job.meter, undefined)
 				: undefined;
 		const snap: JobSnapshot = {
+			queuedAt: job.queuedAt,
+			startedAt: job.startedAt,
 			...(job.archive ? { archive: { ...job.archive } } : {}),
 			id: job.id,
 			kind: job.kind,

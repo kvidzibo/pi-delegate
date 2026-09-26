@@ -164,6 +164,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const cards = new JobCards();
 	const origins = new Map<string, string>();
+	const lastChecks = new Map<string, number>();
 	const uiDetails = (snap: JobSnapshot, extra: CardDetails = {}): CardDetails => detailsFromSnap(snap, {
 		originToolCallId: snap.archive ? origins.get(snap.archive.runId) : undefined,
 		background: snap.background, callType: "spawn", ...extra,
@@ -331,6 +332,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		sessionCtx = undefined;
 		cards.clear();
 		origins.clear();
+		lastChecks.clear();
 	});
 
 	pi.registerTool({
@@ -492,6 +494,16 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 
 				const collect = parsed.mode === "collect";
 				const pending = snap.status === "queued" || snap.status === "running";
+				// Freeze timing when a check returns, never when its history row repaints.
+				const checkTiming: CardDetails = {};
+				if (collect && pending && !parsed.wrap && !parsed.cancel) {
+					const checkedAt = Date.now();
+					const previous = lastChecks.get(snap.id);
+					checkTiming.checkedAt = checkedAt;
+					checkTiming.elapsedMs = Math.max(0, checkedAt - (snap.startedAt ?? snap.queuedAt ?? checkedAt));
+					if (previous !== undefined) checkTiming.sincePreviousCheckMs = Math.max(0, checkedAt - previous);
+					lastChecks.set(snap.id, checkedAt);
+				}
 				const failed = !pending && snap.failed;
 				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
 				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
@@ -508,7 +520,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					kind: snap.kind,
 					model: snap.model,
 					details: uiDetails(snap, collect ? {
-						callType: "collect", operation, background: true, pending,
+						callType: "collect", operation, background: true, pending, ...checkTiming,
 						answer: pending ? snap.answer : text,
 					} : pending ? { background: true, pending: true } : { exitCode, answer: text }),
 				});
