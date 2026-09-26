@@ -29,5 +29,5 @@ export async function showStats(ctx: ExtensionCommandContext, report: string): P
 				tui.requestRender();
 			},
 		};
-	});
+	}, { overlay: true, overlayOptions: { width: "100%", margin: 0 } });
 }

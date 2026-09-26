@@ -229,7 +229,8 @@ export default function probe(pi: ExtensionAPI) {
 		assert.ok(reports.at(-1)?.includes("Saved: unavailable"));
 		assert.equal(notices.length, 0, "stats must not print notifications");
 		await commands.get("pi-delegate").handler("stats", { ...testCtx, mode: "tui", ui: { ...testCtx.ui,
-			custom: async (create: Function) => {
+			custom: async (create: Function, options: { overlay?: boolean }) => {
+				assert.equal(options.overlay, true, "stats must not compete with job boards for editor dock height");
 				let closed = false;
 				const tui = { terminal: { rows: 18 }, requestRender: () => {} };
 				const view = create(tui, ctx.ui.theme, getKeybindings(), () => { closed = true; });
