@@ -21,7 +21,7 @@ function setup(t: TestContext) {
 test("session infobar updates live, counts final usage once, survives resume, resets on new and stays out of parent usage", async (t) => {
 	const { root, prompt, ui, statuses, accounting } = setup(t);
 	await accounting.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "");
+	assert.equal(statuses.at(-1), undefined);
 	const run = accounting.create(identity, "task", prompt);
 	const message = { role: "assistant", timestamp: 123, provider: "local-qwen38", model: "qwen38-q4km", usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 } };
 	const result = await accounting.run(run, "d0001", async (event) => {
@@ -39,7 +39,7 @@ test("session infobar updates live, counts final usage once, survives resume, re
 	accounting.close(); assert.equal(statuses.at(-1), undefined);
 	const resumed = new Accounting(root);
 	await resumed.activate("parent-a", ui); assert.equal(statuses.at(-1), "pi-delegate 120|120");
-	await resumed.activate("parent-b", ui); assert.equal(statuses.at(-1), "");
+	await resumed.activate("parent-b", ui); assert.equal(statuses.at(-1), undefined, "zero totals remove the previously visible status slot");
 	await resumed.activate("parent-a", ui); assert.match(await resumed.report("session", "parent-a"), /Delegated: 120 tokens/);
 	resumed.close();
 });
@@ -74,12 +74,12 @@ test("warning attribution keeps other sessions out; unknown archive health is di
 	const metadata = JSON.parse(readFileSync(other.paths.metadata, "utf8")); metadata.status = "broken";
 	writeFileSync(other.paths.metadata, JSON.stringify(metadata));
 	const reader = new Accounting(root); await reader.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "");
+	assert.equal(statuses.at(-1), undefined);
 	assert.equal((await reader.report("session", "parent-a")).includes(other.data.runId), false);
 	assert.ok((await reader.report("all", "parent-a")).includes(other.data.runId));
 	writeFileSync(other.paths.metadata, "not json");
 	await reader.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "");
+	assert.equal(statuses.at(-1), undefined);
 	const scoped = await reader.report("session", "parent-a");
 	assert.ok(scoped.includes("cannot be attributed")); assert.equal(scoped.includes(other.data.runId), false);
 	metadata.createdAt = "not-a-date"; writeFileSync(other.paths.metadata, JSON.stringify(metadata));

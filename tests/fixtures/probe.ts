@@ -230,7 +230,7 @@ export default function probe(pi: ExtensionAPI) {
 		assert.ok(notices.at(-1)?.includes("Saved: unavailable"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");
 		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session" } });
-		assert.equal(statuses.at(-1), "");
+		assert.equal(statuses.at(-1), undefined);
 		await handlers.get("session_start")?.({}, testCtx);
 		assert.equal(statuses.at(-1), "pi-delegate 155|155");
 		await handlers.get("session_shutdown")?.(); assert.equal(statuses.at(-1), undefined);
