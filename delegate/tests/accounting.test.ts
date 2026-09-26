@@ -21,7 +21,7 @@ function setup(t: TestContext) {
 test("session infobar updates live, counts final usage once, survives resume, resets on new and stays out of parent usage", async (t) => {
 	const { root, prompt, ui, statuses, accounting } = setup(t);
 	await accounting.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "pi-delegate 0|0");
+	assert.equal(statuses.at(-1), "");
 	const run = accounting.create(identity, "task", prompt);
 	const message = { role: "assistant", timestamp: 123, provider: "local-qwen38", model: "qwen38-q4km", usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 } };
 	const result = await accounting.run(run, "d0001", async (event) => {
@@ -39,7 +39,7 @@ test("session infobar updates live, counts final usage once, survives resume, re
 	accounting.close(); assert.equal(statuses.at(-1), undefined);
 	const resumed = new Accounting(root);
 	await resumed.activate("parent-a", ui); assert.equal(statuses.at(-1), "pi-delegate 120|120");
-	await resumed.activate("parent-b", ui); assert.equal(statuses.at(-1), "pi-delegate 0|0");
+	await resumed.activate("parent-b", ui); assert.equal(statuses.at(-1), "");
 	await resumed.activate("parent-a", ui); assert.match(await resumed.report("session", "parent-a"), /Delegated: 120 tokens/);
 	resumed.close();
 });
@@ -74,12 +74,12 @@ test("warning attribution keeps other sessions out; unknown archive health is di
 	const metadata = JSON.parse(readFileSync(other.paths.metadata, "utf8")); metadata.status = "broken";
 	writeFileSync(other.paths.metadata, JSON.stringify(metadata));
 	const reader = new Accounting(root); await reader.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "pi-delegate 0|0");
+	assert.equal(statuses.at(-1), "");
 	assert.equal((await reader.report("session", "parent-a")).includes(other.data.runId), false);
 	assert.ok((await reader.report("all", "parent-a")).includes(other.data.runId));
 	writeFileSync(other.paths.metadata, "not json");
 	await reader.activate("parent-a", ui);
-	assert.equal(statuses.at(-1), "pi-delegate 0|0 · !archive");
+	assert.equal(statuses.at(-1), "");
 	const scoped = await reader.report("session", "parent-a");
 	assert.ok(scoped.includes("cannot be attributed")); assert.equal(scoped.includes(other.data.runId), false);
 	metadata.createdAt = "not-a-date"; writeFileSync(other.paths.metadata, JSON.stringify(metadata));
@@ -140,6 +140,7 @@ test("session/day/all filters, honest savings label, distinct local/hosted and t
 	run.usage.local = { input: 100, output: 10, cacheRead: 5, cacheWrite: 0, total: 115 };
 	run.usage.hosted = { input: 200, output: 20, cacheRead: 0, cacheWrite: 0, total: 220 };
 	assert.equal(infobar([run, run]), "pi-delegate 335|115", "duplicate records never double count");
+	assert.equal(infobar([{ ...run, usage: { ...run.usage, local: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }]), "pi-delegate 220", "hosted-only usage omits local count and separator");
 	const terminal = { ...run, revision: 10, status: "done" as const };
 	const staleRebuild = { ...run, revision: 2, status: "running" as const };
 	assert.deepEqual(latestRuns([terminal, staleRebuild]), [terminal], "late rebuild rows must not regress a finalized export");
