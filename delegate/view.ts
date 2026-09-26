@@ -50,8 +50,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
 	if (d.status === "queued") {
 		const group = d.resource && typeof d.resource === "object" ? str(d.resource as CardDetails, "key") : "";
-		const waiting = d.reason === "local-off" ? "local delegation OFF" : d.reason === "local-unavailable" ? "local control unavailable"
-			: d.reason === "resource" ? `waiting for shared resource${group ? ` ${group}` : ""}` : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
+		const waiting = d.reason === "resource" ? `waiting for shared resource${group ? ` ${group}` : ""}` : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
 		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	if (d.status === "running") {

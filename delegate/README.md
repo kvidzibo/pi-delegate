@@ -55,14 +55,6 @@ An optional `cwd` selects an existing working directory; relative paths resolve 
 
 Wrap is advisory: it asks the child to finish without interrupting its current turn/tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall. Cancel stops the child. The separate `hardTimeoutMs` configuration limits runtime; `0` disables it. Shutdown stops outstanding jobs.
 
-## Local delegation switch
-
-`/delegate-local` opens an On/Off picker; direct commands are `/delegate-local on|off|status`.
-
-Off rejects new local jobs, holds queued ones and lets running jobs finish. Wait for **OFF · idle** before benchmarking. The switch persists across participating sessions using the same agent directory. It does not pause hosted work, servers or unrelated GPU clients. The separate shared-capacity lease limits cross-session local concurrency.
-
-An **unverified** reservation is not proof of idleness. Confirm its work has stopped before removing stale reservation files under `~/.pi/agent/delegate-local/active/`.
-
 ## Results and history
 
 Collected-result rows show the role, model and job ID. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.

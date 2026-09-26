@@ -12,24 +12,21 @@ import { backgroundProbe } from "./background.ts";
 import { savingsProbe, guardStartupProbe } from "./savings.ts";
 import { finalizationProbe } from "./finalization.ts";
 import { headroomProbe } from "./headroom.ts";
-import { localProbe, sharedCapacityProbe } from "./local.ts";
+import { sharedCapacityProbe } from "./local.ts";
 import { capabilitiesProbe } from "./capabilities.ts";
-import { LocalControl } from "../../delegate/local-control.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	pi.registerCommand("delegate-reload-probe", {
 		description: "Exercise the /reload lifecycle without model requests",
 		handler: async (_args, ctx) => {
-			new LocalControl(join(getAgentDir(), "delegate-local")).setEnabled(false);
 			await ctx.reload();
 		},
 	});
 	pi.on("session_start", (event, ctx) => {
 		if (event.reason !== "reload") return;
 		const tools = pi.getAllTools().filter(tool => tool.sourceInfo.source !== "builtin").map(tool => tool.name);
-		const localOffPersists = !new LocalControl(join(getAgentDir(), "delegate-local")).enabled()
-			&& pi.getCommands().some(c => c.name === "delegate-local");
-		ctx.ui.notify(JSON.stringify({ type: "delegate_test_probe", command: "delegate-reload-probe", result: { tools, reloaded: true, localOffPersists } }), "info");
+		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
+		ctx.ui.notify(JSON.stringify({ type: "delegate_test_probe", command: "delegate-reload-probe", result: { tools, reloaded: true } }), "info");
 	});
 	const register = (name: string, run: (ctx: ExtensionCommandContext) => unknown | Promise<unknown>) => {
 		pi.registerCommand(name, {
@@ -46,7 +43,6 @@ export default function probe(pi: ExtensionAPI) {
 	};
 	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
 	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
-	register("delegate-local-probe", ctx => localProbe(pi, ctx));
 	register("delegate-shared-capacity-probe", ctx => sharedCapacityProbe(pi, ctx));
 	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-finalization-probe", ctx => finalizationProbe(pi, ctx));
@@ -59,6 +55,7 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-load-probe", () => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
+		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {

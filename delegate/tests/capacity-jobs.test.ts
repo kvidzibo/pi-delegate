@@ -157,6 +157,21 @@ test("a reentrant cancellation before acquisition returns cannot start work or l
 	assert.equal(job.resource?.state, "not-acquired"); assert.equal(refs(scheduler, job.id).lease, undefined);
 });
 
+test("failed rollback before retaining the capacity grant is explicit and not retried", linux, async t => {
+	const f = fixture(t); let attempts = 0, releases = 0;
+	const scheduler = f.scheduler({}, { tryAcquire: () => {
+		attempts++;
+		return fakeLease(() => { releases++; throw new Error("rollback failed"); }, { key: "wrong-resource" });
+	} });
+	const job = scheduler.enqueue({ ...local, run: async () => { assert.fail("invalid grant started"); } });
+	assert.equal(job.status, "failed"); assert.equal(job.stopReason, "resource-error");
+	assert.equal(job.resource?.state, "release-unknown"); assert.match(job.resourceError!, /rollback failed/);
+	assert.equal(Reflect.get(scheduler, "resourceTimer"), undefined);
+	const cloud = scheduler.enqueue({ ...hosted, run: async () => ok });
+	await scheduler.wait(cloud.id);
+	assert.equal(attempts, 1); assert.equal(releases, 1);
+});
+
 test("a malformed broker claim cannot leak the acquired lease during validation", linux, async t => {
 	const f = fixture(t); let releases = 0;
 	const scheduler = f.scheduler({}, { tryAcquire: () => ({ ...fakeLease(() => { releases++; }),

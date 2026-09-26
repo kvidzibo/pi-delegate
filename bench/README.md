@@ -40,7 +40,7 @@ This makes real model calls with a **$5 API-metadata budget, not a provider bill
 ## Safety and coordination
 
 - **No sandbox:** fixture directories do not confine shell tools. Use trusted prompts, models and configuration.
-- Have the local server ready. Pause ordinary delegates with `/delegate-local off`, wait for `OFF · idle`, and coordinate other clients separately. The benchmark bypasses this switch and does not manage servers or shared slots. Restore `/delegate-local on` afterward.
+- Have the local server ready. Stop submitting local delegates in all sessions and wait for existing jobs to finish; coordinate other clients separately. The benchmark bypasses delegate scheduling and does not manage servers or shared slots.
 - `/delegate-calibrate-cancel` or closing the session cancels work but retains evidence. Incomplete campaigns do not publish profiles.
 
 ## Local recon prompt evaluation (opt-in)
@@ -63,7 +63,7 @@ await runReconEval({
 JS
 ```
 
-Defaults: one repeat (eight runs), **12 provider requests and 120 seconds per run**, enforced by the existing benchmark guard and runtime timeout. `repeats` accepts 1–5, `maxRequests` 1–32 and `timeoutMs` 1000–900000. An optional `signal` cancels work while retaining evidence. The runner never changes servers, shared switches or model configuration; it bypasses ordinary delegate scheduling. No hosted calls or savings profile are produced.
+Defaults: one repeat (eight runs), **12 provider requests and 120 seconds per run**, enforced by the existing benchmark guard and runtime timeout. `repeats` accepts 1–5, `maxRequests` 1–32 and `timeoutMs` 1000–900000. An optional `signal` cancels work while retaining evidence. The runner never changes servers or model configuration; it bypasses ordinary delegate scheduling. No hosted calls or savings profile are produced.
 
 **Every result still requires manual review.** Fact/citation matching cannot detect contradictions or prove correctness; automatic boundary checks are deliberately narrow, not a shell sandbox. Review each answer and raw tool trace for factual accuracy, supporting citations, scope compliance and unnecessary work. Do not promote a prompt on length/speed alone.
 
