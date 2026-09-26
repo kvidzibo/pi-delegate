@@ -8,7 +8,7 @@ import { isNonEmptyStringArray } from "../child-runtime/policy.ts";
 export const KINDS = ["recon", "implement", "review", "oracle"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface AgentConfig {
@@ -300,7 +300,7 @@ function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig,
 	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
 	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
 	const saved = mergeDelegateConfig(shipped, overlay, path).agents[kind];
-	if ((Object.keys(patch) as (keyof AgentConfig)[]).some(key => saved[key] !== current[key])) {
+	if (saved.model !== current.model || (Object.keys(patch) as (keyof AgentConfig)[]).some(key => saved[key] !== current[key])) {
 		throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
 	}
 	const next = { ...overlay, agents: { ...overlay.agents, [kind]: { ...overlay.agents?.[kind], ...patch } } };

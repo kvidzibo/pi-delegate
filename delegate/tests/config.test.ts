@@ -145,14 +145,19 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"] } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).agents.recon;
-		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "high"), { thinking: "high" });
+		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
+		assert.equal(loadDelegateConfig(paths).agents.recon.thinking, "xhigh");
 		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), {
-			...overlay, agents: { recon: { ...overlay.agents.recon, thinking: "high" } },
+			...overlay, agents: { recon: { ...overlay.agents.recon, thinking: "xhigh" } },
 		});
 		assert.equal(current.thinking, "low");
 		const before = readFileSync(paths.userPath, "utf8");
 		assert.throws(() => saveDelegateThinking(paths, "recon", current, "off"), /changed on disk/);
 		assert.equal(readFileSync(paths.userPath, "utf8"), before);
+		const changedModel = JSON.stringify({ ...overlay, agents: { recon: { ...overlay.agents.recon, model: "hosted/changed" } } });
+		writeFileSync(paths.userPath, changedModel);
+		assert.throws(() => saveDelegateThinking(paths, "recon", current, "max"), /changed on disk/);
+		assert.equal(readFileSync(paths.userPath, "utf8"), changedModel);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -71,7 +71,8 @@ export default function probe(pi: ExtensionAPI) {
 			[oldModel.slice(0, slash)]: { baseUrl: "http://localhost:1/v1", api: "openai-completions", apiKey: "unused",
 				models: [{ id: oldModel.slice(slash + 1) }] },
 			"picker-cloud": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", apiKey: "unused",
-				models: [{ id: "team/new", name: "Fresh Model" }] },
+				models: [{ id: "team/new", name: "Fresh Model", reasoning: true,
+					thinkingLevelMap: { off: null, minimal: null, low: null, xhigh: "xhigh", max: "max" } }] },
 			"picker-no-auth": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", models: [{ id: "hidden" }] },
 		} }));
 		const userPath = join(getAgentDir(), "delegate.json");
@@ -102,8 +103,8 @@ export default function probe(pi: ExtensionAPI) {
 				select: async (title: string, options: string[]) => {
 					if (title.startsWith("Settings for")) return options[rolePicks === 3 ? 1 : 0];
 					if (title.startsWith("Reasoning for")) {
-						assert.deepEqual(options, ["off", "minimal", "low", "medium ✓ current", "high"]);
-						return "high";
+						assert.deepEqual(options, ["medium ✓ current", "high", "xhigh", "max"]);
+						return "max";
 					}
 					assert.match(title, /Delegate models/);
 					assert.equal(options.length, 4);
@@ -114,7 +115,7 @@ export default function probe(pi: ExtensionAPI) {
 					}
 					assert.match(options[0], /picker-cloud\/team\/new/);
 					if (rolePicks === 3) return options[0];
-					assert.match(options[0], /reasoning: high/);
+					assert.match(options[0], /reasoning: max/);
 					return undefined;
 				},
 				custom: async (create: Function) => {
@@ -139,7 +140,7 @@ export default function probe(pi: ExtensionAPI) {
 				},
 				confirm: async (_title: string, text: string) => {
 					confirms++;
-					assert.match(text, confirms === 1 ? /offline: true → false/ : /medium → high/);
+					assert.match(text, confirms === 1 ? /offline: true → false/ : /medium → max/);
 					assert.ok(text.includes(userPath)); return true;
 				},
 			},
@@ -155,7 +156,7 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(confirms, 2, notices.join("\n"));
 			assert.equal(rolePicks, 4, notices.join("\n"));
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
-				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "high" },
+				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "max" },
 			} });
 			const fresh = await call({ kind: "recon", task: "fresh" });
 			assert.equal(fresh.details.model, selected);
@@ -163,12 +164,37 @@ export default function probe(pi: ExtensionAPI) {
 			finish!();
 			await call({ jobId: running.details.jobId }); await call({ jobId: queued.details.jobId });
 			assert.deepEqual(launches.map(input => [input.model, input.offline]), [[oldModel, true], [selected, false], [oldModel, true]]);
-			assert.deepEqual(launches.map(input => input.thinking), ["medium", "high", "medium"]);
+			assert.deepEqual(launches.map(input => input.thinking), ["medium", "max", "medium"]);
 			assert.ok(launches.every(input => input.tools.join(",") === "read,bash"));
 			await handlers.get("session_shutdown")?.();
 			factory(); // Reload from the saved overlay, not in-memory selections.
 			assert.equal((await call({ kind: "recon", task: "restored" })).details.model, selected);
-			assert.equal(launches.at(-1).thinking, "high");
+			assert.equal(launches.at(-1).thinking, "max");
+			// Non-reasoning models expose only off; unknown models must not get a guessed list.
+			const saved = readFileSync(userPath, "utf8");
+			for (const known of [true, false]) {
+				let picks = 0, reasoningPicks = 0;
+				await commands.get("model-delegate").handler("", { ...testCtx,
+					modelRegistry: {
+						refresh: async () => {}, getError: () => undefined, getAvailable: () => [],
+						getAll: () => known ? [{ provider: "picker-cloud", id: "team/new", reasoning: false }] : [],
+					},
+					ui: { ...testCtx.ui,
+						select: async (title: string, options: string[]) => {
+							if (title.startsWith("Settings for")) return options[1];
+							if (title.startsWith("Reasoning for")) {
+								reasoningPicks++; assert.deepEqual(options, ["off"]);
+								assert.match(title, /max \(unsupported for this model\)/);
+								return undefined;
+							}
+							return ++picks === 1 ? options[0] : undefined;
+						},
+					},
+				});
+				assert.equal(reasoningPicks, known ? 1 : 0);
+				assert.equal(readFileSync(userPath, "utf8"), saved);
+			}
+			assert.ok(notices.some(text => text.includes("Cannot determine reasoning levels")));
 			return { roleModels: true, availableOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();

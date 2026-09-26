@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { KINDS, THINKING_LEVELS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig } from "./config.ts";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { KINDS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig } from "./config.ts";
 import { modelId, pickDelegateModel } from "./model-picker.ts";
 import { isLocalModel } from "./tg.ts";
 
@@ -46,11 +47,22 @@ export class ModelCommand {
 				if (signal.aborted) return;
 				if (field === undefined) continue;
 				if (field === fields[1]) {
-					const levels = THINKING_LEVELS.map(level => `${level}${level === current.thinking ? " ✓ current" : ""}`);
-					const choice = await ctx.ui.select(`Reasoning for ${kind}\nCurrent: ${current.thinking}`, levels, { signal });
+					const model = ctx.modelRegistry.getAll().find(model => modelId(model) === current.model);
+					if (!model) {
+						ctx.ui.notify(`Cannot determine reasoning levels: ${current.model} is not in Pi's model catalogue.`, "warning");
+						continue;
+					}
+					const supported = getSupportedThinkingLevels(model);
+					if (!supported.length) {
+						ctx.ui.notify(`No supported reasoning levels for ${current.model}.`, "warning");
+						continue;
+					}
+					const levels = supported.map(level => `${level}${level === current.thinking ? " ✓ current" : ""}`);
+					const currentLabel = `${current.thinking}${supported.includes(current.thinking) ? "" : " (unsupported for this model)"}`;
+					const choice = await ctx.ui.select(`Reasoning for ${kind}\n${current.model}\nCurrent: ${currentLabel}`, levels, { signal });
 					if (signal.aborted) return;
 					if (choice === undefined) continue;
-					const thinking = THINKING_LEVELS[levels.indexOf(choice)];
+					const thinking = supported[levels.indexOf(choice)];
 					if (thinking === undefined) throw new Error("Invalid reasoning selection.");
 					if (thinking === current.thinking) continue;
 					const confirmed = await ctx.ui.confirm(`Save ${kind} reasoning?`, [
@@ -61,6 +73,8 @@ export class ModelCommand {
 					].join("\n"), { signal });
 					if (signal.aborted) return;
 					if (!confirmed) continue;
+					const latest = ctx.modelRegistry.getAll().find(model => modelId(model) === current.model);
+					if (!latest || !getSupportedThinkingLevels(latest).includes(thinking)) throw new Error("Selected reasoning level is no longer supported by this model.");
 					const patch = saveDelegateThinking(this.paths, kind, current, thinking);
 					this.config.agents[kind] = { ...current, ...patch };
 					ctx.ui.notify(`${kind}: reasoning ${thinking}\nSaved; new delegates use it now.`, "info");
