@@ -8,9 +8,6 @@ test("busy query replies synchronously with the supplied status", () => {
 	assert.equal(answer, true);
 	respondToBusyQuery({ reply: (busy: boolean) => { answer = busy; } }, false);
 	assert.equal(answer, false);
-});
-
-test("busy query ignores malformed payloads", () => {
 	assert.doesNotThrow(() => respondToBusyQuery(undefined, true));
 	assert.doesNotThrow(() => respondToBusyQuery({ reply: "not a function" }, true));
 });
