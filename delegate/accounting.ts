@@ -38,7 +38,7 @@ export class Accounting {
 		const text = infobar([...this.records.values()].filter((r) => r.parentSessionId === this.sessionId),
 			this.warnings.some((w) => w.parentSessionId === this.sessionId), this.warnings.some((w) => !w.parentSessionId));
 		if (text !== this.lastStatus) {
-			try { this.ui?.setStatus("delegate-usage", text); this.lastStatus = text; } catch { /* UI is an observer, not a job dependency */ }
+			try { this.ui?.setStatus("delegate-usage", text || undefined); this.lastStatus = text; } catch { /* UI is an observer, not a job dependency */ }
 		}
 	}
 

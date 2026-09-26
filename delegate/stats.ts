@@ -48,8 +48,12 @@ export function savingsTotals(runs: RunRecord[]): { usd: number; priced: number;
 export const formatUsd = (usd: number): string => usd > 0 && usd < 0.001 ? "<$0.001" : `$${usd.toFixed(usd < 1 ? 3 : 2)}`;
 export function infobar(runs: RunRecord[], warning = false, archiveWarning = false): string {
 	const usage = summarize(runs), savings = savingsTotals(runs);
-	const saved = savings.priced ? `~${formatUsd(savings.usd)}${savings.priced < savings.eligible ? " · !estimate" : ""}` : "—";
-	return `delegated ${formatTokens(totalTokens(usage))} · local ${formatTokens(usage.local.total)} · saved ${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
+	const total = totalTokens(usage);
+	if (total === 0) return "";
+	const saved = savings.priced && savings.usd > 0 ? `|~${formatUsd(savings.usd)}${savings.priced < savings.eligible ? " · !estimate" : ""}` : "";
+	const localShare = usage.local.total / total * 100;
+	const local = usage.local.total > 0 ? `|${localShare < 1 ? "<1" : Math.round(localShare)}%` : "";
+	return `⑂ ${formatTokens(total)}${local}${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
 }
 export function statsReport(runs: RunRecord[], root: string, scope: string, warnings: string[] = []): string {
 	runs = latestRuns(runs);
