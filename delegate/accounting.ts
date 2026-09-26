@@ -35,8 +35,7 @@ export class Accounting {
 	}
 
 	private paint(): void {
-		const text = infobar([...this.records.values()].filter((r) => r.parentSessionId === this.sessionId),
-			this.warnings.some((w) => w.parentSessionId === this.sessionId), this.warnings.some((w) => !w.parentSessionId));
+		const text = infobar([...this.records.values()].filter((r) => r.parentSessionId === this.sessionId));
 		if (text !== this.lastStatus) {
 			try { this.ui?.setStatus("delegate-usage", text || undefined); this.lastStatus = text; } catch { /* UI is an observer, not a job dependency */ }
 		}

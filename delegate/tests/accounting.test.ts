@@ -27,7 +27,7 @@ test("session infobar updates live, counts final usage once, survives resume, re
 	const result = await accounting.run(run, "d0001", async (event) => {
 		event({ type: "message_start", message });
 		event({ type: "message_update", usage: { ...message.usage, output: 10 } });
-		assert.match(statuses.at(-1)!, /⑂ 110\|100% · !partial/);
+		assert.equal(statuses.at(-1), "⑂ 110|100%", "incomplete live usage must not add a warning label");
 		appendFileSync(run.paths.session, `${JSON.stringify({ type: "message", id: "a", message })}\n`);
 		event({ type: "message_end", message }); event({ type: "agent_end", messages: [message] }); event({ type: "agent_settled" });
 		return { text: "answer", exitCode: 0, stderrTail: "", stopReason: "stop" };
@@ -140,6 +140,7 @@ test("session/day/all filters, honest savings label, distinct local/hosted and t
 	run.usage.local = { input: 100, output: 10, cacheRead: 5, cacheWrite: 0, total: 115 };
 	run.usage.hosted = { input: 200, output: 20, cacheRead: 0, cacheWrite: 0, total: 220 };
 	assert.equal(infobar([run, run]), "⑂ 335|34%", "duplicate records never double count");
+	assert.equal(infobar([{ ...run, usage: { ...run.usage, incomplete: true }, recordingError: "partial archive" }]), "⑂ 335|34%", "diagnostics stay out of the footer");
 	assert.equal(infobar([{ ...run, usage: { ...run.usage, local: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }]), "⑂ 220", "hosted-only usage omits local count and separator");
 	assert.equal(infobar([{ ...run, usage: { ...run.usage, local: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 } } }]), "⑂ 221|<1%", "tiny positive local share does not appear as zero");
 	const terminal = { ...run, revision: 10, status: "done" as const };

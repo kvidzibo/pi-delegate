@@ -12,11 +12,11 @@ Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract
 
 ## Opt-in execution controls
 
-These are library APIs, **not delegate configuration settings or defaults**. Ordinary delegation remains steer-only.
+These are library APIs, **not delegate configuration settings**. Ordinary delegation remains steer-only; local jobs use lease-only startup, not the execution/headroom guard.
 
 - **`execution`** enables guarded startup and finalization. The guard must acknowledge readiness before task dispatch. Finalization blocks new builtin tool execution while active tools drain; it does not sandbox shell work or unrelated processes.
 - **`execution.headroom`** bounds outgoing request/tool-result text and reserves output space. It is a conservative byte policy, not exact token accounting. Native history remains unchanged. Enforcement requires trusted, compatible transports and extensions; direct model calls can bypass it.
-- **`resourceLease`** accepts a borrowed Linux descriptor from the [shared-capacity broker](../delegate/capacity.ts) and requires guarded execution. The scheduler owns release after process closure; the runtime must not close the borrowed parent descriptor. This coordinates participating processes, not unrelated GPU work or server-side requests.
+- **`resourceLease`** accepts a borrowed Linux descriptor from the [shared-capacity broker](../delegate/capacity.ts). It requires either guarded execution or explicit **`leaseStartupMs`** (mutually exclusive). Lease-only startup verifies the child's inherited descriptor before sending the task; it does not replace tools or change steering/runtime deadlines. Ordinary local delegation uses this mode with a 15-second startup deadline. The scheduler owns release after process closure; the runtime must not close the borrowed parent descriptor. This coordinates participating processes, not unrelated GPU work or server-side requests.
 
 Guarded runs cannot reuse legacy savings calibrations. See the [implementation contract](../delegate/SPEC.md) when changing these boundaries; API types and tests contain the detailed behavior.
 

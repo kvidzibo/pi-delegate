@@ -115,7 +115,7 @@ test("native reconstruction and archive reload/rebuild preserve captured prices,
 	assert.equal(savingsTotals([pending]).eligible, 0);
 	assert.equal(infobar([archive.data, { ...pending, runId: "pending" }]).includes("!estimate"), false);
 	assert.equal(savingsTotals([{ ...archive.data, status: "failed" }]).priced, 0);
-	assert.match(infobar([archive.data, { ...archive.data, runId: "other", savings: undefined }]), /!estimate/);
+	assert.match(infobar([archive.data, { ...archive.data, runId: "other", savings: undefined }]), /^⑂ \S+\|100%\|~<\$0.001$/, "partial estimate coverage shows the known amount without a warning label");
 });
 
 for (const delivery of ["progress", "result"] as const) {
