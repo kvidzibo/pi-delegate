@@ -67,7 +67,7 @@ Collected-result rows show the role, model and job ID. Failed/cancelled rows als
 
 Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 
-`/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local>`, omitting `|<local>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings.
+`/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local%>` (rounded local share; `<1%` for a positive share below 1%), omitting `|<local%>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings.
 
 Archives default to `~/.pi/agent/delegate/`; `PI_DELEGATE_ARCHIVE_DIR` accepts an absolute replacement path. Retention is indefinite. Keep archives private: they can contain sensitive prompts and tool output. Rebuild reconstructs usage summaries, not running jobs.
 
