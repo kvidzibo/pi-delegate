@@ -71,10 +71,15 @@ export default function probe(pi: ExtensionAPI) {
 			"picker-cloud": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", apiKey: "unused",
 				models: [{ id: "team/new", name: "Fresh Model", reasoning: true,
 					thinkingLevelMap: { off: null, minimal: null, low: null, xhigh: "xhigh", max: "max" } }] },
+			"picker-extra": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", apiKey: "unused",
+				models: [{ id: "other", name: "Unscoped Model" }] },
 			"picker-no-auth": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", models: [{ id: "hidden" }] },
 		} }));
 		const userPath = join(getAgentDir(), "delegate.json");
-		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: { recon: { thinking: "medium", tools: ["read", "bash"] } } };
+		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: {
+			recon: { thinking: "medium", tools: ["read", "bash"] },
+			implement: { model: "picker-extra/other" },
+		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const original = readFileSync(userPath, "utf8");
 		const skip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
@@ -96,7 +101,10 @@ export default function probe(pi: ExtensionAPI) {
 		});
 		let rolePicks = 0, modelPicks = 0, confirms = 0, sequence = 0;
 		const testCtx: any = { ...ctx, mode: "tui", isIdle: () => false,
-			scopedModels: [{ model: { provider: oldModel.slice(0, slash), id: oldModel.slice(slash + 1) } }],
+			scopedModels: [
+				{ model: { provider: oldModel.slice(0, slash), id: oldModel.slice(slash + 1) } },
+				{ model: { provider: "picker-cloud", id: "team/new", name: "Fresh Model" } },
+			],
 			ui: { ...ctx.ui, setWidget: () => {}, setStatus: () => {}, notify: (text: string) => notices.push(text),
 				select: async (title: string, options: string[]) => {
 					if (title.startsWith("Settings for")) return options[rolePicks === 3 ? 1 : 0];
@@ -107,6 +115,10 @@ export default function probe(pi: ExtensionAPI) {
 					assert.match(title, /Delegate models/);
 					assert.equal(options.length, 4);
 					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
+					if (rolePicks === 0) {
+						assert.doesNotMatch(options[0], /unavailable|not in scope/);
+						assert.ok(options.some(option => option.startsWith("implement · picker-extra/other (not in scope)")));
+					}
 					if (++rolePicks <= 2) {
 						assert.equal(readFileSync(userPath, "utf8"), original, "cancel does not write");
 						return options[0];
@@ -122,12 +134,15 @@ export default function probe(pi: ExtensionAPI) {
 					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
 					try {
 						component.focused = true;
-						assert.ok(component.render(100).join("\n").includes("✓ current"));
-						assert.ok(component.render(100).join("\n").includes(selected));
-						assert.ok(!component.render(100).join("\n").includes("picker-no-auth"));
+						const rendered = component.render(100).join("\n");
+						assert.ok(rendered.includes("✓ current"));
+						assert.ok(rendered.includes(selected));
+						assert.ok(rendered.includes("Same models as /model."));
+						assert.ok(!rendered.includes("picker-extra"), rendered);
+						assert.ok(!rendered.includes("picker-no-auth"));
 						if (++modelPicks === 1) { component.handleInput("\x1b"); return result; }
 						for (const char of "Fresh Model") component.handleInput(char);
-						assert.match(component.render(100).join("\n"), /1\/2 available/);
+						assert.match(component.render(100).join("\n"), /1\/2 scoped/);
 						for (const width of [12, 40, 100]) assert.ok(component.render(width).every((line: string) => visibleWidth(line) <= width));
 						tui.terminal.rows = 15;
 						assert.ok(component.render(40).length <= 15);
@@ -155,6 +170,7 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(rolePicks, 4, notices.join("\n"));
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
 				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "max" },
+				implement: overlay.agents.implement,
 			} });
 			const fresh = await call({ kind: "recon", task: "fresh" });
 			assert.equal(fresh.details.model, selected);
@@ -170,6 +186,38 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(launches.at(-1).thinking, "max");
 			// Non-reasoning models expose only off; unknown models must not get a guessed list.
 			const saved = readFileSync(userPath, "utf8");
+			let fallbackRoles = 0;
+			await commands.get("pi-delegate").handler("models", { ...testCtx, scopedModels: [],
+				ui: { ...testCtx.ui,
+					select: async (title: string, options: string[]) => {
+						if (title.startsWith("Settings for")) return options[0];
+						if (!title.startsWith("Delegate models")) throw new Error(`unexpected ${title}`);
+						if (fallbackRoles === 0) {
+							assert.ok(options.some(option => option.startsWith("implement · picker-extra/other ·")));
+							assert.ok(!options.some(option => option.includes("not in scope")));
+						}
+						return ++fallbackRoles === 1 ? options[0] : undefined;
+					},
+					custom: async (create: Function) => {
+						let result: string | undefined;
+						const tui = { terminal: { rows: 30 }, requestRender: () => {} };
+						const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+						try {
+							const text = component.render(100).join("\n");
+							assert.ok(text.includes("picker-extra/other"), text);
+							assert.ok(text.includes(selected));
+							assert.ok(!text.includes("picker-no-auth"));
+							assert.ok(!text.includes("Same models as /model."));
+							assert.match(text, /3\/3 available/);
+							component.handleInput("\x1b");
+							return result;
+						} finally { component.dispose(); }
+					},
+					confirm: async () => { throw new Error("empty scope preview must not save"); },
+				},
+			});
+			assert.equal(fallbackRoles, 2);
+			assert.equal(readFileSync(userPath, "utf8"), saved);
 			for (const known of [true, false]) {
 				let picks = 0, reasoningPicks = 0;
 				await commands.get("pi-delegate").handler("models", { ...testCtx,
@@ -193,7 +241,7 @@ export default function probe(pi: ExtensionAPI) {
 				assert.equal(readFileSync(userPath, "utf8"), saved);
 			}
 			assert.ok(notices.some(text => text.includes("Cannot determine reasoning levels")));
-			return { roleModels: true, availableOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
+			return { roleModels: true, availableOnly: true, scopedOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();
 			if (skip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = skip;

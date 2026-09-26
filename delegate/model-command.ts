@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { KINDS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig } from "./config.ts";
-import { modelId, pickDelegateModel } from "./model-picker.ts";
+import { modelId, pickDelegateModel, selectableDelegateModels } from "./model-picker.ts";
 import { isLocalModel } from "./tg.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
@@ -32,9 +32,16 @@ export class ModelCommand {
 			const error = ctx.modelRegistry.getError();
 			if (error) ctx.ui.notify(`Model catalogue: ${error}`, "warning");
 			while (!signal.aborted) {
-				const models = ctx.modelRegistry.getAvailable();
-				const available = new Set(models.map(modelId));
-				const options = KINDS.map(kind => `${kind} · ${this.config.agents[kind].model}${available.has(this.config.agents[kind].model) ? "" : " (unavailable)"} · reasoning: ${this.config.agents[kind].thinking}`);
+				const availableModels = ctx.modelRegistry.getAvailable();
+				const scoped = (ctx.scopedModels?.length ?? 0) > 0;
+				const models = selectableDelegateModels(availableModels, ctx.scopedModels);
+				const available = new Set(availableModels.map(modelId));
+				const selectable = new Set(models.map(modelId));
+				const options = KINDS.map(kind => {
+					const id = this.config.agents[kind].model;
+					const mark = selectable.has(id) ? "" : scoped && available.has(id) ? " (not in scope)" : " (unavailable)";
+					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}`;
+				});
 				const choice = await ctx.ui.select("Delegate models and reasoning — select a role\nSaved globally; running and queued jobs are unchanged", options, { signal });
 				if (signal.aborted || choice === undefined) return;
 				const index = options.indexOf(choice);
@@ -81,8 +88,13 @@ export class ModelCommand {
 					continue;
 				}
 				if (field !== fields[0]) throw new Error("Invalid delegate setting selection.");
-				if (!models.length) { ctx.ui.notify("No models available. Configure model access in Pi (/login or models.json) first.", "warning"); continue; }
-				const selected = await pickDelegateModel(ctx, kind, current.model, models, signal);
+				if (!models.length) {
+					ctx.ui.notify(scoped
+						? "No scoped models are available. Adjust /scoped-models, or configure model access in Pi (/login or models.json)."
+						: "No models available. Configure model access in Pi (/login or models.json) first.", "warning");
+					continue;
+				}
+				const selected = await pickDelegateModel(ctx, kind, current.model, models, signal, scoped);
 				if (signal.aborted) return;
 				if (selected === undefined || selected === current.model) continue;
 				const offlineChange = current.offline && !isLocalModel(selected);
@@ -95,7 +107,7 @@ export class ModelCommand {
 				].join("\n"), { signal });
 				if (signal.aborted) return;
 				if (!confirmed) continue;
-				if (!ctx.modelRegistry.getAvailable().some(model => modelId(model) === selected)) throw new Error("Selected model is no longer available.");
+				if (!selectableDelegateModels(ctx.modelRegistry.getAvailable(), ctx.scopedModels).some(model => modelId(model) === selected)) throw new Error("Selected model is no longer available.");
 				const patch = saveDelegateModel(this.paths, kind, current, selected);
 				// Replace, don't mutate: queued runners close over the previous agent object.
 				this.config.agents[kind] = { ...current, ...patch };

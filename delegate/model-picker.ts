@@ -11,16 +11,26 @@ export function modelId(model: AvailableModel): string {
 	return `${model.provider}/${model.id}`;
 }
 
-/** Use the full available catalogue, not the parent's model-cycling scope. */
+/** Same list as `/model`: scoped models when a scope is set, otherwise every available model. */
+export function selectableDelegateModels(
+	available: readonly AvailableModel[],
+	scopedModels: readonly { model: { provider: string; id: string } }[] | undefined,
+): AvailableModel[] {
+	if (!scopedModels?.length) return [...available];
+	const allowed = new Set(scopedModels.map(item => `${item.model.provider}/${item.model.id}`));
+	return available.filter(model => allowed.has(modelId(model)));
+}
+
 export async function pickDelegateModel(
 	ctx: ExtensionCommandContext, kind: string, current: string, models: AvailableModel[], signal: AbortSignal,
+	scoped = false,
 ): Promise<string | undefined> {
 	if (signal.aborted) return undefined;
 	const sorted = [...models].sort((a, b) => Number(modelId(b) === current) - Number(modelId(a) === current)
 		|| modelId(a).localeCompare(modelId(b)));
 	if (ctx.mode !== "tui") {
 		const options = sorted.map(model => `${modelId(model)}${modelId(model) === current ? " ✓ current" : ""}`);
-		const choice = await ctx.ui.select(`Model for ${kind}\nCurrent: ${current}`, options, { signal });
+		const choice = await ctx.ui.select(`Model for ${kind}\nCurrent: ${current}${scoped ? "\nSame models as /model" : ""}`, options, { signal });
 		const index = options.indexOf(choice ?? "");
 		return index < 0 ? undefined : modelId(sorted[index]);
 	}
@@ -58,9 +68,10 @@ export async function pickDelegateModel(
 				return [
 					theme.fg("accent", theme.bold(`Delegate model · ${kind}`)),
 					theme.fg("muted", `Current: ${current}`),
+					...(scoped ? [theme.fg("muted", "Same models as /model.")] : []),
 					"Search by provider, model ID or name:", ...search.render(width), "",
 					...list.render(width), "",
-					theme.fg("dim", `${filtered.length}/${sorted.length} available · ↑↓ navigate · enter select · esc back`),
+					theme.fg("dim", `${filtered.length}/${sorted.length} ${scoped ? "scoped" : "available"} · ↑↓ navigate · enter select · esc back`),
 				].map(line => truncateToWidth(line, width));
 			},
 			invalidate() { search.invalidate(); list.invalidate(); },
