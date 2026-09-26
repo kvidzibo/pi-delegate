@@ -23,7 +23,7 @@ Profiles must match models, role, thinking levels, tools and prompt. Profiles ol
 
 ## Run a fresh campaign
 
-The runner is not auto-loaded. With models and credentials configured, run from the repository root:
+The runner is not auto-loaded. With pi-delegate installed and enabled, and models and credentials configured, run from the repository root. This adds `calibrate` and `calibrate-cancel` under `/pi-delegate`:
 
 ```bash
 pi -e ./bench/index.ts
@@ -32,7 +32,7 @@ pi -e ./bench/index.ts
 The campaign uses recon's model and mapped alternative. Pass recon's actual thinking level explicitly; shipped recon uses `off`, shown below. Omitting it uses the benchmark's `low` default, producing a profile that will not match `off` runs.
 
 ```text
-/delegate-calibrate {"out":"/tmp/delegate-calibration-new","budgetUsd":5,"localThinking":"off"}
+/pi-delegate calibrate {"out":"/tmp/delegate-calibration-new","budgetUsd":5,"localThinking":"off"}
 ```
 
 This makes real model calls with a **$5 API-metadata budget, not a provider billing cap**. Use provider-side limits too. `out` must be a new absolute directory with an existing parent. Artifacts persist until removed; keep them private and outside installed package clones. These profiles cover successful paired recon tasks, not general coding/review workloads.
@@ -41,7 +41,7 @@ This makes real model calls with a **$5 API-metadata budget, not a provider bill
 
 - **No sandbox:** fixture directories do not confine shell tools. Use trusted prompts, models and configuration.
 - Have the local server ready. Stop submitting local delegates in all sessions and wait for existing jobs to finish; coordinate other clients separately. The benchmark bypasses delegate scheduling and does not manage servers or shared slots.
-- `/delegate-calibrate-cancel` or closing the session cancels work but retains evidence. Incomplete campaigns do not publish profiles.
+- `/pi-delegate calibrate-cancel` or closing the session cancels work but retains evidence. Incomplete campaigns do not publish profiles.
 
 ## Local recon prompt evaluation (opt-in)
 

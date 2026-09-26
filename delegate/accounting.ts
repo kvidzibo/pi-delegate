@@ -94,7 +94,7 @@ export class Accounting {
 		const warnings = [...loaded.warnings, ...this.warnings];
 		const scoped = warnings.filter((w) => scope === "all" || (scope === "session" ? w.parentSessionId === sessionId : w.createdAt && inScope({ createdAt: w.createdAt, parentSessionId: w.parentSessionId ?? "" }, "today", sessionId))).map((w) => w.message);
 		if (scope !== "all" && warnings.some((w) => scope === "session" ? !w.parentSessionId : !w.createdAt)) {
-			scoped.push("Some archive errors cannot be attributed to this scope; totals may be incomplete. Use /delegate-stats all for archive diagnostics.");
+			scoped.push("Some archive errors cannot be attributed to this scope; totals may be incomplete. Use /pi-delegate stats all for archive diagnostics.");
 		}
 		return statsReport([...runs.values()].filter((run) => inScope(run, scope, sessionId)), this.root, scope, [...new Set(scoped)]);
 	}

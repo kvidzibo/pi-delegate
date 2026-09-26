@@ -89,7 +89,17 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const peekArgs = { jobId, timeoutMs: 0 };
 	const peekRow = row(first.tool, "peek", peekArgs);
 	const peek = await first.tool.execute("peek", peekArgs, undefined, peekRow.update, testCtx); peekRow.update(peek, false);
-	assert.match(peekRow.render(), /checked · running at check/);
+	assert.match(peekRow.render(), /checked · running at check · elapsed \d+s/);
+	assert.ok(Number.isFinite(peek.details.elapsedMs));
+	assert.equal(peek.details.sincePreviousCheckMs, undefined, "first check has no previous interval");
+	const frozenCheck = peekRow.render(200);
+	const secondCheck = await first.tool.execute("peek-again", peekArgs, undefined, undefined, testCtx);
+	assert.equal(secondCheck.details.sincePreviousCheckMs, secondCheck.details.checkedAt - peek.details.checkedAt);
+	const timedRow = row(first.tool, "timed-check", peekArgs);
+	timedRow.update({ ...secondCheck, details: { ...secondCheck.details, elapsedMs: 192000, sincePreviousCheckMs: 60000 } }, false);
+	assert.match(timedRow.render(200), /elapsed 3m 12s · since previous check 1m 0s/);
+	for (const width of [1, 16, 80, 120]) timedRow.render(width);
+	assert.equal(peekRow.render(200), frozenCheck, "later checks cannot change a frozen receipt");
 	assert.match(peekRow.render(), /review · xai\/grok-4\.6/);
 	assert.doesNotMatch(peekRow.render(), /test.mjs|Task:/);
 	const before = original.row.invalidations();

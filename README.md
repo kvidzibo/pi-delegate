@@ -25,7 +25,7 @@ pi install /absolute/path/to/pi-delegate
 
 Pi supplies the peer dependencies; no manual `npm install` is needed. Do not also add `delegate` to Pi's `extensions` setting. Published releases may lag behind this checkout.
 
-Run **`/model-delegate`** to choose each role's default model or reasoning level. Select a role, then **Model** or **Reasoning**; changing reasoning leaves the model unchanged. Shipped model assignments are active defaults; unavailable models are not automatically replaced. Selections are saved in `~/.pi/agent/delegate.json` and apply to new jobs in the current session.
+Run **`/pi-delegate`** for the options menu. Esc from Models returns to this menu; Esc at the main menu closes it. Use **`/pi-delegate stats [session|today|all|rebuild]`** for a scrollable usage panel (Esc returns), or **`/pi-delegate models`** to choose each role's default model or reasoning level. Select a role, then **Model** or **Reasoning**; changing reasoning leaves the model unchanged. Shipped model assignments are active defaults; unavailable models are not automatically replaced. Selections are saved in `~/.pi/agent/delegate.json` and apply to new jobs in the current session.
 
 Manual configuration edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**
 
@@ -39,6 +39,8 @@ Do not edit files. Collect the result when it finishes.
 ```
 
 The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor; finished results appear in the transcript. **Ctrl+O** expands details.
+
+Check receipts freeze elapsed runtime (or queue time) and the interval since the previous returned check; the first check omits the interval.
 
 See [configuration and job controls](delegate/README.md) for manual settings and tool arguments.
 

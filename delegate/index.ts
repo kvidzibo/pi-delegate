@@ -18,6 +18,8 @@ import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
+import { registerDelegateCommand } from "./command.ts";
+import { showStats } from "./stats-view.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
@@ -162,6 +164,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const cards = new JobCards();
 	const origins = new Map<string, string>();
+	const lastChecks = new Map<string, number>();
 	const uiDetails = (snap: JobSnapshot, extra: CardDetails = {}): CardDetails => detailsFromSnap(snap, {
 		originToolCallId: snap.archive ? origins.get(snap.archive.runId) : undefined,
 		background: snap.background, callType: "spawn", ...extra,
@@ -289,22 +292,23 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
-	pi.registerCommand("model-delegate", {
-		description: "Choose each delegate role's default model and reasoning level. Saves defaults for new children.",
+	registerDelegateCommand(pi, [{
+		name: "models",
+		description: "Choose role models and reasoning levels",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
-	});
-	pi.registerCommand("delegate-stats", {
-		description: "Recorded child usage: session (default), today, all, or rebuild the export ledger. No model calls.",
-		getArgumentCompletions: (prefix) => ["session", "today", "all", "rebuild"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+	}, {
+		name: "stats",
+		description: "Recorded child usage (no model calls)",
+		complete: (prefix) => ["session", "today", "all", "rebuild"].filter(value => value.startsWith(prefix)),
 		handler: async (args, ctx) => {
 			const scope = args.trim() || "session";
 			if (scope !== "session" && scope !== "today" && scope !== "all" && scope !== "rebuild") {
-				ctx.ui.notify("Usage: /delegate-stats [session|today|all|rebuild]", "warning"); return;
+				ctx.ui.notify("Usage: /pi-delegate stats [session|today|all|rebuild]", "warning"); return;
 			}
 			const report = await accounting.report(scope === "rebuild" ? "all" : scope, ctx.sessionManager.getSessionId(), scope === "rebuild");
-			ctx.ui.notify(report, "info");
+			await showStats(ctx, report);
 		},
-	});
+	}]);
 	// Pi ignores isError on execute() return values. Keep our structured details
 	// and mark failed results through the supported result-event hook instead.
 	pi.on("tool_result", (event) => {
@@ -328,6 +332,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		sessionCtx = undefined;
 		cards.clear();
 		origins.clear();
+		lastChecks.clear();
 	});
 
 	pi.registerTool({
@@ -489,6 +494,16 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 
 				const collect = parsed.mode === "collect";
 				const pending = snap.status === "queued" || snap.status === "running";
+				// Freeze timing when a check returns, never when its history row repaints.
+				const checkTiming: CardDetails = {};
+				if (collect && pending && !parsed.wrap && !parsed.cancel) {
+					const checkedAt = Date.now();
+					const previous = lastChecks.get(snap.id);
+					checkTiming.checkedAt = checkedAt;
+					checkTiming.elapsedMs = Math.max(0, checkedAt - (snap.startedAt ?? snap.queuedAt ?? checkedAt));
+					if (previous !== undefined) checkTiming.sincePreviousCheckMs = Math.max(0, checkedAt - previous);
+					lastChecks.set(snap.id, checkedAt);
+				}
 				const failed = !pending && snap.failed;
 				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
 				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
@@ -505,7 +520,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					kind: snap.kind,
 					model: snap.model,
 					details: uiDetails(snap, collect ? {
-						callType: "collect", operation, background: true, pending,
+						callType: "collect", operation, background: true, pending, ...checkTiming,
 						answer: pending ? snap.answer : text,
 					} : pending ? { background: true, pending: true } : { exitCode, answer: text }),
 				});

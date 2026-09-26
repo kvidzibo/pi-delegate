@@ -59,7 +59,7 @@ export default function probe(pi: ExtensionAPI) {
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {
-		assert.ok(pi.getCommands().some(command => command.name === "model-delegate"));
+		assert.ok(pi.getCommands().some(command => command.name === "pi-delegate"));
 		assert.ok(!pi.getCommands().some(command => command.name === "delegate"));
 		const initial = JSON.parse(readFileSync(new URL("../../delegate/config.json", import.meta.url), "utf8"));
 		const oldModel = initial.agents.recon.model;
@@ -150,7 +150,7 @@ export default function probe(pi: ExtensionAPI) {
 			const running = await call({ kind: "recon", task: "hold", background: true });
 			const queued = await call({ kind: "recon", task: "queued", background: true });
 			assert.equal(queued.details.status, "queued");
-			await commands.get("model-delegate").handler("", testCtx);
+			await commands.get("pi-delegate").handler("models", testCtx);
 			assert.equal(confirms, 2, notices.join("\n"));
 			assert.equal(rolePicks, 4, notices.join("\n"));
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
@@ -172,7 +172,7 @@ export default function probe(pi: ExtensionAPI) {
 			const saved = readFileSync(userPath, "utf8");
 			for (const known of [true, false]) {
 				let picks = 0, reasoningPicks = 0;
-				await commands.get("model-delegate").handler("", { ...testCtx,
+				await commands.get("pi-delegate").handler("models", { ...testCtx,
 					modelRegistry: {
 						refresh: async () => {}, getError: () => undefined, getAvailable: () => [],
 						getAll: () => known ? [{ provider: "picker-cloud", id: "team/new", reasoning: false }] : [],
@@ -200,7 +200,7 @@ export default function probe(pi: ExtensionAPI) {
 		}
 	});
 	register("delegate-accounting-probe", async (ctx) => {
-		assert.ok(pi.getCommands().some((c) => c.name === "delegate-stats"));
+		assert.ok(pi.getCommands().some((c) => c.name === "pi-delegate"));
 		const prompt = join(ctx.cwd, "probe-prompt.md"); writeFileSync(prompt, "Probe custom prompt");
 		const archive = new ArchivedRun(archiveRoot(getAgentDir()), {
 			parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
@@ -215,17 +215,39 @@ export default function probe(pi: ExtensionAPI) {
 		await archive.finish({ status: "done", stopReason: "stop", exitCode: 0 });
 		const handlers = new Map<string, Function>(); const commands = new Map<string, any>();
 		delegate({ ...pi, registerTool: () => {}, registerMessageRenderer: () => {}, registerCommand: (name: string, command: any) => commands.set(name, command), on: (event: string, fn: Function) => handlers.set(event, fn) } as unknown as ExtensionAPI);
-		const statuses: Array<string | undefined> = []; const notices: string[] = [];
+		const statuses: Array<string | undefined> = []; const notices: string[] = []; const reports: string[] = [];
 		const testCtx: any = { ...ctx, hasUI: true, ui: { ...ctx.ui,
 			setStatus: (key: string, text: string | undefined) => { statuses.push(text); ctx.ui.setStatus(key, text); },
 			notify: (text: string) => notices.push(text),
+			select: async (report: string) => { reports.push(report); return undefined; },
 		} };
 		const entriesBefore = ctx.sessionManager.getEntries().length;
 		await handlers.get("session_start")?.({}, testCtx);
 		assert.equal(statuses.at(-1), "⑂ 155|100%");
-		await commands.get("delegate-stats").handler("", testCtx);
-		assert.ok(notices.at(-1)?.includes("Delegated: 155 tokens"));
-		assert.ok(notices.at(-1)?.includes("Saved: unavailable"));
+		await commands.get("pi-delegate").handler("stats", testCtx);
+		assert.ok(reports.at(-1)?.includes("Delegated: 155 tokens"));
+		assert.ok(reports.at(-1)?.includes("Saved: unavailable"));
+		assert.equal(notices.length, 0, "stats must not print notifications");
+		await commands.get("pi-delegate").handler("stats", { ...testCtx, mode: "tui", ui: { ...testCtx.ui,
+			custom: async (create: Function, options: { overlay?: boolean }) => {
+				assert.equal(options.overlay, true, "stats must not compete with job boards for editor dock height");
+				let closed = false;
+				const tui = { terminal: { rows: 18 }, requestRender: () => {} };
+				const view = create(tui, ctx.ui.theme, getKeybindings(), () => { closed = true; });
+				const first = view.render(60).join("\n");
+				assert.match(first, /pi-delegate · stats/);
+				assert.match(first, /Delegated: 155 tokens/);
+				for (let i = 0; i < 100; i++) view.handleInput("\x1b[B");
+				assert.match(view.render(60).join("\n"), /Archive:/);
+				for (const width of [20, 60, 100]) {
+					const lines = view.render(width);
+					assert.ok(lines.length <= tui.terminal.rows);
+					assert.ok(lines.every((line: string) => visibleWidth(line) <= width));
+				}
+				view.handleInput("\x1b"); assert.equal(closed, true);
+			},
+		} });
+		assert.equal(notices.length, 0);
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");
 		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session" } });
 		assert.equal(statuses.at(-1), undefined);

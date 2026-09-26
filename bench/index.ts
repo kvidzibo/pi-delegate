@@ -7,17 +7,20 @@ import { loadDelegateConfig, THINKING_LEVELS } from "../delegate/config.ts";
 import { fingerprint, snapshotPricing } from "../delegate/calibration.ts";
 import { isLocalModel } from "../delegate/tg.ts";
 import { runCalibration, type BenchModel } from "./runner.ts";
+import { OPTIONS_EVENT, type DelegateOption } from "../delegate/command.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Opt-in runner: pi -e ./bench/index.ts. Not listed in the package's auto-loaded extensions. */
 export default function benchmark(pi: ExtensionAPI) {
 	let active: AbortController | undefined;
-	pi.on("session_shutdown", () => { active?.abort(); });
-	pi.registerCommand("delegate-calibrate-cancel", {
+	pi.on("session_shutdown", () => { active?.abort(); unsubscribe(); });
+	const cancel: DelegateOption = {
+		name: "calibrate-cancel",
 		description: "Cancel the manually started comparison benchmark; retain evidence and pending budget reservations.",
 		handler: async (_args, ctx) => { active?.abort(); ctx.ui.notify(active ? "Benchmark cancellation requested" : "No benchmark running", "info"); },
-	});
-	pi.registerCommand("delegate-calibrate", {
+	};
+	const calibrate: DelegateOption = {
+		name: "calibrate",
 		description: 'Run NEW paired recon benchmarks. JSON args require absolute "out" and positive "budgetUsd". Explicitly spends hosted API usage.',
 		handler: async (args, ctx) => {
 			if (active) { ctx.ui.notify("A benchmark is already running", "warning"); return; }
@@ -53,5 +56,8 @@ export default function benchmark(pi: ExtensionAPI) {
 			} catch (error) { ctx.ui.notify(`Calibration: ${error instanceof Error ? error.message : String(error)}`, "error"); }
 			finally { active = undefined; ctx.ui.setStatus("delegate-calibration", undefined); }
 		},
+	};
+	const unsubscribe = pi.events.on(OPTIONS_EVENT, (options) => {
+		(options as DelegateOption[]).push(calibrate, cancel);
 	});
 }
