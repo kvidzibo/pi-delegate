@@ -5,6 +5,7 @@ import { test, type TestContext } from "node:test";
 import { FileCapacityBroker } from "../../delegate/capacity.ts";
 import { validateLeaseIdentity, sameLease, readLeaseIdentity } from "../lease.ts";
 import { GUARD_ENV, GUARD_NOTICE } from "../guard-protocol.ts";
+import { LEASE_ENV, LEASE_NOTICE } from "../lease-startup.ts";
 import { encodeRpc, type RunPiChildInput } from "../spawn.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
 
@@ -66,6 +67,46 @@ for (const acknowledgement of ["missing", "wrong"] as const) {
 		} finally { f.proc.close(1); await pending; }
 	});
 }
+
+test("lease-only startup withholds task and early steering until acknowledgement, and fails closed", linux, async t => {
+	for (const mode of ["ready", "wrong", "late-wrong", "timeout", "exit", "abort"] as const) {
+		const f = fixture(t), control = new AbortController();
+		const pending = runMockPiChild({ ...f.input, execution: undefined, leaseStartupMs: 30, signal: control.signal,
+			onControl: ctl => { assert.equal(ctl.wrap("Finish briefly"), true); },
+			beforePrompt: async () => {
+				if (mode !== "late-wrong") return;
+				const config = JSON.parse(f.options().env[LEASE_ENV]);
+				f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
+					type: LEASE_NOTICE, version: 1, nonce: config.nonce, lease: { dev: "0", ino: "0" },
+				}) }));
+			},
+		});
+		try {
+			assert.equal(f.proc.stdinBytes, "", "even early wrap must not reach the model before startup");
+			assert.equal(f.options().env[GUARD_ENV], undefined);
+			const config = JSON.parse(f.options().env[LEASE_ENV]);
+			if (mode === "ready" || mode === "wrong" || mode === "late-wrong") {
+				f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
+					type: LEASE_NOTICE, version: 1, nonce: config.nonce,
+					lease: mode === "wrong" ? { dev: "0", ino: "0" } : config.lease,
+				}) }));
+			} else if (mode === "exit") f.proc.close(0);
+			else if (mode === "abort") control.abort();
+			if (mode === "ready") {
+				for (let i = 0; i < 20 && !f.proc.stdinBytes; i++) await Promise.resolve();
+				assert.deepEqual(f.proc.stdinBytes.trim().split("\n").map(line => JSON.parse(line).type), ["prompt", "steer"]);
+				f.proc.stdout!.write(encodeRpc({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Evidence." }] } }));
+				f.proc.stdout!.write(encodeRpc({ type: "agent_settled" }));
+			}
+			const result = await pending;
+			assert.equal(result.finalization, undefined, "lease-only startup must not activate finalization policy");
+			assert.equal(result.stopReason === "stop", mode === "ready");
+			assert.equal(result.evidence?.taskSent, mode === "ready");
+			if (mode !== "ready") assert.equal(f.proc.stdinBytes.includes('"prompt"'), false);
+			assert.doesNotThrow(() => readLeaseIdentity(f.lease.inherited.fd));
+		} finally { f.proc.close(1); await pending; }
+	}
+});
 
 test("missing guard or changed parent descriptor fails before spawning, never uncoordinated", linux, async t => {
 	const f = fixture(t); let spawns = 0;

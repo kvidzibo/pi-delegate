@@ -2,7 +2,7 @@
 
 [npm](https://www.npmjs.com/package/@kvidzibo/pi-delegate) · [Pi package directory](https://pi.dev/packages/@kvidzibo/pi-delegate)
 
-Run focused coding tasks in separate [Pi](https://github.com/earendil-works/pi) agents while the parent keeps working. Supports local and hosted models, background jobs, and separate local concurrency limits.
+Run focused coding tasks in separate [Pi](https://github.com/earendil-works/pi) agents while the parent keeps working. Supports local and hosted models, background jobs, and one shared local worker across participating Pi sessions.
 
 One child per call; no nested delegation.
 
@@ -44,6 +44,7 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 
 ## Important constraints
 
+- Shared local capacity requires Linux and `/usr/bin/flock`. All local providers share one slot per agent directory; hosted jobs bypass it. Reload older sessions to participate.
 - **No sandbox.** Children have your system permissions; shipped roles include shell access. Read-only roles are prompt policy, not write protection. `offline` skips startup networking; it does not block tool network access.
 - Children do not inherit the parent conversation or project instructions. Provide a self-contained task and avoid overlapping edits to shared files.
 - Worker completion is not proof of task correctness. The parent must inspect and validate results.

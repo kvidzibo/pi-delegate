@@ -30,6 +30,7 @@ import { ModelCommand } from "./model-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
+import { FileCapacityBroker } from "./capacity.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -211,6 +212,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 
 	const scheduler = new JobScheduler({
+		// All local providers intentionally share one user-scoped slot, independent of archive paths.
+		// Lazy acquisition leaves hosted work usable when Linux/flock is unavailable.
+		capacity: { tryAcquire: group => new FileCapacityBroker(join(agentDir(), "delegate-capacity")).tryAcquire(group) },
 		localAdmission: localControl,
 		maxConcurrent: config.maxConcurrent,
 		maxLocalConcurrent: config.maxLocalConcurrent,
@@ -470,10 +474,12 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						snap = scheduler.enqueue({
 							archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
 							kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
+							...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
 							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
 								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
 								tools: [...tools], offline: resolved.agent.offline,
+								...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 								hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
 								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
 								signal: childSignal, env: process.env,

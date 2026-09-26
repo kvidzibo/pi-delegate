@@ -9,6 +9,7 @@ import { AnswerHistory, answerExplanation } from "./answers.ts";
 import { StreamedAnswer } from "./streamed-answer.ts";
 import type { ResponseEvidence } from "./evidence.ts";
 import { verifyLease, type InheritedLease } from "./lease.ts";
+import { LEASE_ENV, LeaseStartup } from "./lease-startup.ts";
 import { ChildFinalizer, type FinalizationFailure } from "./child-finalizer.ts";
 import { GUARD_ENV, validateGuardedExecution, type GuardedExecution, type FinalizationProgress } from "./guard-protocol.ts";
 import { HEADROOM_EXIT_CODE, parseHeadroomRefusal, type HeadroomProgress } from "./headroom-protocol.ts";
@@ -92,6 +93,8 @@ export interface RunPiChildInput {
 	execution?: GuardedExecution;
 	/** Borrowed locked descriptor, inherited by the child; requires guarded startup acknowledgement. */
 	resourceLease?: InheritedLease;
+	/** Explicit lease-only handshake; mutually exclusive with execution. No runtime/tool policy changes. */
+	leaseStartupMs?: number;
 	spawnFn?: SpawnFn;
 	killTree?: (proc: ChildProcess) => void;
 }
@@ -322,11 +325,15 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		throw new Error("Invalid guarded hardTimeoutMs: must be a supported timer duration.");
 	}
 	const lease = input.resourceLease !== undefined ? { ...input.resourceLease } : undefined;
+	if (input.leaseStartupMs !== undefined && (execution || !lease || !Number.isSafeInteger(input.leaseStartupMs)
+		|| input.leaseStartupMs < 1 || input.leaseStartupMs > 2_147_483_647)) throw new Error("Invalid lease-only startup policy.");
 	if (lease) {
-		if (!execution) throw new Error("Inherited resource leases require guarded child execution.");
+		if (!execution && input.leaseStartupMs === undefined) throw new Error("Inherited resource leases require guarded child execution or explicit lease-only startup.");
 		verifyLease(lease.fd, lease);
 	}
-	const nonce = execution ? randomUUID() : undefined;
+	const nonce = execution || lease ? randomUUID() : undefined;
+	const leaseConfig = lease && !execution ? { nonce: nonce!, lease: { dev: lease.dev, ino: lease.ino } } : undefined;
+	const leaseStartup = leaseConfig ? new LeaseStartup(leaseConfig, input.leaseStartupMs!) : undefined;
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 	if (execution) {
@@ -335,6 +342,11 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools,
 			...(lease ? { lease: { dev: lease.dev, ino: lease.ino } } : {}),
 			...(execution.headroom ? { headroom: execution.headroom } : {}) });
+	}
+	if (leaseConfig) {
+		if (!args.includes("--no-extensions")) args.push("--no-extensions");
+		args.push("--extension", fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
+		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
 	}
 	const invocation = getPiInvocation(args);
 	const started = Date.now();
@@ -357,6 +369,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	let drainRefusalOutput = false;
 	let finalizer: ChildFinalizer | undefined;
 	let taskDispatched = false;
+	let startupWrap: string | undefined;
 	let openResponse = false;
 	let settled = false;
 	let pid: number | undefined;
@@ -390,7 +403,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 						: "Child context request refused; the RPC receipt was unavailable. Available evidence may be incomplete." };
 				} catch (error) { failure = { reason: "guard-error", text: String(error) }; }
 			}
-			if (execution && !taskDispatched && !failure && !stopKind) {
+			if ((execution || leaseStartup) && !taskDispatched && !failure && !stopKind) {
 				failure = { reason: "guard-error", text: "Child exited before the guarded task was dispatched." };
 			}
 			finalizer?.dispose();
@@ -449,6 +462,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					return;
 				}
 				finalizer?.accept(parsed);
+				leaseStartup?.accept(parsed);
 				if ((failure && !drainRefusalOutput) || stopKind || closed) return;
 				const cancel = failure ? undefined : uiCancelResponse(parsed);
 				if (cancel) writeStdin(proc.stdin, cancel);
@@ -502,6 +516,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				wrap: (message) => {
 					if (settled || aborted || timedOut || closed || failure) return false;
 					const text = message && message.trim() ? message : DEFAULT_WRAP_MESSAGE;
+					if (leaseStartup && !taskDispatched) { startupWrap ??= text; return true; }
 					return finalizer ? finalizer.request(text) : steer(text);
 				},
 			});
@@ -579,6 +594,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		};
 		const startPrompt = () => {
 			if (closed || taskDispatched || stopKind || failure) return;
+			try { leaseStartup?.assertReady(); }
+			catch (error) { fail("guard-error", String(error)); return; }
 			// Controls can arrive during beforePrompt or between its promise and this callback.
 			// Recheck synchronously at dispatch, not only at the initial readiness await.
 			if (finalizer && !finalizer.canDispatchTask()) {
@@ -586,13 +603,17 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				return;
 			}
 			taskDispatched = send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
-			if (taskDispatched) finalizer?.markTaskSent();
-			else if (execution) fail("guard-error", "Could not send the guarded child task.");
+			if (taskDispatched) {
+				finalizer?.markTaskSent();
+				if (startupWrap) { steer(startupWrap); startupWrap = undefined; }
+			}
+			else if (execution || leaseStartup) fail("guard-error", "Could not send the guarded child task.");
 		};
 		finalizer?.start(DEFAULT_WRAP_MESSAGE);
-		if (input.beforePrompt || finalizer) {
+		if (input.beforePrompt || finalizer || leaseStartup) {
 			Promise.resolve().then(async () => {
 				if (finalizer) await finalizer.waitReady(startup.signal);
+				if (leaseStartup) await leaseStartup.wait(startup.signal);
 				if (input.beforePrompt) await input.beforePrompt(startup.signal);
 			}).then(startPrompt, startupFailure);
 		} else startPrompt();

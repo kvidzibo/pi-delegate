@@ -20,7 +20,9 @@ Each role accepts `model`, `tools`, `thinking` and `offline`. Omitted fields inh
 
 Set `offline: false` when manually switching to a hosted model; the picker does this automatically. A per-call `model` override keeps the role's tools, thinking and offline setting. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
-Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. Hosted work can proceed while local work waits. Limits are configurable in the user file; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
+Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
+
+Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients and the calibration runner are not covered.
 
 ## Cross-extension busy query
 
@@ -57,7 +59,7 @@ Wrap is advisory: it asks the child to finish without interrupting its current t
 
 `/delegate-local` opens an On/Off picker; direct commands are `/delegate-local on|off|status`.
 
-Off rejects new local jobs, holds queued ones and lets running jobs finish. Wait for **OFF · idle** before benchmarking. The switch persists across participating sessions using the same agent directory. It does not pause hosted work, servers or unrelated GPU clients, and is not a cross-session concurrency limit.
+Off rejects new local jobs, holds queued ones and lets running jobs finish. Wait for **OFF · idle** before benchmarking. The switch persists across participating sessions using the same agent directory. It does not pause hosted work, servers or unrelated GPU clients. The separate shared-capacity lease limits cross-session local concurrency.
 
 An **unverified** reservation is not proof of idleness. Confirm its work has stopped before removing stale reservation files under `~/.pi/agent/delegate-local/active/`.
 
@@ -67,7 +69,7 @@ Collected-result rows show the role, model and job ID. Failed/cancelled rows als
 
 Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 
-`/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local%>` (rounded local share; `<1%` for a positive share below 1%), omitting `|<local%>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings.
+`/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local%>` (rounded local share; `<1%` for a positive share below 1%), omitting `|<local%>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings. The footer shows no warning labels; missing estimates add nothing. Incomplete usage, recording warnings and estimate coverage remain in `/delegate-stats`.
 
 Archives default to `~/.pi/agent/delegate/`; `PI_DELEGATE_ARCHIVE_DIR` accepts an absolute replacement path. Retention is indefinite. Keep archives private: they can contain sensitive prompts and tool output. Rebuild reconstructs usage summaries, not running jobs.
 

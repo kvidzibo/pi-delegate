@@ -32,6 +32,7 @@ export interface RunChildInput {
 	/** Runtime API opt-in; configuration/default activation is separate. */
 	execution?: Omit<GuardedExecution, "tools">;
 	resourceLease?: InheritedLease;
+	leaseStartupMs?: number;
 }
 
 export function buildChildArgs(input: ChildArgsInput): string[] {
@@ -126,6 +127,7 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		onControl: input.onControl,
 		execution: input.execution ? { ...input.execution, tools: input.tools } : undefined,
 		resourceLease: input.resourceLease,
+		leaseStartupMs: input.leaseStartupMs,
 	});
 	logChildResult(input, result);
 	return result;

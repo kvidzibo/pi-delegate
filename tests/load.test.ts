@@ -51,6 +51,12 @@ test("local delegation picker uses native dialogs, drains work and gates model o
 	assert.deepEqual(result.result, { picker: true, shared: true, draining: true, overridesBlocked: true, hostedUnchanged: true, noModelCalls: true });
 });
 
+test("local factory instances share capacity and real lease-only children retain occupancy without changing execution policy", async () => {
+	assert.deepEqual((await runPiProbe("delegate-shared-capacity-probe")).result, {
+		sharedFactories: true, hostedBypass: true, leaseOnlyStartup: true, inheritedOccupancy: true, noModelCalls: true,
+	});
+});
+
 test("package reload restores a single delegate tool through the real session lifecycle", async () => {
 	assert.deepEqual((await runPiProbe("delegate-reload-probe")).result, { tools: ["delegate"], reloaded: true, localOffPersists: true });
 });

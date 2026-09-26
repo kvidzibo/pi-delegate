@@ -46,14 +46,14 @@ export function savingsTotals(runs: RunRecord[]): { usd: number; priced: number;
 	return { usd, priced, eligible };
 }
 export const formatUsd = (usd: number): string => usd > 0 && usd < 0.001 ? "<$0.001" : `$${usd.toFixed(usd < 1 ? 3 : 2)}`;
-export function infobar(runs: RunRecord[], warning = false, archiveWarning = false): string {
+export function infobar(runs: RunRecord[]): string {
 	const usage = summarize(runs), savings = savingsTotals(runs);
 	const total = totalTokens(usage);
 	if (total === 0) return "";
-	const saved = savings.priced && savings.usd > 0 ? `|~${formatUsd(savings.usd)}${savings.priced < savings.eligible ? " · !estimate" : ""}` : "";
+	const saved = savings.priced && savings.usd > 0 ? `|~${formatUsd(savings.usd)}` : "";
 	const localShare = usage.local.total / total * 100;
 	const local = usage.local.total > 0 ? `|${localShare < 1 ? "<1" : Math.round(localShare)}%` : "";
-	return `⑂ ${formatTokens(total)}${local}${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
+	return `⑂ ${formatTokens(total)}${local}${saved}`;
 }
 export function statsReport(runs: RunRecord[], root: string, scope: string, warnings: string[] = []): string {
 	runs = latestRuns(runs);
@@ -72,7 +72,7 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 		`Reported usage records: ${usage.reported}; missing usage records: ${usage.missing}; completed runtime: ${(runs.reduce((n, r) => n + r.durationMs, 0) / 1000).toFixed(1)}s`,
 		savings.priced ? `Saved: ~${formatUsd(savings.usd)} API-equivalent estimate; ${savings.priced}/${savings.eligible} eligible local runs priced.`
 			: "Saved: unavailable — requires matching calibration and known alternative API prices.",
-		"Savings price a calibrated cloud-child alternative, not parent-only execution or a subscription refund. Only complete local runs with successful worker status count; task quality is not verified. Failures remain in usage/outcomes. !estimate means partial estimate coverage, not a confidence bound.",
+		"Savings price a calibrated cloud-child alternative, not parent-only execution or a subscription refund. Only complete local runs with successful worker status count; task quality is not verified. Failures remain in usage/outcomes. The priced/eligible count reports estimate coverage, not a confidence bound.",
 		"Calibration is a successful-pair heuristic; model behavior, cache use and request-size tiers may differ in production. No electricity/hardware costs are subtracted.",
 		"Input/output/cache buckets are summed once; reasoning is included in output. Unfinished/incomplete figures are known lower bounds.",
 		"Today groups runs by launch date in local time. Recorded runs only; pre-install usage cannot be recovered.",
