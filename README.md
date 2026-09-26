@@ -1,5 +1,7 @@
 # pi-delegate
 
+[npm](https://www.npmjs.com/package/@kvidzibo/pi-delegate) · [Pi package directory](https://pi.dev/packages/@kvidzibo/pi-delegate)
+
 Run focused coding tasks in separate [Pi](https://github.com/earendil-works/pi) agents while the parent keeps working. Supports local and hosted models, background jobs, and separate local concurrency limits.
 
 One child per call; no nested delegation.
