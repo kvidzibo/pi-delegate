@@ -49,7 +49,7 @@ export type ReconEvalOptions = {
 	env: NodeJS.Dict<string>; signal?: AbortSignal; onProgress?: (text: string) => void;
 };
 
-/** Explicit local-only model calls. No servers, defaults, shared switches or calibration profiles are changed. */
+/** Explicit local-only model calls. No servers, defaults or calibration profiles are changed. */
 export async function runReconEval(options: ReconEvalOptions, execute: (input: RunPiChildInput) => Promise<ChildResult> = runPiChild) {
 	const repeats = options.repeats ?? 1, timeoutMs = options.timeoutMs ?? 120000, maxRequests = options.maxRequests ?? 12;
 	if (!isAbsolute(options.out) || !isAbsolute(options.baselinePromptPath) || !isAbsolute(options.candidatePromptPath)
