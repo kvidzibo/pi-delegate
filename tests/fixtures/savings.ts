@@ -64,12 +64,12 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		await handlers.get("session_start")!({}, testCtx);
 		const result = await tool.execute("pricing-probe", { task: "Mock recon", kind: "recon" }, undefined, undefined, testCtx);
 		assert.equal(result.details.ok, true); assert.equal(lookups, 1);
-		assert.match(statuses.at(-1)!, /saved ~<\$0.001/);
+		assert.match(statuses.at(-1)!, /^pi-delegate 220\|220\|~<\$0.001$/);
 		const entriesBefore = ctx.sessionManager.getEntries().length;
 		await commands.get("delegate-stats").handler("rebuild", testCtx);
 		assert.ok(notices.at(-1)?.includes("Prompt/output ratios 0.500/0.500"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore);
-		await handlers.get("session_start")!({}, testCtx); assert.match(statuses.at(-1)!, /saved ~<\$0.001/);
+		await handlers.get("session_start")!({}, testCtx); assert.match(statuses.at(-1)!, /^pi-delegate 220\|220\|~<\$0.001$/);
 		await handlers.get("session_shutdown")!();
 		const benchCommands: string[] = [];
 		benchmark({ ...api, registerCommand: (name: string) => benchCommands.push(name), on: () => {} } as ExtensionAPI);

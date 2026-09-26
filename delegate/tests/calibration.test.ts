@@ -99,7 +99,8 @@ test("native reconstruction and archive reload/rebuild preserve captured prices,
 	archive.observe({ type: "message_end", message: m }); archive.observe({ type: "agent_settled" });
 	await archive.finish({ status: "done" });
 	assert.equal(archive.data.usage.estimate?.usd, 0.00021);
-	const before = infobar([archive.data]); assert.match(before, /saved ~<\$0.001/);
+	const before = infobar([archive.data]); assert.match(before, /^pi-delegate \S+\|\S+\|~<\$0.001$/);
+	assert.equal(infobar([{ ...archive.data, usage: { ...archive.data.usage, estimate: { ...archive.data.usage.estimate!, usd: 0 } } }]).split("|").length, 2, "zero savings omit the amount and separator");
 	const runs = (await loadRuns(dir, { rebuild: true })).runs;
 	assert.equal(infobar(runs), before); assert.equal(savingsTotals([...runs, ...runs]).priced, 1);
 	assert.ok(statsReport(runs, dir, "all").includes("Prompt/output ratios 0.500/0.500"));

@@ -224,15 +224,15 @@ export default function probe(pi: ExtensionAPI) {
 		} };
 		const entriesBefore = ctx.sessionManager.getEntries().length;
 		await handlers.get("session_start")?.({}, testCtx);
-		assert.equal(statuses.at(-1), "delegated 155 · local 155 · saved —");
+		assert.equal(statuses.at(-1), "pi-delegate 155|155");
 		await commands.get("delegate-stats").handler("", testCtx);
 		assert.ok(notices.at(-1)?.includes("Delegated: 155 tokens"));
 		assert.ok(notices.at(-1)?.includes("Saved: unavailable"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");
 		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session" } });
-		assert.equal(statuses.at(-1), "delegated 0 · local 0 · saved —");
+		assert.equal(statuses.at(-1), "pi-delegate 0|0");
 		await handlers.get("session_start")?.({}, testCtx);
-		assert.equal(statuses.at(-1), "delegated 155 · local 155 · saved —");
+		assert.equal(statuses.at(-1), "pi-delegate 155|155");
 		await handlers.get("session_shutdown")?.(); assert.equal(statuses.at(-1), undefined);
 		return { nativeSession: true, infobar: true, noModelCalls: true, resume: true };
 	});
