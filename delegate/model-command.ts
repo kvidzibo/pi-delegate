@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { KINDS, saveDelegateModel, type ConfigPaths, type DelegateConfig } from "./config.ts";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { KINDS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig } from "./config.ts";
 import { modelId, pickDelegateModel } from "./model-picker.ts";
 import { isLocalModel } from "./tg.ts";
 
@@ -18,8 +19,8 @@ export class ModelCommand {
 	stop(): void { this.dialog.abort(); }
 
 	async command(args: string, ctx: ExtensionCommandContext): Promise<void> {
-		if (args.trim()) { ctx.ui.notify("Usage: /delegate", "warning"); return; }
-		if (!ctx.hasUI) { ctx.ui.notify("/delegate requires an interactive UI.", "warning"); return; }
+		if (args.trim()) { ctx.ui.notify("Usage: /model-delegate", "warning"); return; }
+		if (!ctx.hasUI) { ctx.ui.notify("/model-delegate requires an interactive UI.", "warning"); return; }
 		if (this.dialog.signal.aborted) return;
 		if (this.busy) { ctx.ui.notify("Delegate model settings are already open.", "warning"); return; }
 		this.busy = true;
@@ -33,15 +34,54 @@ export class ModelCommand {
 			while (!signal.aborted) {
 				const models = ctx.modelRegistry.getAvailable();
 				const available = new Set(models.map(modelId));
-				const options = KINDS.map(kind => `${kind} · ${this.config.agents[kind].model}${available.has(this.config.agents[kind].model) ? "" : " (unavailable)"}`);
-				const choice = await ctx.ui.select("Delegate models — select a role\nSaved globally; running and queued jobs are unchanged", options, { signal });
+				const options = KINDS.map(kind => `${kind} · ${this.config.agents[kind].model}${available.has(this.config.agents[kind].model) ? "" : " (unavailable)"} · reasoning: ${this.config.agents[kind].thinking}`);
+				const choice = await ctx.ui.select("Delegate models and reasoning — select a role\nSaved globally; running and queued jobs are unchanged", options, { signal });
 				if (signal.aborted || choice === undefined) return;
 				const index = options.indexOf(choice);
 				if (index < 0) throw new Error("Invalid delegate role selection.");
 				const kind = KINDS[index];
-				if (!models.length) { ctx.ui.notify("No models available. Configure model access in Pi (/login or models.json) first.", "warning"); return; }
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 				const current = this.config.agents[kind];
+				const fields = [`Model · ${current.model}`, `Reasoning · ${current.thinking}`];
+				const field = await ctx.ui.select(`Settings for ${kind}`, fields, { signal });
+				if (signal.aborted) return;
+				if (field === undefined) continue;
+				if (field === fields[1]) {
+					const model = ctx.modelRegistry.getAll().find(model => modelId(model) === current.model);
+					if (!model) {
+						ctx.ui.notify(`Cannot determine reasoning levels: ${current.model} is not in Pi's model catalogue.`, "warning");
+						continue;
+					}
+					const supported = getSupportedThinkingLevels(model);
+					if (!supported.length) {
+						ctx.ui.notify(`No supported reasoning levels for ${current.model}.`, "warning");
+						continue;
+					}
+					const levels = supported.map(level => `${level}${level === current.thinking ? " ✓ current" : ""}`);
+					const currentLabel = `${current.thinking}${supported.includes(current.thinking) ? "" : " (unsupported for this model)"}`;
+					const choice = await ctx.ui.select(`Reasoning for ${kind}\n${current.model}\nCurrent: ${currentLabel}`, levels, { signal });
+					if (signal.aborted) return;
+					if (choice === undefined) continue;
+					const thinking = supported[levels.indexOf(choice)];
+					if (thinking === undefined) throw new Error("Invalid reasoning selection.");
+					if (thinking === current.thinking) continue;
+					const confirmed = await ctx.ui.confirm(`Save ${kind} reasoning?`, [
+						`${current.thinking} → ${thinking}`,
+						`Save to ${this.paths.userPath}`,
+						"Applies to new delegates here immediately. Other open Pi sessions need /reload.",
+						"Model, tools, offline setting, parent and existing jobs are unchanged.",
+					].join("\n"), { signal });
+					if (signal.aborted) return;
+					if (!confirmed) continue;
+					const latest = ctx.modelRegistry.getAll().find(model => modelId(model) === current.model);
+					if (!latest || !getSupportedThinkingLevels(latest).includes(thinking)) throw new Error("Selected reasoning level is no longer supported by this model.");
+					const patch = saveDelegateThinking(this.paths, kind, current, thinking);
+					this.config.agents[kind] = { ...current, ...patch };
+					ctx.ui.notify(`${kind}: reasoning ${thinking}\nSaved; new delegates use it now.`, "info");
+					continue;
+				}
+				if (field !== fields[0]) throw new Error("Invalid delegate setting selection.");
+				if (!models.length) { ctx.ui.notify("No models available. Configure model access in Pi (/login or models.json) first.", "warning"); continue; }
 				const selected = await pickDelegateModel(ctx, kind, current.model, models, signal);
 				if (signal.aborted) return;
 				if (selected === undefined || selected === current.model) continue;

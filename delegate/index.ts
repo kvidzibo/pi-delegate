@@ -285,8 +285,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
-	pi.registerCommand("delegate", {
-		description: "Show each delegate role's model and choose from available Pi models. Saves defaults for new children.",
+	pi.registerCommand("model-delegate", {
+		description: "Choose each delegate role's default model and reasoning level. Saves defaults for new children.",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
 	});
 	pi.registerCommand("delegate-local", {

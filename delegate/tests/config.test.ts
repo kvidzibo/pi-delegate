@@ -11,6 +11,7 @@ import {
 	parseDelegateConfig,
 	resolveAgent,
 	saveDelegateModel,
+	saveDelegateThinking,
 	type DelegateConfig,
 } from "../config.ts";
 
@@ -134,6 +135,29 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 			assert.throws(() => saveDelegateModel({ shippedPath: defaults, userPath: alias }, "recon", current, "hosted/new"), /shipped delegate defaults/);
 			assert.equal(readFileSync(defaults, "utf8"), readFileSync(shippedPath, "utf8"));
 		}
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("reasoning saves only thinking and refuses stale reasoning without writing", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-thinking-"));
+	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
+	try {
+		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"] } } };
+		writeFileSync(paths.userPath, JSON.stringify(overlay));
+		const current = loadDelegateConfig(paths).agents.recon;
+		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
+		assert.equal(loadDelegateConfig(paths).agents.recon.thinking, "xhigh");
+		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), {
+			...overlay, agents: { recon: { ...overlay.agents.recon, thinking: "xhigh" } },
+		});
+		assert.equal(current.thinking, "low");
+		const before = readFileSync(paths.userPath, "utf8");
+		assert.throws(() => saveDelegateThinking(paths, "recon", current, "off"), /changed on disk/);
+		assert.equal(readFileSync(paths.userPath, "utf8"), before);
+		const changedModel = JSON.stringify({ ...overlay, agents: { recon: { ...overlay.agents.recon, model: "hosted/changed" } } });
+		writeFileSync(paths.userPath, changedModel);
+		assert.throws(() => saveDelegateThinking(paths, "recon", current, "max"), /changed on disk/);
+		assert.equal(readFileSync(paths.userPath, "utf8"), changedModel);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
