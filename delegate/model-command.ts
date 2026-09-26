@@ -19,8 +19,8 @@ export class ModelCommand {
 	stop(): void { this.dialog.abort(); }
 
 	async command(args: string, ctx: ExtensionCommandContext): Promise<void> {
-		if (args.trim()) { ctx.ui.notify("Usage: /model-delegate", "warning"); return; }
-		if (!ctx.hasUI) { ctx.ui.notify("/model-delegate requires an interactive UI.", "warning"); return; }
+		if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate models", "warning"); return; }
+		if (!ctx.hasUI) { ctx.ui.notify("/pi-delegate models requires an interactive UI.", "warning"); return; }
 		if (this.dialog.signal.aborted) return;
 		if (this.busy) { ctx.ui.notify("Delegate model settings are already open.", "warning"); return; }
 		this.busy = true;

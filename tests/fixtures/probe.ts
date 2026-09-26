@@ -59,7 +59,7 @@ export default function probe(pi: ExtensionAPI) {
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {
-		assert.ok(pi.getCommands().some(command => command.name === "model-delegate"));
+		assert.ok(pi.getCommands().some(command => command.name === "pi-delegate"));
 		assert.ok(!pi.getCommands().some(command => command.name === "delegate"));
 		const initial = JSON.parse(readFileSync(new URL("../../delegate/config.json", import.meta.url), "utf8"));
 		const oldModel = initial.agents.recon.model;
@@ -150,7 +150,7 @@ export default function probe(pi: ExtensionAPI) {
 			const running = await call({ kind: "recon", task: "hold", background: true });
 			const queued = await call({ kind: "recon", task: "queued", background: true });
 			assert.equal(queued.details.status, "queued");
-			await commands.get("model-delegate").handler("", testCtx);
+			await commands.get("pi-delegate").handler("models", testCtx);
 			assert.equal(confirms, 2, notices.join("\n"));
 			assert.equal(rolePicks, 4, notices.join("\n"));
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
@@ -172,7 +172,7 @@ export default function probe(pi: ExtensionAPI) {
 			const saved = readFileSync(userPath, "utf8");
 			for (const known of [true, false]) {
 				let picks = 0, reasoningPicks = 0;
-				await commands.get("model-delegate").handler("", { ...testCtx,
+				await commands.get("pi-delegate").handler("models", { ...testCtx,
 					modelRegistry: {
 						refresh: async () => {}, getError: () => undefined, getAvailable: () => [],
 						getAll: () => known ? [{ provider: "picker-cloud", id: "team/new", reasoning: false }] : [],
@@ -200,7 +200,7 @@ export default function probe(pi: ExtensionAPI) {
 		}
 	});
 	register("delegate-accounting-probe", async (ctx) => {
-		assert.ok(pi.getCommands().some((c) => c.name === "delegate-stats"));
+		assert.ok(pi.getCommands().some((c) => c.name === "pi-delegate"));
 		const prompt = join(ctx.cwd, "probe-prompt.md"); writeFileSync(prompt, "Probe custom prompt");
 		const archive = new ArchivedRun(archiveRoot(getAgentDir()), {
 			parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
@@ -223,7 +223,7 @@ export default function probe(pi: ExtensionAPI) {
 		const entriesBefore = ctx.sessionManager.getEntries().length;
 		await handlers.get("session_start")?.({}, testCtx);
 		assert.equal(statuses.at(-1), "⑂ 155|100%");
-		await commands.get("delegate-stats").handler("", testCtx);
+		await commands.get("pi-delegate").handler("stats", testCtx);
 		assert.ok(notices.at(-1)?.includes("Delegated: 155 tokens"));
 		assert.ok(notices.at(-1)?.includes("Saved: unavailable"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");

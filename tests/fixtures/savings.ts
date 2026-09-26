@@ -66,14 +66,20 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		assert.equal(result.details.ok, true); assert.equal(lookups, 1);
 		assert.match(statuses.at(-1)!, /^⑂ 220\|100%\|~<\$0.001$/);
 		const entriesBefore = ctx.sessionManager.getEntries().length;
-		await commands.get("delegate-stats").handler("rebuild", testCtx);
+		await commands.get("pi-delegate").handler("stats rebuild", testCtx);
 		assert.ok(notices.at(-1)?.includes("Prompt/output ratios 0.500/0.500"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore);
 		await handlers.get("session_start")!({}, testCtx); assert.match(statuses.at(-1)!, /^⑂ 220\|100%\|~<\$0.001$/);
 		await handlers.get("session_shutdown")!();
 		const benchCommands: string[] = [];
-		benchmark({ ...api, registerCommand: (name: string) => benchCommands.push(name), on: () => {} } as ExtensionAPI);
-		assert.deepEqual(benchCommands, ["delegate-calibrate-cancel", "delegate-calibrate"]);
+		benchmark({ ...api, registerCommand: (name: string) => benchCommands.push(name) } as ExtensionAPI);
+		assert.deepEqual(benchCommands, []);
+		const command = commands.get("pi-delegate");
+		assert.deepEqual(command.getArgumentCompletions("calibrate").map((item: any) => item.value), ["calibrate", "calibrate-cancel"]);
+		await command.handler("calibrate-cancel", testCtx);
+		assert.equal(notices.at(-1), "No benchmark running");
+		await handlers.get("session_shutdown")!();
+		assert.deepEqual(command.getArgumentCompletions("calibrate"), []);
 		return { calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true };
 	} finally {
 		if (previous === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previous;

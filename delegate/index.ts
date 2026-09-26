@@ -18,6 +18,7 @@ import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
+import { registerDelegateCommand } from "./command.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
@@ -289,22 +290,23 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
-	pi.registerCommand("model-delegate", {
-		description: "Choose each delegate role's default model and reasoning level. Saves defaults for new children.",
+	registerDelegateCommand(pi, [{
+		name: "models",
+		description: "Choose role models and reasoning levels",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
-	});
-	pi.registerCommand("delegate-stats", {
-		description: "Recorded child usage: session (default), today, all, or rebuild the export ledger. No model calls.",
-		getArgumentCompletions: (prefix) => ["session", "today", "all", "rebuild"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+	}, {
+		name: "stats",
+		description: "Recorded child usage (no model calls)",
+		complete: (prefix) => ["session", "today", "all", "rebuild"].filter(value => value.startsWith(prefix)),
 		handler: async (args, ctx) => {
 			const scope = args.trim() || "session";
 			if (scope !== "session" && scope !== "today" && scope !== "all" && scope !== "rebuild") {
-				ctx.ui.notify("Usage: /delegate-stats [session|today|all|rebuild]", "warning"); return;
+				ctx.ui.notify("Usage: /pi-delegate stats [session|today|all|rebuild]", "warning"); return;
 			}
 			const report = await accounting.report(scope === "rebuild" ? "all" : scope, ctx.sessionManager.getSessionId(), scope === "rebuild");
 			ctx.ui.notify(report, "info");
 		},
-	});
+	}]);
 	// Pi ignores isError on execute() return values. Keep our structured details
 	// and mark failed results through the supported result-event hook instead.
 	pi.on("tool_result", (event) => {

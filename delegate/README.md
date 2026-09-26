@@ -4,7 +4,7 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
-Use **`/model-delegate`** (formerly `/delegate`) to select a role, then change its **Model** or **Reasoning** default independently. Reasoning choices come from Pi's supported levels for that role's model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saving reasoning leaves the model, tools and offline setting unchanged. It saves to `~/.pi/agent/delegate.json` and affects new jobs in the current session; running and queued jobs keep their settings. Other sessions need `/reload`.
+Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role, then change its **Model** or **Reasoning** default independently. Reasoning choices come from Pi's supported levels for that role's model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saving reasoning leaves the model, tools and offline setting unchanged. It saves to `~/.pi/agent/delegate.json` and affects new jobs in the current session; running and queued jobs keep their settings. Other sessions need `/reload`.
 
 For manual configuration, override [shipped defaults](config.json) in that user file, not in the installed package. Replace `provider/model` with an available Pi model ID:
 
@@ -61,7 +61,7 @@ Collected-result rows show the role, model and job ID. Failed/cancelled rows als
 
 Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 
-`/delegate-stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local%>` (rounded local share; `<1%` for a positive share below 1%), omitting `|<local%>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings. The footer shows no warning labels; missing estimates add nothing. Incomplete usage, recording warnings and estimate coverage remain in `/delegate-stats`.
+`/pi-delegate stats [session|today|all|rebuild]` reports recorded usage without model calls. The footer is hidden when total tokens are zero; otherwise it shows `⑂ <total>|<local%>` (rounded local share; `<1%` for a positive share below 1%), omitting `|<local%>` when local tokens are zero and adding `|~$X` only for positive savings. Savings are a [calibrated API-equivalent estimate](../bench/README.md), not measured net savings. The footer shows no warning labels; missing estimates add nothing. Incomplete usage, recording warnings and estimate coverage remain in `/pi-delegate stats`.
 
 Archives default to `~/.pi/agent/delegate/`; `PI_DELEGATE_ARCHIVE_DIR` accepts an absolute replacement path. Retention is indefinite. Keep archives private: they can contain sensitive prompts and tool output. Rebuild reconstructs usage summaries, not running jobs.
 
