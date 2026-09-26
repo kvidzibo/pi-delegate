@@ -25,7 +25,7 @@ pi install /absolute/path/to/pi-delegate
 
 Pi supplies the peer dependencies; no manual `npm install` is needed. Do not also add `delegate` to Pi's `extensions` setting. Published releases may lag behind this checkout.
 
-Run **`/pi-delegate`** for the options menu. Use **`/pi-delegate stats [session|today|all|rebuild]`** for recorded usage, or **`/pi-delegate models`** to choose each role's default model or reasoning level. Select a role, then **Model** or **Reasoning**; changing reasoning leaves the model unchanged. Shipped model assignments are active defaults; unavailable models are not automatically replaced. Selections are saved in `~/.pi/agent/delegate.json` and apply to new jobs in the current session.
+Run **`/pi-delegate`** for the options menu. Esc from Models returns to this menu; Esc at the main menu closes it. Use **`/pi-delegate stats [session|today|all|rebuild]`** for recorded usage, or **`/pi-delegate models`** to choose each role's default model or reasoning level. Select a role, then **Model** or **Reasoning**; changing reasoning leaves the model unchanged. Shipped model assignments are active defaults; unavailable models are not automatically replaced. Selections are saved in `~/.pi/agent/delegate.json` and apply to new jobs in the current session.
 
 Manual configuration edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**
 

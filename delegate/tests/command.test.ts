@@ -13,17 +13,19 @@ test("single delegate command routes menu choices, arguments and optional entrie
 		[option("models"), { ...option("stats"), complete: prefix => ["session", "today", "all", "rebuild"].filter(value => value.startsWith(prefix)) }]);
 	assert.deepEqual([...commands.keys()], ["pi-delegate"]);
 	const command = commands.get("pi-delegate");
-	let choice: string | undefined = "models";
+	const choices: Array<string | undefined> = ["models", "stats", undefined];
+	let menuVisits = 0;
 	const ctx: any = { hasUI: true, ui: {
-		select: async (title: string, choices: string[]) => {
-			assert.equal(title, "pi-delegate"); assert.deepEqual(choices, ["models", "stats"]); return choice;
+		select: async (title: string, options: string[]) => {
+			menuVisits++;
+			assert.equal(title, "pi-delegate"); assert.deepEqual(options, ["models", "stats"]); return choices.shift();
 		},
 		notify: (text: string) => notices.push(text),
 	} };
 	await command.handler("", ctx);
-	choice = "stats"; await command.handler("", ctx);
-	choice = undefined; await command.handler("", ctx);
+	assert.equal(menuVisits, 3, "returning from an option must reopen the main menu until it is cancelled");
 	await command.handler(" stats   today ", ctx);
+	assert.equal(menuVisits, 3, "direct subcommands must not open the menu");
 	await command.handler("unknown", ctx);
 	await command.handler("", { ...ctx, hasUI: false });
 	assert.deepEqual(calls, ["models:", "stats:", "stats:today"]);

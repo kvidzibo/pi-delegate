@@ -29,11 +29,16 @@ export function registerDelegateCommand(pi: ExtensionAPI, defaults: DelegateOpti
 		handler: async (args, ctx) => {
 			const entries = options();
 			const input = args.trim();
-			let name = input.match(/^\S+/)?.[0];
+			const name = input.match(/^\S+/)?.[0];
 			const rest = name ? input.slice(name.length).trim() : "";
 			if (!name && ctx.hasUI) {
-				name = await ctx.ui.select("pi-delegate", entries.map(option => option.name));
-				if (name === undefined) return;
+				while (true) {
+					const choice = await ctx.ui.select("pi-delegate", entries.map(option => option.name));
+					if (choice === undefined) return;
+					const option = entries.find(option => option.name === choice);
+					if (!option) return;
+					await option.handler("", ctx);
+				}
 			}
 			const option = entries.find(option => option.name === name);
 			if (!option) {
