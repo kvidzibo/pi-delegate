@@ -51,7 +51,7 @@ export function infobar(runs: RunRecord[], warning = false, archiveWarning = fal
 	if (totalTokens(usage) === 0) return "";
 	const saved = savings.priced && savings.usd > 0 ? `|~${formatUsd(savings.usd)}${savings.priced < savings.eligible ? " · !estimate" : ""}` : "";
 	const local = usage.local.total > 0 ? `|${formatTokens(usage.local.total)}` : "";
-	return `pi-delegate ${formatTokens(totalTokens(usage))}${local}${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
+	return `⑂ ${formatTokens(totalTokens(usage))}${local}${saved}${usage.incomplete || warning ? " · !partial" : ""}${archiveWarning ? " · !archive" : ""}`;
 }
 export function statsReport(runs: RunRecord[], root: string, scope: string, warnings: string[] = []): string {
 	runs = latestRuns(runs);

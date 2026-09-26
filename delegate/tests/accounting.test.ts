@@ -27,18 +27,18 @@ test("session infobar updates live, counts final usage once, survives resume, re
 	const result = await accounting.run(run, "d0001", async (event) => {
 		event({ type: "message_start", message });
 		event({ type: "message_update", usage: { ...message.usage, output: 10 } });
-		assert.match(statuses.at(-1)!, /pi-delegate 110\|110 · !partial/);
+		assert.match(statuses.at(-1)!, /⑂ 110\|110 · !partial/);
 		appendFileSync(run.paths.session, `${JSON.stringify({ type: "message", id: "a", message })}\n`);
 		event({ type: "message_end", message }); event({ type: "agent_end", messages: [message] }); event({ type: "agent_settled" });
 		return { text: "answer", exitCode: 0, stderrTail: "", stopReason: "stop" };
 	});
 	assert.equal("usage" in result, false, "do not mix child tokens into Pi's normal parent footer");
-	assert.equal(statuses.at(-1), "pi-delegate 120|120");
+	assert.equal(statuses.at(-1), "⑂ 120|120");
 	accounting.terminal(run.data.runId, "d0001", { status: "done" });
 	assert.equal(readFileSync(join(root, "usage.jsonl"), "utf8").trim().split("\n").length, 1);
 	accounting.close(); assert.equal(statuses.at(-1), undefined);
 	const resumed = new Accounting(root);
-	await resumed.activate("parent-a", ui); assert.equal(statuses.at(-1), "pi-delegate 120|120");
+	await resumed.activate("parent-a", ui); assert.equal(statuses.at(-1), "⑂ 120|120");
 	await resumed.activate("parent-b", ui); assert.equal(statuses.at(-1), undefined, "zero totals remove the previously visible status slot");
 	await resumed.activate("parent-a", ui); assert.match(await resumed.report("session", "parent-a"), /Delegated: 120 tokens/);
 	resumed.close();
@@ -93,7 +93,7 @@ test("reactivating while live preserves meter-backed records instead of replacin
 	const run = accounting.create(identity, "task", prompt);
 	run.start("d0001"); run.observe({ type: "message_update", usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 } });
 	await accounting.activate("parent-a", ui);
-	assert.match(statuses.at(-1)!, /pi-delegate 120\|120/);
+	assert.match(statuses.at(-1)!, /⑂ 120\|120/);
 	await run.finish({ status: "failed", stopReason: "aborted" });
 	accounting.terminal(run.data.runId, "d0001", { status: "failed" });
 	accounting.close();
@@ -139,8 +139,8 @@ test("session/day/all filters, honest savings label, distinct local/hosted and t
 	run.status = "done";
 	run.usage.local = { input: 100, output: 10, cacheRead: 5, cacheWrite: 0, total: 115 };
 	run.usage.hosted = { input: 200, output: 20, cacheRead: 0, cacheWrite: 0, total: 220 };
-	assert.equal(infobar([run, run]), "pi-delegate 335|115", "duplicate records never double count");
-	assert.equal(infobar([{ ...run, usage: { ...run.usage, local: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }]), "pi-delegate 220", "hosted-only usage omits local count and separator");
+	assert.equal(infobar([run, run]), "⑂ 335|115", "duplicate records never double count");
+	assert.equal(infobar([{ ...run, usage: { ...run.usage, local: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }]), "⑂ 220", "hosted-only usage omits local count and separator");
 	const terminal = { ...run, revision: 10, status: "done" as const };
 	const staleRebuild = { ...run, revision: 2, status: "running" as const };
 	assert.deepEqual(latestRuns([terminal, staleRebuild]), [terminal], "late rebuild rows must not regress a finalized export");

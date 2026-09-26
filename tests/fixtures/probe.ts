@@ -224,7 +224,7 @@ export default function probe(pi: ExtensionAPI) {
 		} };
 		const entriesBefore = ctx.sessionManager.getEntries().length;
 		await handlers.get("session_start")?.({}, testCtx);
-		assert.equal(statuses.at(-1), "pi-delegate 155|155");
+		assert.equal(statuses.at(-1), "⑂ 155|155");
 		await commands.get("delegate-stats").handler("", testCtx);
 		assert.ok(notices.at(-1)?.includes("Delegated: 155 tokens"));
 		assert.ok(notices.at(-1)?.includes("Saved: unavailable"));
@@ -232,7 +232,7 @@ export default function probe(pi: ExtensionAPI) {
 		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session" } });
 		assert.equal(statuses.at(-1), undefined);
 		await handlers.get("session_start")?.({}, testCtx);
-		assert.equal(statuses.at(-1), "pi-delegate 155|155");
+		assert.equal(statuses.at(-1), "⑂ 155|155");
 		await handlers.get("session_shutdown")?.(); assert.equal(statuses.at(-1), undefined);
 		return { nativeSession: true, infobar: true, noModelCalls: true, resume: true };
 	});
