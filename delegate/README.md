@@ -4,7 +4,7 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
-Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role, then change its **Model** or **Reasoning** default independently. Reasoning choices come from Pi's supported levels for that role's model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saving reasoning leaves the model, tools and offline setting unchanged. It saves to `~/.pi/agent/delegate.json` and affects new jobs in the current session; running and queued jobs keep their settings. Other sessions need `/reload`.
+Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role, then change its **Model** or **Reasoning** default independently. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Reasoning choices come from Pi's supported levels for that role's model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saving reasoning leaves the model, tools and offline setting unchanged. It saves to `~/.pi/agent/delegate.json` and affects new jobs in the current session; running and queued jobs keep their settings. Other sessions need `/reload`.
 
 For manual configuration, override [shipped defaults](config.json) in that user file, not in the installed package. Replace `provider/model` with an available Pi model ID:
 
