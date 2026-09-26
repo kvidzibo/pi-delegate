@@ -60,7 +60,7 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		const statuses: string[] = [], notices: string[] = []; let lookups = 0;
 		const testCtx = { ...ctx, hasUI: true, modelRegistry: { find: (provider: string, id: string) => {
 			lookups++; assert.equal(`${provider}/${id}`, s.profile.key.alternativeModel); return { cost: pricing };
-		} }, ui: { ...ctx.ui, setStatus: (_k: string, text: string) => statuses.push(text), notify: (text: string) => notices.push(text) } };
+		} }, ui: { ...ctx.ui, setStatus: (_k: string, text: string) => statuses.push(text), notify: (text: string) => notices.push(text), select: async (report: string) => { notices.push(report); return undefined; } } };
 		await handlers.get("session_start")!({}, testCtx);
 		const result = await tool.execute("pricing-probe", { task: "Mock recon", kind: "recon" }, undefined, undefined, testCtx);
 		assert.equal(result.details.ok, true); assert.equal(lookups, 1);

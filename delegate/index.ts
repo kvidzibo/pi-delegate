@@ -19,6 +19,7 @@ import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } fro
 import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
+import { showStats } from "./stats-view.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
@@ -304,7 +305,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				ctx.ui.notify("Usage: /pi-delegate stats [session|today|all|rebuild]", "warning"); return;
 			}
 			const report = await accounting.report(scope === "rebuild" ? "all" : scope, ctx.sessionManager.getSessionId(), scope === "rebuild");
-			ctx.ui.notify(report, "info");
+			await showStats(ctx, report);
 		},
 	}]);
 	// Pi ignores isError on execute() return values. Keep our structured details
