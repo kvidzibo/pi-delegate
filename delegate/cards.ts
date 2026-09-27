@@ -21,6 +21,10 @@ function copyDetails(details: CardDetails): CardDetails {
 		if (finalization) copy.finalization = finalization; else delete copy.finalization;
 	}
 	if (copy.resource && typeof copy.resource === "object") copy.resource = { ...copy.resource };
+	if (copy.current && typeof copy.current === "object") copy.current = { ...copy.current };
+	if (Array.isArray(copy.activity)) copy.activity = copy.activity.map(item =>
+		item && typeof item === "object" ? { ...item } : item,
+	);
 	return copy;
 }
 

@@ -36,6 +36,36 @@ test("accepted live transcript snapshots stay unchanged until terminal, even on 
 	assert.equal(cards.get("spawn")?.answer, done.answer);
 });
 
+test("current activity snapshots isolate inputs, reads, and restored history", () => {
+	const cards = new JobCards();
+	const current = { name: "read", mark: "→" };
+	const item = { name: "bash", mark: "✓" };
+	const activity = [item];
+	cards.begin("spawn", { ...running, current, activity });
+	current.name = "changed input";
+	item.name = "changed item";
+	activity.push({ name: "new item", mark: "→" });
+	const snapshot = cards.get("spawn")!;
+	assert.equal((snapshot.current as { name: string }).name, "read");
+	assert.equal((snapshot.activity as { name: string }[]).length, 1);
+	(snapshot.current as { name: string }).name = "mutated read";
+	(snapshot.activity as { name: string }[])[0]!.name = "mutated item";
+	(snapshot.activity as { name: string }[]).push({ name: "mutated list" });
+	assert.equal((cards.get("spawn")!.activity as { name: string }[]).length, 1);
+	assert.equal((cards.get("spawn")!.current as { name: string }).name, "read");
+	assert.equal((cards.get("spawn")!.activity as { name: string }[])[0]!.name, "bash");
+
+	const historical = { ...running, originToolCallId: "historic", current: { name: "write" }, activity: [{ name: "grep" }] };
+	cards.restore([entry("historic", historical)]);
+	historical.current.name = "changed restored input";
+	historical.activity[0]!.name = "changed restored item";
+	const restored = cards.get("historic")!;
+	(restored.current as { name: string }).name = "mutated restored read";
+	(restored.activity as { name: string }[])[0]!.name = "mutated restored item";
+	assert.equal((cards.get("historic")!.current as { name: string }).name, "write");
+	assert.equal((cards.get("historic")!.activity as { name: string }[])[0]!.name, "grep");
+});
+
 test("dead observers and shutdown do not retain UI or change child state", () => {
 	const cards = new JobCards(); cards.begin("spawn", running);
 	cards.watch("spawn", () => { throw new Error("dead UI"); });
