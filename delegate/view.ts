@@ -94,6 +94,20 @@ function paintActivity(theme: ThemeFg, item: ActivityItem): string {
 	return `${theme.fg(color, item.mark)} ${theme.fg("accent", displayText(item.name))}${item.args ? `  ${theme.fg("dim", displayText(item.args))}` : ""}`;
 }
 
+// Shared content formatting; transcript and dock keep their own visibility and row budgets.
+function cardText(theme: ThemeFg, d: CardDetails, expanded: boolean, width: number) {
+	const current = asActivityItem(d.current);
+	const task = theme.fg("muted", `Task: ${expanded ? cleanBlock(str(d, "task")) : displayText(str(d, "task")).replace(/\s+/g, " ").trim()}`);
+	return {
+		task: expanded ? wrapTextWithAnsi(task, width) : [truncateToWidth(task, width, "…")],
+		warnings: ["recordingError", "displayWarning", "resourceError"].filter(key => d[key]).map(key => theme.fg("warning", displayText(str(d, key)))),
+		activity: asActivityList(d.activity).filter(item => item.name !== "thinking").map(item => paintActivity(theme, item)),
+		current: current && current.name !== "thinking" ? paintActivity(theme, current) : undefined,
+		active: current?.mark === "→" ? paintActivity(theme, current) : undefined,
+		session: d.sessionFile ? theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`) : undefined,
+	};
+}
+
 // Both slots read at render time, after renderResult has populated shared row state.
 // This also lets an already-returned background spawn show its latest job snapshot.
 export class ChildView {
@@ -120,24 +134,18 @@ export function renderChildCall(input: RowInput): ChildView {
 export function renderChildResult(input: RowInput): ChildView {
 	return new ChildView((width) => {
 		const state = input.read(); const d = state.details; const theme = input.theme;
-		if (state.live && !state.collect && !state.pinned) return state.expanded && d.sessionFile
-			? wrapTextWithAnsi(input.theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`), width) : [];
+		const text = cardText(theme, d, state.expanded, width);
+		if (state.live && !state.collect && !state.pinned) return state.expanded && text.session ? wrapTextWithAnsi(text.session, width) : [];
 		const lines: string[] = [];
 		const add = (text: string, color?: string) => lines.push(...wrapTextWithAnsi(color ? theme.fg(color, text) : text, width));
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
 		const cancelled = failed && d.stopReason === "aborted";
-		if (!state.collect || failed || state.expanded) {
-			const task = str(d, "task");
-			if (task) {
-				if (state.expanded) add(`Task: ${cleanBlock(task)}`, "muted");
-				else lines.push(truncateToWidth(theme.fg("muted", `Task: ${displayText(task).replace(/\s+/g, " ").trim()}`), width, "…"));
-			}
-		}
+		if ((!state.collect || failed || state.expanded) && str(d, "task")) lines.push(...text.task);
 		if (!state.collect) {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
-		for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) add(displayText(str(d, key)), "warning");
+		for (const warning of text.warnings) add(warning);
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
 		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
@@ -155,18 +163,16 @@ export function renderChildResult(input: RowInput): ChildView {
 			while (rendered.length && !rendered.at(-1)!.trim()) rendered.pop();
 			lines.push(...(state.expanded ? rendered : rendered.slice(0, 3)));
 		}
-		const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
 		if (state.expanded) {
 			if (state.collect || !state.live) {
-				const current = asActivityItem(d.current);
-				if (activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of activity) add(paintActivity(theme, item)); }
-				if (!d.historical && pending && current && current.name !== "thinking") add(paintActivity(theme, current));
+				if (text.activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of text.activity) add(item); }
+				if (!d.historical && pending && text.current) add(text.current);
 			}
 			for (const block of dataBlocks) add(cleanBlock(block.text), "dim");
-			if (d.sessionFile) add(`Session: ${displayText(str(d, "sessionFile"))}`, "dim");
+			if (text.session) add(text.session);
 		} else {
-			const latest = failed ? activity.at(-1) : undefined;
-			if (latest) lines.push(truncateToWidth(`Last recorded tool: ${paintActivity(theme, latest)}`, width, "…"));
+			const latest = failed ? text.activity.at(-1) : undefined;
+			if (latest) lines.push(truncateToWidth(`Last recorded tool: ${latest}`, width, "…"));
 			if (!state.collect || failed) add(input.expandHint || "Expand for full result and tool details", "dim");
 		}
 		return state.collect ? lines : paintCard(theme, lines, width, cardBackground(state));
@@ -200,22 +206,12 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 		const statusText = theme.fg(status.color, displayText(status.text));
 		if (cardRows === 2) card.push(fit(statusText));
 		if (cardRows >= 3) {
-			const activity = asActivityList(d.activity).filter((item) => item.name !== "thinking");
-			const current = asActivityItem(d.current);
-			const extras: string[] = [];
-			for (const key of ["recordingError", "displayWarning", "resourceError"]) if (d[key]) extras.push(theme.fg("warning", displayText(str(d, key))));
-			if (expanded) {
-				for (const item of activity) extras.push(paintActivity(theme, item));
-				if (current && current.name !== "thinking") extras.push(paintActivity(theme, current));
-				if (d.sessionFile) extras.push(theme.fg("dim", `Session: ${displayText(str(d, "sessionFile"))}`));
-			} else {
-				const latest = current?.mark === "→" ? current : activity.at(-1);
-				if (latest) extras.push(paintActivity(theme, latest));
-			}
-			const task = `Task: ${expanded ? cleanBlock(str(d, "task")) : displayText(str(d, "task")).replace(/\s+/g, " ").trim()}`;
+			const text = cardText(theme, d, expanded, width);
+			const extras = [...text.warnings, ...(expanded
+				? [...text.activity, text.current, text.session]
+				: [text.active ?? text.activity.at(-1)]).filter((line): line is string => line !== undefined)];
 			const taskRows = expanded ? Math.max(1, cardRows - 2 - Math.min(extras.length, 3)) : 1;
-			const taskLines = expanded ? clippedLines(wrapTextWithAnsi(theme.fg("muted", task), width), taskRows, width) : [fit(theme.fg("muted", task))];
-			card.push(...taskLines, fit(statusText));
+			card.push(...clippedLines(text.task, taskRows, width), fit(statusText));
 			card.push(...clippedLines(extras.map(fit), cardRows - card.length, width));
 		}
 		while (card.length < cardRows) card.push(""); // Stable geometry as tools start/finish.
