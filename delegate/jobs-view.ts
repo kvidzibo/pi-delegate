@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
+import { dialogContentWidth, dialogHeight, dialogPageSize, frameDialog } from "./dialog.ts";
 import type { JobBoardState } from "./panel.ts";
 import { renderChildCall, renderChildResult, type RowState } from "./view.ts";
 import { plainBoardTheme } from "./board.ts";
@@ -23,7 +24,7 @@ export async function showJobs(ctx: ExtensionCommandContext, read: () => JobBoar
 	}
 	await ctx.ui.custom<void>((tui, theme, keys, done) => {
 		let offset = 0, total = 0;
-		const pageSize = () => Math.max(1, tui.terminal.rows - 8);
+		const pageSize = () => dialogPageSize(tui.terminal.rows);
 		let state = read(), previous = JSON.stringify(state);
 		const timer = setInterval(() => {
 			const next = read(), serialized = JSON.stringify(next);
@@ -33,13 +34,12 @@ export async function showJobs(ctx: ExtensionCommandContext, read: () => JobBoar
 		signal?.addEventListener("abort", close, { once: true });
 		return {
 			render(width: number) {
-				const lines = renderCards(state, width, theme);
+				const lines = renderCards(state, dialogContentWidth(width), theme);
 				total = lines.length;
 				offset = Math.min(offset, Math.max(0, total - pageSize()));
-				return [theme.fg("accent", theme.bold(`pi-delegate · jobs · ${state?.cards.length ?? 0} active`)),
-					...lines.slice(offset, offset + pageSize()),
-					theme.fg("dim", `${offset + 1}–${Math.min(total, offset + pageSize())}/${total} · ↑↓ PgUp/PgDn Home/End · esc back`),
-				].map(line => truncateToWidth(line, width));
+				return frameDialog(theme, width, dialogHeight(tui.terminal.rows), `pi-delegate · jobs · ${state?.cards.length ?? 0} active`,
+					lines.slice(offset, offset + pageSize()), ["↑↓ scroll · PgUp/PgDn · Home/End",
+						`esc back · ${offset + 1}–${Math.min(total, offset + pageSize())}/${total}`]);
 			},
 			invalidate() {},
 			handleInput(data: string) {
@@ -55,5 +55,5 @@ export async function showJobs(ctx: ExtensionCommandContext, read: () => JobBoar
 			},
 			dispose() { clearInterval(timer); signal?.removeEventListener("abort", close); },
 		};
-	}, { overlay: true, overlayOptions: { width: "100%", margin: 0 } });
+	}, { overlay: true, overlayOptions: { width: "90%", margin: 1 } });
 }

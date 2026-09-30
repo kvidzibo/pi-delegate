@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { getKeybindings, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, stripTerminalSequences, Text, TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { showStats } from "../../delegate/stats-view.ts";
 import { showJobs } from "../../delegate/jobs-view.ts";
 import type { JobBoardState } from "../../delegate/panel.ts";
@@ -14,9 +14,11 @@ export async function uxProbe(ctx: any) {
 	await showStats({ ...ctx, hasUI: true, mode: "tui", ui }, report, {
 		scope: "session", load: scope => new Promise((resolve, reject) => pending.set(scope, { resolve, reject })),
 	});
-	const screen = (width = 80) => view.render(width).map((line: string) => stripTerminalSequences(line).trimEnd()).join("\n");
+	const screen = (width = 80) => view.render(width).map((line: string) => stripTerminalSequences(line).replace(/^│ ?| ?│$/g, "").trimEnd()).join("\n");
 	try {
 		assert.match(screen(), /Usage line 1\n/);
+		assert.equal(view.render(80).length, 16, "the panel fills its bounded height even for short reports");
+		assert.ok(view.render(80).every((line: string) => visibleWidth(line) === 80), "opaque frame fills every row");
 		view.handleInput("\x1b[6~"); assert.doesNotMatch(screen(), /Usage line 1\n/);
 		view.handleInput("\x1b[F"); assert.match(screen(), /Usage line 60\n/);
 		view.handleInput("\x1b[H"); assert.match(screen(), /Usage line 1\n/);
@@ -61,5 +63,28 @@ export async function uxProbe(ctx: any) {
 		await new Promise(resolve => setTimeout(resolve, 550));
 		assert.equal(reads, before, "shutdown stops polling even without a keypress");
 	} finally { lifetime.abort(); view.dispose(); }
+	// Real regular-mode compositing: parent output must not bleed through the panel.
+	const terminal: any = { columns: 80, rows: 20, write() {}, hideCursor() {}, showCursor() {}, stop() {} };
+	const real = new TuiMainScreen(terminal, false);
+	const transcript = new Text("PARENT 0", 0, 0);
+	real.addChild(transcript);
+	const session = new AbortController();
+	const overlay = showJobs({ ...ctx, hasUI: true, mode: "tui", ui: { ...ui,
+		custom: (create: Function, options: any) => new Promise<void>(resolve => {
+			const component = create(real, ctx.ui.theme, getKeybindings(), () => { real.hideOverlay(); component.dispose(); resolve(); });
+			real.showOverlay(component, options.overlayOptions);
+		}),
+	} }, () => ({ summary: "one job", cards: [{ jobId: "d0001", kind: "review", model: "hosted/reviewer", task: "Inspect UI", status: "running" }] }), session.signal);
+	try {
+		for (const length of [1, 15, 35, 60]) {
+			transcript.setText(Array.from({ length }, (_, i) => `PARENT ${i} `.repeat(8)).join("\n"));
+			real.renderNow();
+			const rendered = real.captureRenderState();
+			const screen = rendered.previousLines.slice(rendered.previousViewportTop, rendered.previousViewportTop + terminal.rows).map(stripTerminalSequences);
+			assert.match(screen[2], /╭.*pi-delegate · jobs/);
+			assert.ok(screen[17].includes("╰"), "panel stays at fixed viewport coordinates while parent output grows");
+			assert.ok(screen.slice(2, 18).every(line => !line.slice(4, 76).includes("PARENT")), "panel rows stay opaque");
+		}
+	} finally { session.abort(); await overlay; real.stop({ preserveScreen: true }); }
 	return { jobs: true, navigation: true, scopes: true, staleLoads: true, retry: true, disposal: true, noModelCalls: true };
 }

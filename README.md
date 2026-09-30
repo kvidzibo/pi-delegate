@@ -27,7 +27,7 @@ Pi supplies the peer dependencies; no manual `npm install` is needed. Do not als
 
 Run **`/pi-delegate`** for the options menu. Esc from Models returns to this menu; Esc at the main menu closes it. Use **`/pi-delegate jobs`** to browse all active/queued jobs and full tasks, **`/pi-delegate stats [session|today|all|rebuild]`** for usage, or **`/pi-delegate models`** to choose each role's default model or reasoning level. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Select a role, then **Model** or **Reasoning**; changing reasoning leaves the model unchanged. Saving or cancelling a picker returns to that role's settings; save feedback stays in the dialog. Shipped model assignments are active defaults; unavailable models are not automatically replaced. Selections are saved in `~/.pi/agent/delegate.json` and apply to new jobs in the current session.
 
-Jobs and stats panels support ↑/↓, Page Up/Down and Home/End; Esc returns. In the interactive stats panel, **1/2/3** switches Session/Today/All. Jobs refresh while open without changing their state.
+Jobs and stats use framed, opaque panels so live transcript output stays visually separate. They support ↑/↓, Page Up/Down and Home/End; Esc returns. In the interactive stats panel, **1/2/3** switches Session/Today/All. Jobs refresh while open without changing their state.
 
 Manual configuration edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**
 

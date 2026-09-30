@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, Text } from "@earendil-works/pi-tui";
+import { dialogContentWidth, dialogHeight, dialogPageSize, frameDialog } from "./dialog.ts";
 import { displayText } from "./stats.ts";
 
 export type StatsScope = "session" | "today" | "all";
@@ -19,7 +20,7 @@ export async function showStats(ctx: ExtensionCommandContext, report: string, op
 		let loading = false, error = "", request = 0, disposed = false;
 		let text = new Text(report, 0, 0);
 		let offset = 0, total = 0;
-		const pageSize = () => Math.max(1, tui.terminal.rows - 8);
+		const pageSize = () => Math.max(1, dialogPageSize(tui.terminal.rows) - (options ? 1 : 0));
 		const changeScope = (next: StatsScope) => {
 			if (!options || (next === scope && !error)) return;
 			scope = next;
@@ -37,17 +38,15 @@ export async function showStats(ctx: ExtensionCommandContext, report: string, op
 		options?.signal?.addEventListener("abort", close, { once: true });
 		return {
 			render(width: number) {
-				const lines = loading ? ["Loading…"] : error ? new Text(`Could not load report: ${error}\nPress the scope key to retry.`, 0, 0).render(width) : text.render(width);
+				const innerWidth = dialogContentWidth(width);
+				const lines = loading ? ["Loading…"] : error ? new Text(`Could not load report: ${error}\nPress the scope key to retry.`, 0, 0).render(innerWidth) : text.render(innerWidth);
 				total = lines.length;
 				const size = pageSize();
 				offset = Math.min(offset, Math.max(0, total - size));
-				return [
-					theme.fg("accent", theme.bold(`pi-delegate · stats · ${scope}`)),
+				return frameDialog(theme, width, dialogHeight(tui.terminal.rows), `pi-delegate · stats · ${scope}`, [
 					...(options ? [["session", "today", "all"].map((value, i) => theme.fg(value === scope ? "accent" : "dim", `${i + 1} ${value}`)).join(" · ")] : []),
 					...lines.slice(offset, offset + size),
-					theme.fg("dim", "↑↓ scroll · PgUp/PgDn · Home/End"),
-					theme.fg("dim", `esc back · ${offset + 1}–${Math.min(total, offset + size)}/${total}`),
-				].map(line => truncateToWidth(line, width));
+				], ["↑↓ scroll · PgUp/PgDn · Home/End", `esc back · ${offset + 1}–${Math.min(total, offset + size)}/${total}`]);
 			},
 			invalidate() { text.invalidate(); },
 			handleInput(data: string) {
@@ -67,5 +66,5 @@ export async function showStats(ctx: ExtensionCommandContext, report: string, op
 			},
 			dispose() { disposed = true; request++; options?.signal?.removeEventListener("abort", close); },
 		};
-	}, { overlay: true, overlayOptions: { width: "100%", margin: 0 } });
+	}, { overlay: true, overlayOptions: { width: "90%", margin: 1 } });
 }
