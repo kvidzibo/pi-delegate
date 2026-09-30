@@ -92,8 +92,22 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		assert.match(collected.content[0].text, /Review complete/);
 		assert.ok(entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === `throwing-${throwAt}`));
 	}
+	for (const jobId of [null, "", " \t"]) {
+		const id = `empty-job-id-${String(jobId)}`;
+		const spawned = await launch(first.tool, id, { jobId });
+		assert.match(spawned.row.render(), /accepted — card pinned above editor/);
+		runs.at(-1)!.resolve(success);
+		await first.tool.execute(`${id}-collect`, { jobId: spawned.result.details.jobId }, undefined, undefined, testCtx);
+		assert.match(spawned.row.render(), /Task: Review timeout and abort handling/);
+		assert.match(spawned.row.render(), /Review complete/);
+	}
+	for (const field of ["cancel", "wrap"]) {
+		const pending = row(first.tool, `empty-${field}`, { jobId: "dffff", [field]: " \t" });
+		assert.match(pending.render(), /waiting/);
+		assert.doesNotMatch(pending.render(), /cancelling|wrapping up/);
+	}
 	const completedBeforeOriginal = entries.filter((e) => e.customType === CARD_STATE_TYPE).length;
-	const original = await launch(first.tool, "origin", { cwd: null, timeoutMs: "", jobId: null, wrap: " ", cancel: null });
+	const original = await launch(first.tool, "origin", { cwd: null, timeoutMs: "", jobId: " \t", wrap: " ", cancel: null });
 	const jobId = original.result.details.jobId;
 	assert.match(original.row.render(), /accepted — card pinned above editor/);
 	assert.doesNotMatch(original.row.render(), /Task:|grok-4.6/, "the full active card belongs in the pinned widget, not a duplicate transcript card");
@@ -149,7 +163,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
 	assert.match(oldRow.render(), /✓ Worker finished — task unverified/); assert.doesNotMatch(oldRow.render(), /Running/);
 	assert.ok(oldRow.render().includes(`effort ${child.input.thinking}`));
-	for (const id of ["seed-1", "seed-2"]) {
+	for (const id of ["seed-1", "seed-2", "seed-3", "seed-4", "seed-5"]) {
 		const seed = await launch(restored.tool, id);
 		runs.at(-1)!.resolve(success);
 		await restored.tool.execute(`${id}-collect`, { jobId: seed.result.details.jobId }, undefined, undefined, testCtx);

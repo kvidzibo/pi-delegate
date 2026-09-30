@@ -268,15 +268,16 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const readRow = (context: ViewContext): RowState => {
 		const args = context.args ?? (context.state.delegateArgs as Record<string, unknown> | undefined) ?? {};
 		const saved = context.state.delegateResult as { details?: CardDetails; content?: RowState["content"] } | undefined;
-		const collect = typeof args.jobId === "string" || saved?.details?.callType === "collect";
+		const jobId = typeof args.jobId === "string" ? args.jobId.trim() || undefined : undefined;
+		const collect = saved?.details?.callType === "collect" || (saved?.details?.callType !== "spawn" && jobId !== undefined);
 		const snapshot = !collect && !context.isError && saved?.details?.ok !== false ? cards.get(context.toolCallId) : undefined;
 		const details: CardDetails = { ...saved?.details, ...snapshot };
 		const kind = knownKind(details.kind) ?? knownKind(args.kind);
 		details.kind ??= kind;
 		details.model ??= args.model ?? (kind ? config.agents[kind].model : undefined);
 		details.task ??= args.task;
-		details.jobId ??= args.jobId;
-		details.operation ??= args.cancel ? "cancel" : args.wrap ? "wrap" : args.timeoutMs === 0 ? "peek" : "wait";
+		details.jobId ??= jobId;
+		details.operation ??= args.cancel === true ? "cancel" : args.wrap === true ? "wrap" : args.timeoutMs === 0 ? "peek" : "wait";
 		if (!snapshot && !collect && !context.isPartial && (details.status === "queued" || details.status === "running")) details.historical = true;
 		return { details, content: snapshot ? undefined : saved?.content, collect, expanded: context.expanded,
 			live: Boolean(snapshot && cards.isLive(context.toolCallId)),
