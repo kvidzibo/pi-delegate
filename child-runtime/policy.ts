@@ -1,6 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
+export const MAX_TIMER_MS = 2_147_483_647;
+
 export interface TimeoutDefaults {
 	defaultTimeoutMs: number;
 	maxTimeoutMs: number;
@@ -14,8 +16,8 @@ export function assertNotNested(env: NodeJS.Dict<string> = process.env, label = 
 
 export function normalizeTimeoutMs(value: unknown, defaults: TimeoutDefaults, label = "child"): number {
 	const raw = value === undefined || value === null ? defaults.defaultTimeoutMs : value;
-	if (typeof raw !== "number" || !Number.isInteger(raw)) {
-		throw new Error(`${label} refused: timeoutMs must be an integer.`);
+	if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw > MAX_TIMER_MS) {
+		throw new Error(`${label} refused: timeoutMs must be an integer <= ${MAX_TIMER_MS}.`);
 	}
 	if (raw < 1000) return 1000;
 	if (raw > defaults.maxTimeoutMs) return defaults.maxTimeoutMs;

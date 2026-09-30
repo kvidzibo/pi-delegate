@@ -38,7 +38,7 @@ async function wrappedResult(): Promise<ChildResult> {
 
 /** Exercise all returned result paths through the real factory, with no provider calls. */
 export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
-	let tool: any, busy = true;
+	let tool: any, busy = true, deferAbort = false;
 	const handlers = new Map<string, Function>();
 	const entries: any[] = [], notices: any[] = [];
 	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void; reject: (error: Error) => void }> = [];
@@ -48,7 +48,9 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		sendMessage: (message: any) => notices.push(message),
 	} as unknown as ExtensionAPI, (input) => new Promise((resolve, reject) => {
 		runs.push({ input, resolve, reject });
-		input.signal?.addEventListener("abort", () => resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
+		input.signal?.addEventListener("abort", () => {
+			if (!deferAbort) resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" });
+		}, { once: true });
 	}));
 	const testCtx: any = { ...ctx, hasUI: true, isIdle: () => !busy,
 		ui: { ...ctx.ui, setWidget() {}, setStatus() {} },
@@ -243,13 +245,30 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		const keybindings = new KeybindingsManager({ "app.interrupt": { defaultKeys: "escape" } });
 		const editor = new CustomEditor({ requestRender() {} } as any, {} as any, keybindings as any);
 		editor.onEscape = () => parent.abort(); // Pi's interrupt handler aborts this same run signal.
+		deferAbort = true; // Keep workers alive until cleanup is explicitly released below.
 		editor.handleInput("\x1b");
 		assert.equal(parent.signal.aborted, true, "the editor must issue the parent interrupt");
 		for (const run of [backgroundRun, promotedRun, foregroundRun]) {
 			assert.equal(run.input.signal?.aborted, true, "Esc must stop every running child, including prior-turn background jobs");
 		}
-		await collecting;
+		const collectedInterrupt = await collecting;
 		const foregroundResult = await foreground;
+		for (const result of [collectedInterrupt, foregroundResult]) {
+			assert.equal(result.details.status, "running", "cancellation is not completion before cleanup");
+			assert.equal(result.details.pending, true);
+			assert.equal(result.details.cancellationRequested, true);
+			assert.equal(result.details.stopReason, undefined);
+			assert.match(result.content[0].text, /Cancellation requested; waiting for child cleanup\. Slot still held\./);
+		}
+		assert.equal(foregroundResult.details.background, false, "an interrupted wait must not promote foreground work");
+		assert.equal(collectedInterrupt.details.background, true);
+		const blocked = await launch(local);
+		assert.equal(blocked.details.status, "queued", "cancelled workers retain capacity through cleanup");
+		await call({ jobId: blocked.details.jobId, cancel: true });
+		deferAbort = false;
+		for (const run of [backgroundRun, promotedRun, foregroundRun]) {
+			run.resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" });
+		}
 		await handlers.get("agent_settled")?.({}, testCtx);
 		busy = false;
 		await new Promise(resolve => setTimeout(resolve, NOTIFY_HOLD_MS * 2));

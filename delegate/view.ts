@@ -33,6 +33,7 @@ function receipt(state: RowState): string {
 		return reason === "aborted" ? "cancelled" : `failure collected${reason ? ` · ${displayText(reason).replace(/_/g, " ")}` : ""}`;
 	}
 	if (d.status === "done") return "result collected";
+	if (d.cancellationRequested) return "cancellation requested · cleanup pending";
 	const action = str(d, "operation");
 	if (state.isPartial) return action === "cancel" ? "cancelling" : action === "wrap" ? "wrapping up" : "waiting";
 	if (action === "cancel") return "cancellation requested";
@@ -59,6 +60,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	if (d.status === "running") {
+		if (d.cancellationRequested) return { color: "muted", text: "● Cancelling — waiting for child cleanup" };
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
 		const tg = isLocalModel(str(d, "model")) && d.tg ? ` · ${str(d, "tg")}` : "";

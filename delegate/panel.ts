@@ -16,7 +16,8 @@ export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocal
 		summary: formatJobBoard(active, limits)[0],
 		cards: active.map((job) => ({
 			jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, task: job.task, status: job.status,
-			reason: job.reason, wrapped: job.wrapped, phase: job.thinking ? "thinking" : undefined,
+			reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
+			phase: job.thinking ? "thinking" : undefined,
 			current: tool(job.current), activity: job.activity.map(tool).filter((item) => item !== undefined).slice(-3),
 			tg: job.local ? job.tg : undefined, recordingError: job.recordingError,
 			resource: job.resource ? { key: job.resource.key } : undefined, resourceError: job.resourceError,

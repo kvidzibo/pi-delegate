@@ -118,6 +118,46 @@ test("parse spawn and collect modes", () => {
 	assert.throws(() => parseDelegateCall({ kind: "recon" }, callConfig), /task is required/);
 });
 
+test("activity snapshots are detached from the scheduler and other wait observers", async () => {
+	const finish = deferred();
+	let emit!: (event: unknown) => void;
+	const scheduler = new JobScheduler(limits);
+	const job = scheduler.enqueue(enq({ task: "isolated activity", run: async (_job, _signal, onEvent) => {
+		emit = onEvent;
+		await finish.promise;
+		return ok;
+	} }));
+	try {
+		emit({ type: "tool_execution_start", toolName: "read", toolCallId: "a", args: { path: "one" } });
+		emit({ type: "tool_execution_end", toolName: "read", toolCallId: "a" });
+		emit({ type: "tool_execution_start", toolName: "bash", toolCallId: "b", args: { command: "two" } });
+		for (const snap of [scheduler.get(job.id), scheduler.list()[0], scheduler.active()[0], await scheduler.wait(job.id, { timeoutMs: 0 })]) {
+			snap.current!.name = "corrupted";
+			snap.activity[0].args = "corrupted";
+		}
+		assert.equal(scheduler.get(job.id).current!.name, "bash");
+		assert.equal(scheduler.get(job.id).activity[0].args, "one");
+		const mutating = scheduler.wait(job.id, { onSnapshot: snap => {
+			snap.activity[0].name = "corrupted";
+			if (snap.current) snap.current.name = "corrupted";
+			snap.status = "failed";
+		} });
+		const observed: ReturnType<JobScheduler["get"]>[] = [];
+		const observing = scheduler.wait(job.id, { onSnapshot: snap => { observed.push(snap); } });
+		emit({ type: "tool_execution_update", toolName: "bash", toolCallId: "b" });
+		finish.resolve();
+		const results = await Promise.all([mutating, observing]);
+		for (const snap of results) assert.equal(snap.status, "done");
+		for (const snap of [...observed, ...results]) {
+			assert.equal(snap.activity[0].name, "read");
+			if (snap.current) assert.equal(snap.current.name, "bash");
+		}
+	} finally {
+		finish.resolve();
+		await scheduler.shutdown();
+	}
+});
+
 test("snapshots carry thinking presence while every raw delta still updates local generation rate", async (t) => {
 	let now = 1000;
 	t.mock.method(Date, "now", () => now);

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
+import { MAX_TIMER_MS, truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
 import { AnswerHistory, answerExplanation } from "./answers.ts";
 import { StreamedAnswer } from "./streamed-answer.ts";
@@ -321,12 +321,12 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	// The caller owns the private, per-run archive snapshot. Fail before spawning if unreadable.
 	readFileSync(input.promptSourcePath);
 	const execution = input.execution ? validateGuardedExecution(input.execution) : undefined;
-	if (execution && (!Number.isSafeInteger(input.hardTimeoutMs) || input.hardTimeoutMs < 0 || input.hardTimeoutMs > 2_147_483_647)) {
-		throw new Error("Invalid guarded hardTimeoutMs: must be a supported timer duration.");
+	if (!Number.isSafeInteger(input.hardTimeoutMs) || input.hardTimeoutMs < 0 || input.hardTimeoutMs > MAX_TIMER_MS) {
+		throw new Error("Invalid hardTimeoutMs: must be a supported timer duration.");
 	}
 	const lease = input.resourceLease !== undefined ? { ...input.resourceLease } : undefined;
 	if (input.leaseStartupMs !== undefined && (execution || !lease || !Number.isSafeInteger(input.leaseStartupMs)
-		|| input.leaseStartupMs < 1 || input.leaseStartupMs > 2_147_483_647)) throw new Error("Invalid lease-only startup policy.");
+		|| input.leaseStartupMs < 1 || input.leaseStartupMs > MAX_TIMER_MS)) throw new Error("Invalid lease-only startup policy.");
 	if (lease) {
 		if (!execution && input.leaseStartupMs === undefined) throw new Error("Inherited resource leases require guarded child execution or explicit lease-only startup.");
 		verifyLease(lease.fd, lease);

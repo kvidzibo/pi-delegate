@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { dirname, isAbsolute } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
-import { isNonEmptyStringArray } from "../child-runtime/policy.ts";
+import { isNonEmptyStringArray, MAX_TIMER_MS } from "../child-runtime/policy.ts";
 
 export const KINDS = ["recon", "implement", "review", "oracle"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -114,10 +114,11 @@ function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 	if (!Number.isInteger(parsed.maxQueued) || (parsed.maxQueued as number) < 1) {
 		errors.push("maxQueued (integer >= 1)");
 	}
-	if (!Number.isInteger(parsed.defaultTimeoutMs)) errors.push("defaultTimeoutMs (integer)");
-	if (!Number.isInteger(parsed.maxTimeoutMs)) errors.push("maxTimeoutMs (integer)");
-	if (!Number.isInteger(parsed.checkIntervalMs)) errors.push("checkIntervalMs (integer)");
-	if (!Number.isInteger(parsed.hardTimeoutMs)) errors.push("hardTimeoutMs (integer)");
+	for (const key of ["defaultTimeoutMs", "maxTimeoutMs", "checkIntervalMs", "hardTimeoutMs"] as const) {
+		if (!Number.isSafeInteger(parsed[key]) || (parsed[key] as number) > MAX_TIMER_MS) {
+			errors.push(`${key} (integer <= ${MAX_TIMER_MS})`);
+		}
+	}
 	if (!Number.isInteger(parsed.maxOutputBytes) || (parsed.maxOutputBytes as number) < 1) {
 		errors.push("maxOutputBytes (integer >= 1)");
 	}
