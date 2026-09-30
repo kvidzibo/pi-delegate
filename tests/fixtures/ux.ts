@@ -19,6 +19,11 @@ export async function uxProbe(ctx: any) {
 		assert.match(screen(), /Usage line 1\n/);
 		assert.equal(view.render(80).length, 16, "the panel fills its bounded height even for short reports");
 		assert.ok(view.render(80).every((line: string) => visibleWidth(line) === 80), "opaque frame fills every row");
+		for (const rows of [9, 10, 11]) {
+			tui.terminal.rows = rows;
+			assert.match(screen(), /Usage line 1\n/, "keep a report row visible in short terminals");
+		}
+		tui.terminal.rows = 20;
 		view.handleInput("\x1b[6~"); assert.doesNotMatch(screen(), /Usage line 1\n/);
 		view.handleInput("\x1b[F"); assert.match(screen(), /Usage line 60\n/);
 		view.handleInput("\x1b[H"); assert.match(screen(), /Usage line 1\n/);

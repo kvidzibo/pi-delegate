@@ -20,7 +20,8 @@ export async function showStats(ctx: ExtensionCommandContext, report: string, op
 		let loading = false, error = "", request = 0, disposed = false;
 		let text = new Text(report, 0, 0);
 		let offset = 0, total = 0;
-		const pageSize = () => Math.max(1, dialogPageSize(tui.terminal.rows) - (options ? 1 : 0));
+		const showScopeRow = () => Boolean(options) && dialogPageSize(tui.terminal.rows) > 1;
+		const pageSize = () => Math.max(1, dialogPageSize(tui.terminal.rows) - (showScopeRow() ? 1 : 0));
 		const changeScope = (next: StatsScope) => {
 			if (!options || (next === scope && !error)) return;
 			scope = next;
@@ -44,7 +45,7 @@ export async function showStats(ctx: ExtensionCommandContext, report: string, op
 				const size = pageSize();
 				offset = Math.min(offset, Math.max(0, total - size));
 				return frameDialog(theme, width, dialogHeight(tui.terminal.rows), `pi-delegate · stats · ${scope}`, [
-					...(options ? [["session", "today", "all"].map((value, i) => theme.fg(value === scope ? "accent" : "dim", `${i + 1} ${value}`)).join(" · ")] : []),
+					...(showScopeRow() ? [["session", "today", "all"].map((value, i) => theme.fg(value === scope ? "accent" : "dim", `${i + 1} ${value}`)).join(" · ")] : []),
 					...lines.slice(offset, offset + size),
 				], ["↑↓ scroll · PgUp/PgDn · Home/End", `esc back · ${offset + 1}–${Math.min(total, offset + size)}/${total}`]);
 			},
