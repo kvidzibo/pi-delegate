@@ -58,16 +58,19 @@ export class Accounting {
 		return archive;
 	}
 
-	async run(archive: ArchivedRun, jobId: string, execute: (onEvent: (event: unknown) => void) => Promise<ChildResult>): Promise<ChildResult> {
+	async run(archive: ArchivedRun, jobId: string, execute: (onEvent: (event: unknown) => void) => Promise<ChildResult>, signal?: AbortSignal): Promise<ChildResult> {
 		try {
-			archive.start(jobId);
-			this.paint();
-			const result = await execute((event) => { if (archive.observe(event)) this.paint(); });
+			let result: ChildResult;
+			try {
+				archive.start(jobId);
+				this.paint();
+				result = await execute((event) => { if (archive.observe(event)) this.paint(); });
+			} catch (error) {
+				const stopReason = signal?.aborted ? "aborted" : "error";
+				result = { text: error instanceof Error ? error.message : String(error), exitCode: 1, stderrTail: "", stopReason };
+			}
 			await archive.finish({ status: isFailedChildResult(result) ? "failed" : "done", stopReason: result.stopReason, exitCode: result.exitCode, finalization: result.finalization, evidence: result.evidence });
 			return { ...result, ...(archive.data.recordingError ? { recordingError: archive.data.recordingError } : {}) };
-		} catch (error) {
-			await archive.finish({ status: "failed", stopReason: "error", exitCode: 1 });
-			throw error;
 		} finally {
 			this.active.delete(archive.data.runId);
 			this.paint();

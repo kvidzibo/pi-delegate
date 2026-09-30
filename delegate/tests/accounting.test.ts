@@ -117,6 +117,41 @@ test("queued recording failures are attached before terminal wait/collect snapsh
 	release(); await scheduler.wait(blocking.id); await scheduler.shutdown(); accounting.close();
 });
 
+test("rejection cancellation cause agrees with scheduler and archive, and is latched before finalization", async (t) => {
+	const { root, prompt, accounting } = setup(t);
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 2, onSettled: (s) => accounting.terminal(s.archive?.runId, s.id, { status: s.failed ? "failed" : "done", stopReason: s.stopReason, exitCode: s.exitCode }) });
+	const run = accounting.create(identity, "task", prompt);
+	const controller = new AbortController();
+	const first = scheduler.enqueue({ archive: { runId: run.data.runId, sessionFile: run.paths.session }, kind: "recon", model: identity.requestedModel, local: true, task: "task", timeoutMs: 1000, cancelOnAbort: controller.signal,
+		run: (job, signal) => accounting.run(run, job.id, async () => { controller.abort(); throw new Error("runner rejected"); }, signal),
+	});
+	const snapshot = await scheduler.wait(first.id);
+	const metadata = JSON.parse(readFileSync(run.paths.metadata, "utf8"));
+	const ledger = readFileSync(join(root, "usage.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+	assert.equal(snapshot.stopReason, "aborted");
+	assert.equal(metadata.stopReason, snapshot.stopReason);
+	assert.equal(ledger[0].stopReason, snapshot.stopReason);
+	assert.equal(snapshot.answer, "runner rejected");
+
+	const late = accounting.create(identity, "task", prompt);
+	const originalFinish = late.finish.bind(late);
+	let entered!: () => void;
+	let release!: () => void;
+	const reached = new Promise<void>((resolve) => { entered = resolve; });
+	const gate = new Promise<void>((resolve) => { release = resolve; });
+	late.finish = async (outcome) => { entered(); await gate; await originalFinish(outcome); };
+	const abort = new AbortController();
+	const second = scheduler.enqueue({ kind: "recon", model: identity.requestedModel, local: true, task: "late abort", timeoutMs: 1000,
+		cancelOnAbort: abort.signal, run: (job, signal) => accounting.run(late, job.id, async () => { throw new Error("earlier error"); }, signal),
+	});
+	await reached; abort.abort(); release();
+	assert.equal((await scheduler.wait(second.id)).stopReason, "error");
+	assert.equal(JSON.parse(readFileSync(late.paths.metadata, "utf8")).stopReason, "error");
+	const rows = readFileSync(join(root, "usage.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+	assert.deepEqual(rows.map(row => row.stopReason), ["aborted", "error"]);
+	await scheduler.shutdown(); accounting.close();
+});
+
 test("UI errors cannot turn successful work into failure or strand accounting", async (t) => {
 	const { root, prompt, accounting } = setup(t);
 	await accounting.activate("parent-a", { setStatus: () => { throw new Error("UI gone"); }, notify: () => { throw new Error("UI gone"); } });

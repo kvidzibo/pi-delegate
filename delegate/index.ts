@@ -71,7 +71,8 @@ function receiptText(snap: JobSnapshot): string {
 		return `bg ${snap.id} queued${why}\nquietForMs: ${snap.quietForMs ?? 0}\n${wait} jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.`;
 	}
 	if (snap.status === "running") {
-		const lines = [`bg ${snap.id} running`, `quietForMs: ${snap.quietForMs ?? 0}`];
+		const lines = [`${snap.cancellationRequested ? "job" : "bg"} ${snap.id} running`, `quietForMs: ${snap.quietForMs ?? 0}`];
+		if (snap.cancellationRequested) lines.push("Cancellation requested; waiting for child cleanup. Slot still held.");
 		if (snap.resource) lines.push(`resource: ${snap.resource.key} · shared capacity ${snap.resource.capacity} · ${snap.resource.state}`);
 		if (snap.resourceError) lines.push(snap.resourceError);
 		if (snap.finalization?.phase === "requested") lines.push("finalization requested; enforcement not yet acknowledged");
@@ -150,6 +151,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.answer) details.answer = snap.answer;
 	details.terminal = snap.status === "done" || snap.status === "failed";
 	if (snap.quietForMs !== undefined) details.quietForMs = snap.quietForMs;
+	if (snap.cancellationRequested) details.cancellationRequested = true;
 	if (snap.wrapped) details.wrapped = true;
 	if (snap.finalization) details.finalization = copyFinalizationProgress(snap.finalization);
 	if (snap.resource) details.resource = { ...snap.resource };
@@ -486,7 +488,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
 								signal: childSignal, env: process.env,
 								onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
-							})),
+							}), childSignal),
 						});
 					} catch (error) {
 						accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });
@@ -499,7 +501,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							signal,
 							onSnapshot: (next) => publish(next, false, next.status === "queued" || next.status === "running"),
 						});
-						if (snap.status === "queued" || snap.status === "running") {
+						if (!signal?.aborted && (snap.status === "queued" || snap.status === "running")) {
 							snap = scheduler.promoteBackground(snap.id);
 						}
 					}
@@ -535,7 +537,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					details: uiDetails(snap, collect ? {
 						callType: "collect", operation, background: true, pending, ...checkTiming,
 						answer: pending ? snap.answer : text,
-					} : pending ? { background: true, pending: true } : { exitCode, answer: text }),
+					} : pending ? { background: snap.background, pending: true } : { exitCode, answer: text }),
 				});
 			} catch (error) {
 				cards.forget(toolCallId);

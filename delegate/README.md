@@ -51,9 +51,9 @@ An optional `cwd` selects an existing working directory; relative paths resolve 
 | Request wrap-up | `{ "jobId": "d0001", "wrap": true }` |
 | Cancel | `{ "jobId": "d0001", "cancel": true }` |
 
-`timeoutMs` is a wait budget, **not a kill timeout**. Foreground expiry leaves the child running in the background. Each collection starts a fresh quiet interval (60 seconds by default); child events restart it, but an explicit wait budget may return sooner. `quietForMs` still reports actual child inactivity, not time spent waiting. Collect again for the final result; completion notices are previews only.
+`timeoutMs` is a wait budget, **not a kill timeout**. Foreground expiry leaves the child running in the background. Timer arguments and configuration must not exceed 2,147,483,647 ms. Each collection starts a fresh quiet interval (60 seconds by default); child events restart it, but an explicit wait budget may return sooner. `quietForMs` still reports actual child inactivity, not time spent waiting. Collect again for the final result; completion notices are previews only.
 
-**Esc interrupting the parent cancels all its running and queued delegates**, including background jobs and jobs from earlier turns. Pending completion notices are suppressed so they cannot restart the parent after cancellation. Normal parent completion and wait timeouts leave background jobs running; dismissing a menu with Esc is not a parent interrupt.
+**Esc interrupting the parent cancels all its running and queued delegates**, including background jobs and jobs from earlier turns. An interrupted foreground wait is not promoted to background. Until child cleanup finishes, receipts report `cancellationRequested: true`, remain nonterminal, and retain capacity. Pending completion notices are suppressed so they cannot restart the parent after cancellation. Normal parent completion and wait timeouts leave background jobs running; dismissing a menu with Esc is not a parent interrupt.
 
 Wrap is advisory: it asks the child to finish without interrupting its current turn/tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall. Cancel stops the child. The separate `hardTimeoutMs` configuration limits runtime; `0` disables it. Shutdown stops outstanding jobs.
 

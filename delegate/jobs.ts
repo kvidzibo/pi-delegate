@@ -1,4 +1,4 @@
-import { isFailedChildResult, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
+import { isFailedChildResult, MAX_TIMER_MS, normalizeTask, normalizeTimeoutMs } from "../child-runtime/policy.ts";
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
@@ -67,6 +67,7 @@ export type JobSnapshot = {
 	stopReason?: string;
 	stderrTail?: string;
 	background: boolean;
+	cancellationRequested?: boolean;
 	wrapped?: boolean;
 	finalization?: FinalizationProgress;
 	outcome?: ExecutionOutcome;
@@ -208,8 +209,8 @@ export function parseDelegateCall(
 		if (rec.wrap === true) collect.wrap = true;
 		if (rec.cancel === true) collect.cancel = true;
 		if (raw === undefined || raw === null) return collect;
-		if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
-			throw new Error("delegate refused: timeoutMs must be an integer >= 0.");
+		if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0 || raw > MAX_TIMER_MS) {
+			throw new Error(`delegate refused: timeoutMs must be an integer in [0, ${MAX_TIMER_MS}].`);
 		}
 		collect.waitMs = raw;
 		collect.peek = raw === 0;
@@ -343,12 +344,17 @@ export class JobScheduler {
 	}
 
 	async wait(id: string, input: WaitInput = {}): Promise<JobSnapshot> {
+		for (const value of [input.timeoutMs, input.quietMs]) {
+			if (value !== undefined && (!Number.isSafeInteger(value) || value < 0 || value > MAX_TIMER_MS)) {
+				throw new Error(`delegate refused: wait timers must be integers in [0, ${MAX_TIMER_MS}].`);
+			}
+		}
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
 		const peek = input.timeoutMs === 0;
 		const waitStartedAt = Date.now();
 		const snap = this.snapshot(job);
-		this.safeSnapshot(input.onSnapshot, snap);
+		this.safeSnapshot(input.onSnapshot, this.snapshot(job));
 		if (peek || this.terminal(job)) return snap;
 		return new Promise((resolve) => {
 			let settled = false;
@@ -374,7 +380,7 @@ export class JobScheduler {
 			};
 			const onSnap = (next: JobSnapshot): void => {
 				this.safeSnapshot(input.onSnapshot, next);
-				if (next.status === "done" || next.status === "failed") finish();
+				if (this.terminal(job)) finish();
 				else armQuiet();
 			};
 			const onAbort = (): void => {
@@ -405,6 +411,7 @@ export class JobScheduler {
 	promoteBackground(id: string): JobSnapshot {
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
+		if (job.controller.signal.aborted || this.terminal(job)) return this.snapshot(job);
 		job.background = true;
 		this.detachAbort(job);
 		this.notify(job);
@@ -461,7 +468,9 @@ export class JobScheduler {
 			}
 			return;
 		}
+		if (job.controller.signal.aborted) return;
 		job.controller.abort();
+		this.notify(job);
 	}
 
 	/** Stop outstanding work without closing the scheduler to later parent turns. */
@@ -570,10 +579,11 @@ export class JobScheduler {
 			task: job.task,
 			status: job.status,
 			failed,
-			activity: [...job.progress.done],
-			current: job.status === "running" ? job.progress.current : undefined,
+			activity: job.progress.done.map(item => ({ ...item })),
+			current: job.status === "running" && job.progress.current ? { ...job.progress.current } : undefined,
 			background: job.background,
 		};
+		if (job.status === "running" && job.controller.signal.aborted) snap.cancellationRequested = true;
 		if (job.capabilities) snap.capabilities = copyCapabilities(job.capabilities);
 		if (job.resourceGroup) snap.resource = { ...job.resourceGroup,
 			state: job.lease ? "held" : job.status === "queued" ? "waiting" : job.resourceError ? "release-unknown"
@@ -608,10 +618,9 @@ export class JobScheduler {
 	}
 
 	private emit(job: InternalJob): void {
-		const snap = this.snapshot(job);
 		for (const listener of [...job.listeners]) {
 			try {
-				listener(snap);
+				listener(this.snapshot(job));
 			} catch {
 				/* listener errors must not break the scheduler */
 			}
