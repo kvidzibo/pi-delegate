@@ -85,6 +85,12 @@ export class Accounting {
 		return archive.data.recordingError;
 	}
 
+	/** Frozen archive timing, including zero runtime for jobs cancelled before starting. */
+	durationMs(runId: string | undefined): number | undefined {
+		const run = runId ? this.records.get(runId) : undefined;
+		return run?.finishedAt ? run.durationMs : undefined;
+	}
+
 	async report(scope: StatsScope, sessionId: string, rebuild = false): Promise<string> {
 		const loaded = await loadRuns(this.root, { rebuild, activeIds: new Set(this.active.keys()) });
 		const runs = new Map(loaded.runs.map((run) => [run.runId, run]));

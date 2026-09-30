@@ -6,6 +6,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { capabilityContent, describeCapabilities } from "../../delegate/capabilities.ts";
 import { describeOutcome, outcomeContent } from "../../delegate/outcomes.ts";
+import { durationContent } from "../../delegate/display.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
 
@@ -34,7 +35,7 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 			const call = (params: object, onUpdate?: (result: any) => void) => tool.execute(`cap-${index}-${++seq}`, params, undefined, onUpdate, testCtx);
 			const check = (result: any) => {
 				assert.deepEqual(result.details.capabilities, expected);
-				assert.deepEqual(result.content.slice(1), [...capabilityContent(expected), ...outcomeContent(result.details.outcome)]);
+				assert.deepEqual(result.content.slice(1), [...durationContent(result.details.durationMs), ...capabilityContent(expected), ...outcomeContent(result.details.outcome)]);
 				assert.ok(Buffer.byteLength(result.content[1].text) <= 512);
 				assert.equal(result.details.outcome.taskAssessment, "not-performed");
 				assert.ok(result.content.slice(1).every((part: any) => Buffer.byteLength(part.text) <= 512));
@@ -63,7 +64,7 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 						const lines = tool.renderResult(result, { expanded: true, isPartial: false }, theme,
 							{ toolCallId: "preview", state: {}, invalidate() {} }).render(width);
 						assert.ok(lines.every((line: string) => visibleWidth(line) <= width));
-						if (width === 80) { const text = lines.join("\n"); assert.equal(text.match(/Configured capabilities only/g)?.length, 1); assert.match(text, /No filesystem sandbox/); assert.equal(text.match(/Task correctness: not assessed by delegate/g)?.length, 1); }
+						if (width === 80) { const text = lines.join("\n"); assert.equal(text.match(/Configured capabilities only/g)?.length, 1); assert.match(text, /No filesystem sandbox/); assert.equal(text.match(/Duration:/g)?.length, 1); assert.equal(text.match(/Task correctness: not assessed by delegate/g)?.length, 1); }
 					}
 				}
 				const failedOutcome = describeOutcome({ status: "failed", stopReason: "error" });
