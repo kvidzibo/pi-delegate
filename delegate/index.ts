@@ -4,7 +4,7 @@ import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { promptSourceFromDir } from "../child-runtime/spawn.ts";
@@ -33,6 +33,11 @@ import { respondToBusyQuery } from "./busy-guard.ts";
 import { FileCapacityBroker } from "./capacity.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+
+// Validation happens before execute: admit empty placeholders at the schema boundary too.
+const optionalArgument = <T extends TSchema>(schema: T) => Type.Optional(Type.Union([
+	schema, Type.Null(), Type.String({ pattern: "^\\s*$" }),
+], { description: schema.description }));
 
 function agentDir(): string {
 	return typeof getAgentDir === "function" ? getAgentDir() : join(homedir(), ".pi", "agent");
@@ -122,6 +127,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	const details: Record<string, unknown> = {
 		kind: snap.kind,
 		model: snap.model,
+		...(snap.reasoning === undefined ? {} : { reasoning: snap.reasoning }),
 		jobId: snap.id,
 		status: snap.status,
 		activity: [...snap.activity],
@@ -365,30 +371,30 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Local delegate jobs may queue under maxLocalConcurrent; hosted jobs can run independently. Running children retain their slots until they stop.",
 		],
 		parameters: Type.Object({
-			task: Type.Optional(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
-			kind: Type.Optional(Type.String({ description: "recon, implement, review, or oracle. Required to spawn." })),
-			cwd: Type.Optional(
+			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
+			kind: optionalArgument(Type.String({ description: "recon, implement, review, or oracle. Required to spawn." })),
+			cwd: optionalArgument(
 				Type.String({ description: "Child working directory. Relative paths resolve against parent cwd." }),
 			),
-			timeoutMs: Type.Optional(
+			timeoutMs: optionalArgument(
 				Type.Integer({
 					description:
 						"Wait budget, never a kill. Spawn/fg: first wait. jobId: max wait (omit = until done or quiet). 0 with jobId = peek.",
 				}),
 			),
-			model: Type.Optional(
+			model: optionalArgument(
 				Type.String({
 					description: "Override child model. Any Pi model id (provider/id).",
 				}),
 			),
-			background: Type.Optional(
+			background: optionalArgument(
 				Type.Boolean({ description: "Return jobId now; child runs in the background." }),
 			),
-			jobId: Type.Optional(Type.String({ description: "Wait, peek, wrap, or cancel an existing job." })),
-			wrap: Type.Optional(
+			jobId: optionalArgument(Type.String({ description: "Wait, peek, wrap, or cancel an existing job." })),
+			wrap: optionalArgument(
 				Type.Boolean({ description: "With jobId: steer child to wrap up. Does not interrupt the current tool." }),
 			),
-			cancel: Type.Optional(Type.Boolean({ description: "With jobId: abort and kill the child." })),
+			cancel: optionalArgument(Type.Boolean({ description: "With jobId: abort and kill the child." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			let capabilities: CapabilityManifest | undefined;
@@ -400,7 +406,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				assertNotNested(process.env, "delegate");
 				bindUi(ctx);
 				const parsed = parseDelegateCall(params, config);
-				const operation = params.cancel ? "cancel" : params.wrap ? "wrap" : params.timeoutMs === 0 ? "peek" : "wait";
+				const operation = parsed.mode === "collect"
+					? parsed.cancel ? "cancel" : parsed.wrap ? "wrap" : parsed.peek ? "peek" : "wait"
+					: "wait";
 
 				const publish = (snap: JobSnapshot, background: boolean, pending: boolean): void => {
 					updateCard(snap);
@@ -435,7 +443,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const local = isLocalModel(resolved.model);
 					update({
 						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }, ...capabilityContent(capabilities)],
-						details: { kind, model: resolved.model, task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
+						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
 					});
 
 					const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
@@ -458,11 +466,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
 					}, parsed.task, promptPath);
 					origins.set(archive.data.runId, toolCallId);
-					cards.begin(toolCallId, { kind, model: resolved.model, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
+					cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
 					try {
 						snap = scheduler.enqueue({
 							archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
-							kind, model: resolved.model, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
+							kind, model: resolved.model, reasoning: resolved.agent.thinking, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
 							...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
 							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({

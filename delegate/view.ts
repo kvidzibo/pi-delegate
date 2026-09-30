@@ -24,6 +24,7 @@ type CardTheme = ThemeFg & { bg?: (key: CardBackground, text: string) => string 
 type RowInput = { theme: CardTheme; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
 const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
+const effortLabel = (d: CardDetails): string => str(d, "reasoning") ? ` · effort ${displayText(str(d, "reasoning"))}` : "";
 
 function checkDuration(ms: unknown): string | undefined {
 	if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
@@ -125,6 +126,7 @@ export function renderChildCall(input: RowInput): ChildView {
 		if (state.live && !state.collect && !state.pinned) return wrapTextWithAnsi(
 			`${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg("muted", "accepted — card pinned above editor")}`, width);
 		let header = paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
+		header += input.theme.fg("dim", effortLabel(d));
 		if (state.collect) header += ` · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`;
 		const lines = wrapTextWithAnsi(header, width);
 		return state.collect ? lines : paintCard(input.theme, lines, width, cardBackground(state));
@@ -201,7 +203,8 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 	for (const d of state.cards.slice(0, shown)) {
 		const status = statusLine({ details: d, collect: false, live: true, pinned: true, isPartial: true, expanded });
 		const header = [theme.fg("toolTitle", theme.bold("delegate")), theme.fg("accent", displayText(str(d, "jobId"))),
-			theme.fg("accent", displayText(str(d, "kind"))), theme.fg("dim", displayText(str(d, "model")))].join(" · ");
+			theme.fg("accent", displayText(str(d, "kind"))), theme.fg("dim", displayText(str(d, "model")))].join(" · ")
+			+ theme.fg("dim", effortLabel(d));
 		const card = [fit(header)];
 		const statusText = theme.fg(status.color, displayText(status.text));
 		if (cardRows === 2) card.push(fit(statusText));

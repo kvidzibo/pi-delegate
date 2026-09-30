@@ -36,10 +36,11 @@ function widgetHost(onRender: () => void = () => {}, tui?: TUI) {
 }
 
 function checkResourcePresentation() {
-	const job: JobSnapshot = { id: "d0001", kind: "recon", model: "local/model", task: "resource fixture", status: "queued",
+	const job: JobSnapshot = { id: "d0001", kind: "recon", model: "local/model", reasoning: "off", task: "resource fixture", status: "queued",
 		local: true, failed: false, background: true, activity: [], reason: "resource", resource: { key: "same-server", capacity: 1, state: "waiting" } };
 	const board = projectJobBoard([job], { maxLocalConcurrent: 1 })!;
 	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /Queued — waiting for shared resource same-server/);
+	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /effort off/);
 	const warning = renderChildResult({ theme, read: () => ({ details: { status: "done", resourceError: "Lease release not confirmed" },
 		collect: false, live: false, isPartial: false, expanded: false }) });
 	assert.match(warning.render(100).join("\n"), /Lease release not confirmed/);

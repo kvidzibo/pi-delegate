@@ -40,6 +40,8 @@ Example tool arguments:
 }
 ```
 
+Null, empty-string and whitespace-only optional arguments are treated as omitted; `false` and `0` keep their meanings. Spawning still requires non-empty `kind` and `task`.
+
 An optional `cwd` selects an existing working directory; relative paths resolve against the parent's cwd. Use the returned job ID for controls:
 
 | Action | Arguments |
@@ -57,7 +59,7 @@ Wrap is advisory: it asks the child to finish without interrupting its current t
 
 ## Results and history
 
-Collected-result rows show the role, model and job ID. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.
+Live job cards and collected-result rows show the role, model, job ID and configured reasoning effort (including `off`). Historical cards without recorded effort omit it. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.
 
 Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import { parseDelegateCall } from "../../delegate/jobs.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
@@ -33,6 +35,22 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	};
 	const first = make(); await first.handlers.get("session_start")?.({}, testCtx);
 	assert.equal(first.tool.renderShell, "self", "background receipts must not inherit a success-green shell");
+	const callConfig = { maxTaskChars: 20000, defaultTimeoutMs: 1000, maxTimeoutMs: 60000 };
+	const validate = (args: any) => validateToolArguments(first.tool, { type: "toolCall", id: "empty-args", name: "delegate", arguments: args });
+	for (const empty of [null, "", " \t\n"]) {
+		const spawn = { kind: "review", task: "Review", cwd: empty, model: empty, timeoutMs: empty,
+			background: empty, jobId: empty, wrap: empty, cancel: empty };
+		assert.deepEqual(parseDelegateCall(validate(spawn), callConfig), parseDelegateCall({ kind: "review", task: "Review" }, callConfig));
+		const collect = { jobId: "d0001", kind: empty, task: empty, cwd: empty, model: empty,
+			timeoutMs: empty, background: empty, wrap: empty, cancel: empty };
+		assert.deepEqual(parseDelegateCall(validate(collect), callConfig), { mode: "collect", jobId: "d0001", peek: false });
+		assert.throws(() => parseDelegateCall(validate({ kind: "review", task: empty }), callConfig), /task is required/);
+	}
+	assert.deepEqual(parseDelegateCall(validate({ jobId: "d0001", timeoutMs: 0, cancel: false, wrap: false }), callConfig),
+		{ mode: "collect", jobId: "d0001", peek: true, waitMs: 0 });
+	for (const args of [{ background: "nope" }, { timeoutMs: "later" }, { wrap: {} }, { cancel: [] }]) {
+		assert.throws(() => validate({ kind: "review", task: "Review", ...args }));
+	}
 	const rows = new Map<string, any>();
 	const row = (tool: any, id: string, args: object) => {
 		let invalidations = 0;
@@ -75,18 +93,19 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		assert.ok(entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === `throwing-${throwAt}`));
 	}
 	const completedBeforeOriginal = entries.filter((e) => e.customType === CARD_STATE_TYPE).length;
-	const original = await launch(first.tool, "origin");
+	const original = await launch(first.tool, "origin", { cwd: null, timeoutMs: "", jobId: null, wrap: " ", cancel: null });
 	const jobId = original.result.details.jobId;
 	assert.match(original.row.render(), /accepted — card pinned above editor/);
 	assert.doesNotMatch(original.row.render(), /Task:|grok-4.6/, "the full active card belongs in the pinned widget, not a duplicate transcript card");
 	const child = runs.at(-1)!;
+	assert.equal(original.result.details.reasoning, child.input.thinking);
 	child.input.onEvent?.({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "SECRET raw **File/line:** reasoning" } });
 	assert.doesNotMatch(original.row.render(), /SECRET|File\/line/);
 	child.input.onEvent?.({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "cat > /tmp/test.mjs << 'EOF'" } });
 	assert.doesNotMatch(original.row.render(), /executing command/, "live activity must not mutate transcript history");
 	child.input.onEvent?.({ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: true });
 	assert.doesNotMatch(original.row.render(), /test.mjs/);
-	const peekArgs = { jobId, timeoutMs: 0 };
+	const peekArgs = { jobId, timeoutMs: 0, task: null, kind: "", cwd: " ", model: null, background: null, wrap: "", cancel: null };
 	const peekRow = row(first.tool, "peek", peekArgs);
 	const peek = await first.tool.execute("peek", peekArgs, undefined, peekRow.update, testCtx); peekRow.update(peek, false);
 	assert.match(peekRow.render(), /checked · running at check · elapsed \d+s/);
@@ -111,6 +130,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const completed = original.row.render();
 	assert.match(completed, /✓ Worker finished — task unverified/); assert.match(completed, /Review complete/);
 	assert.match(completed, /Task: Review timeout and abort handling/);
+	assert.ok(completed.includes(`effort ${child.input.thinking}`));
 	assert.equal((completed.match(/grok-4.6/g) ?? []).length, 1);
 	assert.doesNotMatch(completed, /Running|\*\*|test.mjs|Last detail/);
 	original.row.context.expanded = true;
@@ -128,6 +148,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const restored = make(); await restored.handlers.get("session_start")?.({}, testCtx);
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
 	assert.match(oldRow.render(), /✓ Worker finished — task unverified/); assert.doesNotMatch(oldRow.render(), /Running/);
+	assert.ok(oldRow.render().includes(`effort ${child.input.thinking}`));
 	for (const id of ["seed-1", "seed-2"]) {
 		const seed = await launch(restored.tool, id);
 		runs.at(-1)!.resolve(success);
@@ -143,7 +164,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
 	assert.match(next.row.render(), /Cancelled/);
 	const receipt = cancelledRow.render(160);
-	assert.ok(receipt.includes(`delegate · recon · ${local.model} · ${jobId} · cancelled`));
+	assert.ok(receipt.includes(`delegate · recon · ${local.model} · ${jobId} · effort ${cancelled.details.reasoning} · cancelled`));
 	assert.equal(receipt.split(local.model).length - 1, 1, "show the actual model once, not a role default or duplicate alias");
 	assert.match(receipt, /Task: Review timeout and abort handling/);
 	assert.match(receipt, /Last recorded tool: ✓ read\s+delegate\/jobs.ts/);

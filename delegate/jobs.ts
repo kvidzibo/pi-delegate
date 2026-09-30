@@ -52,6 +52,7 @@ export type JobSnapshot = {
 	id: string;
 	kind: Kind;
 	model: string;
+	reasoning?: string;
 	local: boolean;
 	task: string;
 	status: JobStatus;
@@ -81,6 +82,7 @@ export type EnqueueInput = {
 	capabilities?: CapabilityManifest;
 	kind: Kind;
 	model: string;
+	reasoning?: string;
 	local: boolean;
 	task: string;
 	timeoutMs: number;
@@ -131,6 +133,7 @@ type InternalJob = {
 	id: string;
 	kind: Kind;
 	model: string;
+	reasoning?: string;
 	local: boolean;
 	task: string;
 	timeoutMs: number;
@@ -175,7 +178,10 @@ export function parseDelegateCall(
 	params: unknown,
 	config: { maxTaskChars: number; defaultTimeoutMs: number; maxTimeoutMs: number },
 ): ParsedCall {
-	const rec = asRecord(params);
+	// Some providers fill unused optional fields with null or blank strings.
+	const rec = Object.fromEntries(Object.entries(asRecord(params)).filter(([, value]) =>
+		value !== null && !(typeof value === "string" && value.trim() === "")));
+
 	if (rec.background !== undefined && rec.background !== true && rec.background !== false) {
 		throw new Error("delegate refused: background must be boolean.");
 	}
@@ -276,6 +282,7 @@ export class JobScheduler {
 			id: `d${this.seq.toString(16).padStart(4, "0")}`,
 			kind: input.kind,
 			model: input.model,
+			reasoning: input.reasoning,
 			local: input.local,
 			task: input.task,
 			timeoutMs: input.timeoutMs,
@@ -558,6 +565,7 @@ export class JobScheduler {
 			id: job.id,
 			kind: job.kind,
 			model: job.model,
+			...(job.reasoning === undefined ? {} : { reasoning: job.reasoning }),
 			local: job.local,
 			task: job.task,
 			status: job.status,
