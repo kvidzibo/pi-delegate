@@ -10,14 +10,14 @@ export interface DelegateOption {
 /** Optional extensions contribute options without registering additional slash commands. */
 export const OPTIONS_EVENT = "pi-delegate:options";
 
-export function registerDelegateCommand(pi: ExtensionAPI, defaults: DelegateOption[]): void {
+export function registerDelegateCommand(pi: ExtensionAPI, defaults: DelegateOption[], signal?: AbortSignal): void {
 	const options = () => {
 		const result = [...defaults];
 		pi.events.emit(OPTIONS_EVENT, result);
 		return result;
 	};
 	pi.registerCommand("pi-delegate", {
-		description: "Delegate settings and usage: models, stats.",
+		description: "Delegate jobs, settings and usage: jobs, models, stats.",
 		getArgumentCompletions: (prefix) => {
 			const entries = options();
 			const match = prefix.trimStart().match(/^(\S+)\s+(.*)$/s);
@@ -27,18 +27,21 @@ export function registerDelegateCommand(pi: ExtensionAPI, defaults: DelegateOpti
 				.map(option => ({ value: option.name, label: `${option.name} — ${option.description}` }));
 		},
 		handler: async (args, ctx) => {
+			if (signal?.aborted) return;
 			const entries = options();
 			const input = args.trim();
 			const name = input.match(/^\S+/)?.[0];
 			const rest = name ? input.slice(name.length).trim() : "";
 			if (!name && ctx.hasUI) {
-				while (true) {
-					const choice = await ctx.ui.select("pi-delegate", entries.map(option => option.name));
-					if (choice === undefined) return;
-					const option = entries.find(option => option.name === choice);
+				while (!signal?.aborted) {
+					const labels = entries.map(option => `${option.name} — ${option.description}`);
+					const choice = await ctx.ui.select("pi-delegate", labels, { signal });
+					if (choice === undefined || signal?.aborted) return;
+					const option = entries[labels.indexOf(choice)] ?? entries.find(option => option.name === choice);
 					if (!option) return;
 					await option.handler("", ctx);
 				}
+				return;
 			}
 			const option = entries.find(option => option.name === name);
 			if (!option) {

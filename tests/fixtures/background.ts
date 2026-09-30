@@ -52,9 +52,9 @@ export function backgroundProbe() {
 		[{ live: true, pinned: true }, { status: "running" }, "toolPendingBg"],
 		[{ live: true, pinned: true }, { status: "queued", reason: "gpu" }, "toolPendingBg"],
 		[{ isPartial: false }, { status: "running", historical: true }, "toolPendingBg"],
-		[{ isPartial: false }, { status: "done" }, "toolSuccessBg"],
-		[{ isPartial: false }, {}, "toolSuccessBg"],
-		[{ isPartial: false }, { status: "failed", stopReason: "aborted" }, "toolErrorBg"],
+		[{ isPartial: false }, { status: "done" }, "toolPendingBg"],
+		[{ isPartial: false }, {}, "toolPendingBg"],
+		[{ isPartial: false }, { status: "failed", stopReason: "aborted" }, "toolPendingBg"],
 		[{ isPartial: false, isError: true }, {}, "toolErrorBg"],
 		[{ isPartial: false }, { ok: false }, "toolErrorBg"],
 	];
@@ -103,7 +103,7 @@ export function backgroundProbe() {
 	theme.palette = { toolPendingBg: 254, toolSuccessBg: 194, toolErrorBg: 224 };
 	call.invalidate(); result.invalidate();
 	assert.notDeepEqual(call.render(80), before);
-	assertBackground([...call.render(80), ...result.render(80)], 80, 194);
+	assertBackground([...call.render(80), ...result.render(80)], 80, 254);
 	assertBackground(renderJobBoard(board, 80, 8, theme, false, "").slice(0, -1), 80, 254);
 	return { fullWidth: true, statusColors: true, neutralReceipts: true, themeChanges: true, plainRpc: true };
 }

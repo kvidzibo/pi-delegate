@@ -6,19 +6,20 @@ import { OPTIONS_EVENT, registerDelegateCommand } from "../command.ts";
 test("single delegate command routes menu choices, arguments and optional entries without legacy commands", async () => {
 	const commands = new Map<string, any>();
 	const events = new EventEmitter();
+	const lifetime = new AbortController();
 	const calls: string[] = [], notices: string[] = [];
 	const option = (name: string) => ({ name, description: name,
 		handler: async (args: string) => { calls.push(`${name}:${args}`); } });
 	registerDelegateCommand({ events, registerCommand: (name: string, command: unknown) => commands.set(name, command) } as any,
-		[option("models"), { ...option("stats"), complete: prefix => ["session", "today", "all", "rebuild"].filter(value => value.startsWith(prefix)) }]);
+		[option("models"), { ...option("stats"), complete: prefix => ["session", "today", "all", "rebuild"].filter(value => value.startsWith(prefix)) }], lifetime.signal);
 	assert.deepEqual([...commands.keys()], ["pi-delegate"]);
 	const command = commands.get("pi-delegate");
-	const choices: Array<string | undefined> = ["models", "stats", undefined];
+	const choices: Array<string | undefined> = ["models — models", "stats — stats", undefined];
 	let menuVisits = 0;
 	const ctx: any = { hasUI: true, ui: {
 		select: async (title: string, options: string[]) => {
 			menuVisits++;
-			assert.equal(title, "pi-delegate"); assert.deepEqual(options, ["models", "stats"]); return choices.shift();
+			assert.equal(title, "pi-delegate"); assert.deepEqual(options, ["models — models", "stats — stats"]); return choices.shift();
 		},
 		notify: (text: string) => notices.push(text),
 	} };
@@ -39,4 +40,8 @@ test("single delegate command routes menu choices, arguments and optional entrie
 	assert.deepEqual(complete("c"), ["calibrate"]);
 	await command.handler('calibrate {"budgetUsd":1}', ctx);
 	assert.equal(calls.at(-1), 'calibrate:{"budgetUsd":1}');
+	events.on(OPTIONS_EVENT, options => options.push({ name: "stop", description: "shutdown", handler: async () => lifetime.abort() }));
+	let shutdownMenus = 0;
+	await command.handler("", { ...ctx, ui: { ...ctx.ui, select: async () => { shutdownMenus++; return "stop — shutdown"; } } });
+	assert.equal(shutdownMenus, 1, "shutdown must not reopen the parent menu");
 });

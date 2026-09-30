@@ -21,6 +21,7 @@ import { runChild } from "./spawn.ts";
 import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
+import { showJobs } from "./jobs-view.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
@@ -304,6 +305,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
+	const dialogs = new AbortController();
 	registerDelegateCommand(pi, [{
 		name: "models",
 		description: "Choose role models and reasoning levels",
@@ -318,9 +320,20 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				ctx.ui.notify("Usage: /pi-delegate stats [session|today|all|rebuild]", "warning"); return;
 			}
 			const report = await accounting.report(scope === "rebuild" ? "all" : scope, ctx.sessionManager.getSessionId(), scope === "rebuild");
-			await showStats(ctx, report);
+			await showStats(ctx, report, {
+				scope: scope === "rebuild" ? "all" : scope,
+				signal: dialogs.signal,
+				load: next => accounting.report(next, ctx.sessionManager.getSessionId()),
+			});
 		},
-	}]);
+	}, {
+		name: "jobs",
+		description: "Browse active and queued delegates",
+		handler: async (args, ctx) => {
+			if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate jobs", "warning"); return; }
+			await showJobs(ctx, () => projectJobBoard(scheduler.active(), { maxLocalConcurrent: config.maxLocalConcurrent }), dialogs.signal);
+		},
+	}], dialogs.signal);
 	// Pi ignores isError on execute() return values. Keep our structured details
 	// and mark failed results through the supported result-event hook instead.
 	pi.on("tool_result", (event) => {
@@ -330,6 +343,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		dialogs.abort();
 		busyUnsubscribe?.();
 		busyUnsubscribe = undefined;
 		detachParentAbort();

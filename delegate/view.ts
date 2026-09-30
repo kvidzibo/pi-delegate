@@ -1,6 +1,6 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { activityLabel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
+import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
 import { isLocalModel } from "./tg.ts";
@@ -49,9 +49,10 @@ function statusLine(state: RowState): { color: string; text: string } {
 	const d = state.details;
 	if (state.isError || d.ok === false || d.status === "failed") {
 		const reason = str(d, "stopReason");
-		return { color: "error", text: reason === "aborted" ? "✗ Cancelled" : `✗ Failed${reason ? ` — ${reason}` : ""}` };
+		return reason === "aborted" ? { color: "muted", text: "○ Cancelled" }
+			: { color: "error", text: `✗ Failed${reason ? ` — ${reason}` : ""}` };
 	}
-	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "success", text: "✓ Worker finished — task unverified" };
+	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "muted", text: "○ Worker finished — task unverified" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
 	if (d.status === "queued") {
@@ -67,6 +68,14 @@ function statusLine(state: RowState): { color: string; text: string } {
 		return { color: "accent", text: `● Running — ${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	return { color: "muted", text: "○ Preparing" };
+}
+
+function compactHeader(theme: ThemeFg, d: CardDetails, state: RowState): string {
+	const status = statusLine(state);
+	const label = status.text.includes("Worker finished") ? "○ Finished · unverified" : status.text.split(" — ")[0];
+	return [theme.fg("toolTitle", theme.bold(displayText(str(d, "jobId")) || "delegate")),
+		theme.fg("accent", displayText(str(d, "kind")) || "…"), theme.fg(status.color, label),
+		theme.fg("dim", displayText(aliasForModel(str(d, "model"))))].join(" · ");
 }
 
 function cardBackground(state: RowState): CardBackground {
@@ -119,9 +128,10 @@ export function renderChildCall(input: RowInput): ChildView {
 		const state = input.read(); const d = state.details;
 		if (state.live && !state.collect && !state.pinned) return wrapTextWithAnsi(
 			`${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg("muted", "accepted — card pinned above editor")}`, width);
-		let header = paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId")));
-		header += input.theme.fg("dim", effortLabel(d));
-		if (state.collect) header += ` · ${input.theme.fg(state.isError || d.ok === false || d.status === "failed" ? "error" : "muted", receipt(state))}`;
+		let header = state.expanded
+			? paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + input.theme.fg("dim", effortLabel(d))
+			: compactHeader(input.theme, d, state);
+		if (state.collect) header += ` · ${input.theme.fg(statusLine(state).color === "error" ? "error" : "muted", receipt(state))}`;
 		const lines = wrapTextWithAnsi(header, width);
 		return state.collect ? lines : paintCard(input.theme, lines, width, cardBackground(state));
 	});
@@ -133,6 +143,7 @@ export function renderChildResult(input: RowInput): ChildView {
 		const text = cardText(theme, d, state.expanded, width);
 		if (state.live && !state.collect && !state.pinned) return state.expanded && text.session ? wrapTextWithAnsi(text.session, width) : [];
 		const lines: string[] = [];
+		let hiddenResultLines = 0;
 		const add = (text: string, color?: string) => lines.push(...wrapTextWithAnsi(color ? theme.fg(color, text) : text, width));
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
@@ -159,10 +170,11 @@ export function renderChildResult(input: RowInput): ChildView {
 			const rendered = new Markdown(cleanBlock(answer), 0, 0, getMarkdownTheme()).render(width);
 			while (rendered.length && !rendered[0].trim()) rendered.shift();
 			while (rendered.length && !rendered.at(-1)!.trim()) rendered.pop();
+			hiddenResultLines = state.expanded ? 0 : Math.max(0, rendered.length - 3);
 			lines.push(...(state.expanded ? rendered : rendered.slice(0, 3)));
 		}
 		if (state.expanded) {
-			if (state.collect || !state.live) {
+			if (state.collect || !state.live || state.pinned) {
 				if (text.activity.length) { add("Recent tools (up to 3):", "muted"); for (const item of text.activity) add(item); }
 				if (!d.historical && pending && text.current) add(text.current);
 			}
@@ -171,7 +183,7 @@ export function renderChildResult(input: RowInput): ChildView {
 		} else {
 			const latest = failed ? text.activity.at(-1) : undefined;
 			if (latest) lines.push(truncateToWidth(`Last recorded tool: ${latest}`, width, "…"));
-			if (!state.collect || failed) add(input.expandHint || "Expand for full result and tool details", "dim");
+			if (!state.collect || failed) add(`${hiddenResultLines ? `+${hiddenResultLines} more lines · ` : ""}${input.expandHint || keyHint("app.tools.expand", "full result and tool details")}`, "dim");
 		}
 		return state.collect ? lines : paintCard(theme, lines, width, cardBackground(state));
 	});
@@ -198,9 +210,10 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 	const fit = (text: string) => truncateToWidth(text, width, "…");
 	for (const d of state.cards.slice(0, shown)) {
 		const status = statusLine({ details: d, collect: false, live: true, pinned: true, isPartial: true, expanded });
-		const header = [theme.fg("toolTitle", theme.bold("delegate")), theme.fg("accent", displayText(str(d, "jobId"))),
-			theme.fg("accent", displayText(str(d, "kind"))), theme.fg("dim", displayText(str(d, "model")))].join(" · ")
-			+ theme.fg("dim", effortLabel(d));
+		const row = { details: d, collect: false, live: true, pinned: true, isPartial: true, expanded };
+		const header = expanded
+			? paintHeader(theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + theme.fg("dim", effortLabel(d))
+			: compactHeader(theme, d, row);
 		const card = [fit(header)];
 		const statusText = theme.fg(status.color, displayText(status.text));
 		if (cardRows === 2) card.push(fit(statusText));
@@ -218,8 +231,9 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 	}
 	if (footerRows) {
 		const hidden = state.cards.length - shown;
-		const more = hidden ? `+${hidden} more (${state.cards.slice(shown).map((d) => displayText(str(d, "jobId"))).join(", ")}) · ` : "";
-		lines.push(fit(theme.fg("dim", `${more}${state.summary}${expandHint ? ` · ${expandHint}` : ""}`)));
+		const more = hidden ? `+${hidden} more · ` : "";
+		const ids = hidden && expanded ? ` · ${state.cards.slice(shown).map(d => displayText(str(d, "jobId"))).join(", ")}` : "";
+		lines.push(fit(theme.fg("dim", `${more}/pi-delegate jobs · ${state.summary}${expandHint ? ` · ${expandHint}` : ""}${ids}`)));
 	}
 	// Width truncation emits SGR resets even with a plain theme; keep RPC text ANSI-free.
 	return theme.bg ? lines : lines.map(stripTerminalSequences);
