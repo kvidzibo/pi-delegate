@@ -41,6 +41,8 @@ Description must say: named agents, model from config, no nesting.
 | `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
 | `cancel` | no | with `jobId`: abort + kill. Idempotent if already terminal |
 
+Schema validation accepts null and blank-string placeholders for optional fields. Normalize them to omission before mode/conflict checks; preserve `false` and `0`. Spawn still requires non-empty task/kind. Reject other invalid types.
+
 No model allowlist. No fallback chain.
 
 `maxConcurrent` = max running children (local + hosted).  
@@ -71,7 +73,7 @@ Observe the current parent run's `ctx.signal` at `agent_start`, replacing earlie
 
 Background completion notice (interactive TUI/RPC only): after the final snapshot, hold ~200ms. If the parent agent is still running (`ctx.isIdle()` false), keep holding — do not `sendMessage` yet. `sendMessage` queues a follow-up that collect cannot unsend. Once idle and not consumed, `pi.sendMessage` `{ deliverAs: "followUp", triggerTurn: true }`. Preview only; `jobId` remains the full result. Success `display: false`; failure `display: true`. Print/JSON stays pull-only. At most one notice per job. Collecting a terminal snapshot cancels it, including mid-turn collect after the job already finished.
 
-One full card per launch, keyed by original tool-call ID, not the reusable short job ID. While active, pin the full card above the editor with header `delegate · <jobId> · <kind> · <model id>` (model once), task, live status and latest tool action. The transcript contains only a stable `accepted — card pinned above editor` receipt; expanding it may show the native session path, not a duplicate card. At terminal completion, remove the pinned card and finalize the original transcript row as `delegate · <kind> · <model id> · <jobId>` plus task/status/result. Do not stream activity in transcript rows. Generic activity and optional local `tg n/s` belong in pinned cards, never raw thinking fragments. Child command failures do not set the overall job status. No success-green host shell around a still-running background receipt.
+One full card per launch, keyed by original tool-call ID, not the reusable short job ID. While active, pin the full card above the editor with header `delegate · <jobId> · <kind> · <model id> · effort <level>` (model once), task, live status and latest tool action. The transcript contains only a stable `accepted — card pinned above editor` receipt; expanding it may show the native session path, not a duplicate card. At terminal completion, remove the pinned card and finalize the original transcript row as `delegate · <kind> · <model id> · <jobId> · effort <level>` plus task/status/result. Snapshot the configured reasoning level at enqueue, including `off`; carry it through receipts and persisted cards. Omit effort for legacy cards without that metadata. Do not stream activity in transcript rows. Generic activity and optional local `tg n/s` belong in pinned cards, never raw thinking fragments. Child command failures do not set the overall job status. No success-green host shell around a still-running background receipt.
 
 Freeze the origin snapshot after acceptance: suppressing invalidation alone is insufficient because unrelated repaints read the snapshot again. Detach current-tool objects, activity arrays and their items on update, read and history restoration so callers cannot mutate stored cards. Finalize and invalidate the origin row once at terminal completion, even after a background return or foreground timeout without collect. This avoids repeated screen/scrollback resets when live cards move above Pi's regular-mode viewport; completion may still cause one redraw. Release row callbacks on terminal/shutdown; observer failures must not affect child outcomes or accounting. Both render slots read shared result state at render time (Pi invokes renderCall before renderResult). Keep the first report text block unchanged; configured-capability and outcome data each use a separate bounded block.
 
@@ -84,7 +86,7 @@ Persist terminal UI details once in `delegate-job-state` custom entries, exclude
 Pinned full-card stack while jobs are queued or running:
 
 ```
-delegate · d0001 · review · hosted/model
+delegate · d0001 · review · hosted/model · effort high
 Task: Review timeout and abort handling
 ● Running — reading file
 → read  delegate/jobs.ts
