@@ -93,6 +93,12 @@ test("all delegate return paths preserve results, promotion, parent interruption
 	});
 });
 
+test("jobs and stats overlays browse full details and handle scope loading safely", async () => {
+	assert.deepEqual((await runPiProbe("delegate-ux-probe")).result, {
+		jobs: true, navigation: true, scopes: true, staleLoads: true, retry: true, disposal: true, noModelCalls: true,
+	});
+});
+
 test("job cards finalize without collection, restore safely and render compact receipts", async () => {
 	assert.deepEqual((await runPiProbe("delegate-card-probe")).result, {
 		liveCard: true, receipts: true, previews: true, restoration: true, cancellation: true, emptyFailures: true, noModelCalls: true,

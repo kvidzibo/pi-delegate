@@ -70,7 +70,7 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		assert.ok(notices.at(-1)?.includes("Prompt/output ratios 0.500/0.500"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore);
 		await handlers.get("session_start")!({}, testCtx); assert.match(statuses.at(-1)!, /^⑂ 220\|100%\|~<\$0.001$/);
-		await handlers.get("session_shutdown")!();
+		const stopDelegate = handlers.get("session_shutdown")!;
 		const benchCommands: string[] = [];
 		benchmark({ ...api, registerCommand: (name: string) => benchCommands.push(name) } as ExtensionAPI);
 		assert.deepEqual(benchCommands, []);
@@ -79,6 +79,7 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		await command.handler("calibrate-cancel", testCtx);
 		assert.equal(notices.at(-1), "No benchmark running");
 		await handlers.get("session_shutdown")!();
+		await stopDelegate();
 		assert.deepEqual(command.getArgumentCompletions("calibrate"), []);
 		return { calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true };
 	} finally {

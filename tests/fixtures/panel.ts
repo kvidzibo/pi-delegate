@@ -40,7 +40,8 @@ function checkResourcePresentation() {
 		local: true, failed: false, background: true, activity: [], reason: "resource", resource: { key: "same-server", capacity: 1, state: "waiting" } };
 	const board = projectJobBoard([job], { maxLocalConcurrent: 1 })!;
 	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /Queued — waiting for shared resource same-server/);
-	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /effort off/);
+	assert.doesNotMatch(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /effort off/);
+	assert.match(renderJobBoard(board, 100, 12, theme, true, "").join("\n"), /effort off/);
 	const warning = renderChildResult({ theme, read: () => ({ details: { status: "done", resourceError: "Lease release not confirmed" },
 		collect: false, live: false, isPartial: false, expanded: false }) });
 	assert.match(warning.render(100).join("\n"), /Lease release not confirmed/);
@@ -148,7 +149,7 @@ function checkFullCardAnchoring() {
 	try {
 		board.paint(host.ui, "tui", state());
 		const initial = frame(); assert.equal(initial.cardLines.length, 5);
-		assert.match(initial.cardLines.join("\n"), /review · hosted\/reviewer/);
+		assert.match(initial.cardLines.join("\n"), /d0001 · review · ● Running · reviewer/);
 		assert.match(initial.cardLines.join("\n"), /Task: Review card layout/);
 		for (let count = 2; count <= 60; count++) {
 			transcript.setText(Array.from({ length: count }, (_, i) => `parent ${i}`).join("\n"));
@@ -261,9 +262,9 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		const first = await launch("first"); const queued = await launch("queued");
 		assert.match(host.render(300).join("\n"), /Task: Read a file/, "the full active card, not only a status strip, must live in the pinned widget");
 		assert.doesNotMatch(first.render(100).join("\n"), /Task:|local-qwen38/, "the active transcript must not duplicate the pinned card");
-		assert.match(host.render(300).join("\n"), /delegate · d0002 · recon · local-qwen38/);
+		assert.match(host.render(300).join("\n"), /d0002 · recon · ○ Queued · Qwen/);
 		assert.match(host.render(300).join("\n"), /Queued — waiting for GPU/);
-		assert.equal((host.render(300).join("\n").match(/qwen38-q4km/g) ?? []).length, 2, "model once per pinned card");
+		assert.equal((host.render(300).join("\n").match(/Qwen/g) ?? []).length, 2, "model alias once per compact pinned card");
 		const frame = () => { writes.length = 0; tui.renderNow(); };
 		const noReset = () => assert.ok(!writes.join("").includes("\x1b[3J"), "live activity must not clear scrollback");
 		frame();
@@ -293,7 +294,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		const queuedBefore = queued.render(100); const queuedInvalidations = queued.invalidations();
 		firstRun.resolve({ text: "Done reading", exitCode: 0, stderrTail: "" });
 		for (let i = 0; i < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "first"); i++) await new Promise((r) => setTimeout(r, 5));
-		assert.match(first.render(100).join("\n"), /✓ Worker finished — task unverified/);
+		assert.match(first.render(100).join("\n"), /○ Worker finished — task unverified/);
 		assert.doesNotMatch(host.render(300).join("\n"), /d0001|Done reading/, "completed cards leave the dock and stay in the transcript");
 		assert.equal(runs.length, 2, "the queued child starts without collecting its predecessor");
 		assert.deepEqual(queued.render(100), queuedBefore); assert.equal(queued.invalidations(), queuedInvalidations);
