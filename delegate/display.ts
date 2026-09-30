@@ -42,6 +42,19 @@ export function delegateTargetLine(kind: string | undefined, model: string | und
 	return `[delegate ${formatDelegateTarget(kind, model)}]`;
 }
 
+export function formatDuration(ms: unknown): string | undefined {
+	if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
+	const seconds = Math.floor(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
+}
+
+export function durationContent(durationMs: unknown): Array<{ type: "text"; text: string }> {
+	const duration = formatDuration(durationMs);
+	return duration === undefined ? [] : [{ type: "text", text: `Duration: ${duration}\ndurationMs: ${durationMs}` }];
+}
+
 export function clipActivityArg(raw: string, max = ACTIVITY_ARG_MAX): string {
 	const compact = raw.replace(/\s+/g, " ").trim();
 	if (compact.length <= max) return compact;

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
-import { delegateTargetLine } from "../../delegate/display.ts";
+import { delegateTargetLine, formatDuration } from "../../delegate/display.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import { NOTIFY_HOLD_MS } from "../../delegate/notify.ts";
 import { truncateOutput } from "../../child-runtime/policy.ts";
@@ -39,13 +41,13 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	let tool: any, busy = true;
 	const handlers = new Map<string, Function>();
 	const entries: any[] = [], notices: any[] = [];
-	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void }> = [];
+	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void; reject: (error: Error) => void }> = [];
 	delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
 		on: (name: string, handler: Function) => handlers.set(name, handler),
 		appendEntry: (customType: string, data: any) => entries.push({ customType, data }),
 		sendMessage: (message: any) => notices.push(message),
-	} as unknown as ExtensionAPI, (input) => new Promise((resolve) => {
-		runs.push({ input, resolve });
+	} as unknown as ExtensionAPI, (input) => new Promise((resolve, reject) => {
+		runs.push({ input, resolve, reject });
 		input.signal?.addEventListener("abort", () => resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
 	}));
 	const testCtx: any = { ...ctx, hasUI: true, isIdle: () => !busy,
@@ -55,8 +57,24 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	const model = "xai/grok-4.6";
 	const success: ChildResult = { text: "Complete answer", model, exitCode: 0, stderrTail: "" };
 	let seq = 0;
-	const call = (params: object, signal?: AbortSignal, onUpdate?: (result: any) => void) =>
-		tool.execute(`result-${++seq}`, params, signal, onUpdate, testCtx);
+	assert.equal(formatDuration(276000), "4m 36s");
+	const durations = new Map<string, number>();
+	const call = async (params: object, signal?: AbortSignal, onUpdate?: (result: any) => void) => {
+		const result = await tool.execute(`result-${++seq}`, params, signal, onUpdate, testCtx);
+		if (result.details.terminal) {
+			const { durationMs, runId, sessionFile } = result.details;
+			assert.ok(Number.isFinite(durationMs) && durationMs >= 0);
+			const metadata = JSON.parse(readFileSync(join(dirname(sessionFile), "metadata.json"), "utf8"));
+			assert.equal(durationMs, metadata.durationMs, "result timing must match the archive");
+			if (!metadata.startedAt) assert.equal(durationMs, 0);
+			if (durations.has(runId)) assert.equal(durationMs, durations.get(runId), "collection cannot increase duration");
+			durations.set(runId, durationMs);
+			assert.ok(result.content.some((part: any) => part.text === `Duration: ${formatDuration(durationMs)}\ndurationMs: ${durationMs}`));
+		} else {
+			assert.equal(result.details.durationMs, undefined);
+		}
+		return result;
+	};
 	const launch = (options: object = {}, signal?: AbortSignal) => call({ kind: "review", model, task: "Mock result contract", background: true, ...options }, signal);
 	const pending = (result: any, status: string, callType: string, operation?: string) => {
 		assert.equal(result.details.ok, true);
@@ -119,6 +137,14 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				assert.equal(entries.filter(e => e.customType === CARD_STATE_TYPE && e.data.runId === result.details.runId).length, 1);
 			}
 		}
+
+		const rejected = await launch();
+		runs.at(-1)!.reject(new Error("Runner failed"));
+		const rejectedResult = await call({ jobId: rejected.details.jobId });
+		assert.equal(rejectedResult.details.status, "failed");
+		assert.match(rejectedResult.content[0].text, /Runner failed/);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		await call({ jobId: rejected.details.jobId, timeoutMs: 0 });
 
 		const earlyAbort = new AbortController(); earlyAbort.abort();
 		const beforeAbort = runs.length;

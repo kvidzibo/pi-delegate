@@ -12,6 +12,7 @@ import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { loadDelegateConfig, resolveAgent, type Kind } from "./config.ts";
 import {
 	delegateTargetLine,
+	durationContent,
 	knownKind,
 } from "./display.ts";
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
@@ -115,6 +116,7 @@ function formatOutput(input: {
 				type: "text" as const,
 				text: input.failed ? `delegate failed (${input.stopReason || input.exitCode}): ${body}` : body,
 			},
+			...durationContent(input.details.durationMs),
 			...capabilityContent(input.details.capabilities),
 			...outcomeContent(input.details.outcome),
 		],
@@ -174,6 +176,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const uiDetails = (snap: JobSnapshot, extra: CardDetails = {}): CardDetails => detailsFromSnap(snap, {
 		originToolCallId: snap.archive ? origins.get(snap.archive.runId) : undefined,
 		background: snap.background, callType: "spawn", ...extra,
+		...((snap.status === "done" || snap.status === "failed") ? { durationMs: accounting.durationMs(snap.archive?.runId) } : {}),
 	});
 	const updateCard = (snap: JobSnapshot): void => {
 		const origin = snap.archive ? origins.get(snap.archive.runId) : undefined;
@@ -369,6 +372,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Before delegate cancel:true for a suspected stall, fetch and inspect a fresh jobId/timeoutMs:0 snapshot in a separate call. Cancel only if post-wrap checks still show a stall; explicit user stop or unsafe/out-of-scope work may cancel immediately.",
 			"delegate wrap:true is advisory steering, not an interrupt or delivery acknowledgement. cancel:true aborts and kills.",
 			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",
+			"Use recorded delegate durationMs and Duration as authoritative elapsed timing; recover missing timing from archived metadata.json. Use Unknown only when timing cannot be recovered.",
 			"Local delegate jobs may queue under maxLocalConcurrent; hosted jobs can run independently. Running children retain their slots until they stop.",
 		],
 		parameters: Type.Object({

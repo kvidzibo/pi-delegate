@@ -40,6 +40,8 @@ Do not edit files. Collect the result when it finishes.
 
 The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor; finished results appear in the transcript. Job cards show the configured reasoning effort. **Ctrl+O** expands details.
 
+Completed results expose `durationMs` and readable `Duration` (for example, `4m 36s`). Timing matches the run's archived `metadata.json`, excludes queue wait, and is zero if cancelled before starting. Use archived timing when a result is unavailable; use “Unknown” only when timing cannot be recovered.
+
 Check receipts freeze elapsed runtime (or queue time) and the interval since the previous returned check; the first check omits the interval.
 
 See [configuration and job controls](delegate/README.md) for manual settings and tool arguments.

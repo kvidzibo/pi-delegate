@@ -1,6 +1,6 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { activityLabel, asActivityItem, asActivityList, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
+import { activityLabel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
 import { isLocalModel } from "./tg.ts";
@@ -26,14 +26,6 @@ const str = (details: CardDetails, key: string): string => typeof details[key] =
 const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
 const effortLabel = (d: CardDetails): string => str(d, "reasoning") ? ` · effort ${displayText(str(d, "reasoning"))}` : "";
 
-function checkDuration(ms: unknown): string | undefined {
-	if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
-}
-
 function receipt(state: RowState): string {
 	const d = state.details;
 	if (state.isError || d.ok === false || d.status === "failed") {
@@ -46,8 +38,8 @@ function receipt(state: RowState): string {
 	if (action === "cancel") return "cancellation requested";
 	if (action === "wrap") return "wrap requested";
 	const status = d.status === "queued" ? "checked · queued at check" : d.status === "running" ? "checked · running at check" : "checked";
-	const elapsed = checkDuration(d.elapsedMs);
-	const previous = checkDuration(d.sincePreviousCheckMs);
+	const elapsed = formatDuration(d.elapsedMs);
+	const previous = formatDuration(d.sincePreviousCheckMs);
 	return status + (elapsed ? ` · ${d.status === "queued" ? "queued for" : "elapsed"} ${elapsed}` : "")
 		+ (previous ? ` · since previous check ${previous}` : "");
 }
@@ -147,11 +139,13 @@ export function renderChildResult(input: RowInput): ChildView {
 		if (!state.collect) {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
+		const duration = !pending ? formatDuration(d.durationMs) : undefined;
+		if (duration !== undefined) add(`Duration: ${duration}`, "dim");
 		for (const warning of text.warnings) add(warning);
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
 		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
-		const footers = new Set(dataBlocks.map(block => block.text));
+		const footers = new Set([...durationContent(d.durationMs), ...dataBlocks].map(block => block.text));
 		while (textParts.length > 1 && footers.delete(textParts.at(-1)!)) textParts.pop();
 		const contentText = textParts.join("\n");
 		const answer = failed
