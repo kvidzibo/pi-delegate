@@ -101,7 +101,7 @@ export default function probe(pi: ExtensionAPI) {
 			});
 			return { text: "mock complete", exitCode: 0, stderrTail: "" };
 		});
-		let rolePicks = 0, modelPicks = 0, confirms = 0, sequence = 0, fieldPicks = 0;
+		let rolePicks = 0, modelPicks = 0, confirms = 0, sequence = 0;
 		const testCtx: any = { ...ctx, mode: "tui", isIdle: () => false,
 			scopedModels: [
 				{ model: { provider: oldModel.slice(0, slash), id: oldModel.slice(slash + 1) } },
@@ -109,27 +109,34 @@ export default function probe(pi: ExtensionAPI) {
 			],
 			ui: { ...ctx.ui, setWidget: () => {}, setStatus: () => {}, notify: (text: string) => notices.push(text),
 				select: async (title: string, options: string[]) => {
-					if (title.startsWith("Settings for")) {
-						fieldPicks++;
-						if (fieldPicks <= 2) { assert.equal(readFileSync(userPath, "utf8"), original); return options[0]; }
-						assert.match(title, /Saved/);
-						return fieldPicks === 3 ? options[1] : undefined;
-					}
+					if (title.startsWith("Settings for") || title.startsWith("Model for")) throw new Error(`unexpected ${title}`);
 					if (title.startsWith("Reasoning for")) {
+						assert.equal(confirms, 2, "reasoning follows an accepted model selection");
+						assert.equal(modelPicks, 3);
+						assert.match(title, /Saved model: picker-cloud\/team\/new/);
 						assert.deepEqual(options, ["medium ✓ current", "high", "xhigh", "max"]);
 						return "max";
 					}
 					assert.match(title, /Delegate models/);
+					assert.match(title, /model picker; reasoning follows/);
 					assert.equal(options.length, 4);
 					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
 					if (rolePicks === 0) {
 						assert.doesNotMatch(options[0], /unavailable|not in scope/);
 						assert.ok(options.some(option => option.startsWith("implement · picker-extra/other (not in scope)")));
 					}
-					if (++rolePicks === 1) {
+					const pick = ++rolePicks;
+					if (pick === 1) {
+						assert.equal(readFileSync(userPath, "utf8"), original);
+						return options[0];
+					}
+					if (pick === 2) {
+						assert.equal(modelPicks, 1, "esc returns to roles without opening reasoning");
 						assert.equal(readFileSync(userPath, "utf8"), original, "cancel does not write");
 						return options[0];
 					}
+					assert.equal(pick, 3);
+					assert.match(title, /Saved reasoning: max/);
 					assert.match(options[0], /picker-cloud\/team\/new/);
 					assert.match(options[0], /reasoning: max/);
 					return undefined;
@@ -146,7 +153,10 @@ export default function probe(pi: ExtensionAPI) {
 						assert.ok(rendered.includes("Same models as /model."));
 						assert.ok(!rendered.includes("picker-extra"), rendered);
 						assert.ok(!rendered.includes("picker-no-auth"));
-						if (++modelPicks === 1) { component.handleInput("\x1b"); return result; }
+							const pick = ++modelPicks;
+						if (pick === 1) { component.handleInput("\x1b"); return result; }
+						assert.equal(readFileSync(userPath, "utf8"), original, "declined model save does not write");
+						assert.equal(confirms, pick === 2 ? 0 : 1);
 						for (const char of "Fresh Model") component.handleInput(char);
 						assert.match(component.render(100).join("\n"), /1\/2 scoped/);
 						for (const width of [12, 40, 100]) assert.ok(component.render(width).every((line: string) => visibleWidth(line) <= width));
@@ -159,8 +169,10 @@ export default function probe(pi: ExtensionAPI) {
 				},
 				confirm: async (_title: string, text: string) => {
 					confirms++;
-					assert.match(text, confirms === 1 ? /offline: true → false/ : /medium → max/);
-					assert.ok(text.includes(userPath)); return true;
+					assert.ok(text.includes(userPath));
+					assert.match(text, confirms < 3 ? /offline: true → false/ : /medium → max/);
+					if (confirms === 1) return false;
+					return true;
 				},
 			},
 		};
@@ -171,10 +183,39 @@ export default function probe(pi: ExtensionAPI) {
 			const running = await call({ kind: "recon", task: "hold", background: true });
 			const queued = await call({ kind: "recon", task: "queued", background: true });
 			assert.equal(queued.details.status, "queued");
+			let unchangedRoles = 0, unchangedReasoning = 0;
+			await commands.get("pi-delegate").handler("models", { ...testCtx, ui: { ...testCtx.ui,
+				select: async (title: string, options: string[]) => {
+					if (title.startsWith("Reasoning for")) {
+						unchangedReasoning++;
+						assert.ok(title.includes(oldModel));
+						assert.doesNotMatch(title, /Saved model/);
+						return undefined;
+					}
+					if (!title.startsWith("Delegate models")) throw new Error(`unexpected ${title}`);
+					assert.ok(options[0].startsWith(`recon · ${oldModel} ·`));
+					return ++unchangedRoles === 1 ? options[0] : undefined;
+				},
+				custom: async (create: Function) => {
+					let result: string | undefined;
+					const tui = { terminal: { rows: 30 }, requestRender: () => {} };
+					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+					try {
+						assert.ok(component.render(100).join("\n").includes("✓ current"));
+						component.handleInput("\r");
+						assert.equal(result, oldModel);
+						return result;
+					} finally { component.dispose(); }
+				},
+				confirm: async () => { throw new Error("current model must not confirm or save"); },
+			} });
+			assert.equal(unchangedReasoning, 1, "enter on the current model opens reasoning");
+			assert.equal(unchangedRoles, 2);
+			assert.equal(readFileSync(userPath, "utf8"), original, "current model does not write");
 			await commands.get("pi-delegate").handler("models", testCtx);
-			assert.equal(confirms, 2, notices.join("\n"));
-			assert.equal(rolePicks, 2, notices.join("\n"));
-			assert.equal(fieldPicks, 4, "cancel/save stay in the same role settings");
+			assert.equal(confirms, 3, notices.join("\n"));
+			assert.equal(rolePicks, 3, notices.join("\n"));
+			assert.equal(modelPicks, 3, notices.join("\n"));
 			assert.ok(!notices.some(text => text.includes("Saved")), "save feedback stays in the dialog");
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
 				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "max" },
@@ -194,11 +235,10 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(launches.at(-1).thinking, "max");
 			// Non-reasoning models expose only off; unknown models must not get a guessed list.
 			const saved = readFileSync(userPath, "utf8");
-			let fallbackRoles = 0, fallbackFields = 0;
+			let fallbackRoles = 0, fallbackPickers = 0;
 			await commands.get("pi-delegate").handler("models", { ...testCtx, scopedModels: [],
 				ui: { ...testCtx.ui,
 					select: async (title: string, options: string[]) => {
-						if (title.startsWith("Settings for")) return ++fallbackFields === 1 ? options[0] : undefined;
 						if (!title.startsWith("Delegate models")) throw new Error(`unexpected ${title}`);
 						if (fallbackRoles === 0) {
 							assert.ok(options.some(option => option.startsWith("implement · picker-extra/other ·")));
@@ -207,6 +247,7 @@ export default function probe(pi: ExtensionAPI) {
 						return ++fallbackRoles === 1 ? options[0] : undefined;
 					},
 					custom: async (create: Function) => {
+						fallbackPickers++;
 						let result: string | undefined;
 						const tui = { terminal: { rows: 30 }, requestRender: () => {} };
 						const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
@@ -225,27 +266,31 @@ export default function probe(pi: ExtensionAPI) {
 				},
 			});
 			assert.equal(fallbackRoles, 2);
+			assert.equal(fallbackPickers, 1, "role selection opens the model picker immediately");
 			assert.equal(readFileSync(userPath, "utf8"), saved);
 			for (const known of [true, false]) {
-				let picks = 0, reasoningPicks = 0, reasoningFields = 0;
+				let picks = 0, reasoningPicks = 0;
 				await commands.get("pi-delegate").handler("models", { ...testCtx,
 					modelRegistry: {
 						refresh: async () => {}, getError: () => undefined, getAvailable: () => [],
 						getAll: () => known ? [{ provider: "picker-cloud", id: "team/new", reasoning: false }] : [],
 					},
 					ui: { ...testCtx.ui,
+						custom: async () => { throw new Error("empty catalogue must not open the model picker"); },
+						confirm: async () => { throw new Error("empty catalogue must not save"); },
 						select: async (title: string, options: string[]) => {
-							if (title.startsWith("Settings for")) return ++reasoningFields === 1 ? options[1] : undefined;
 							if (title.startsWith("Reasoning for")) {
 								reasoningPicks++; assert.deepEqual(options, ["off"]);
 								assert.match(title, /max \(unsupported for this model\)/);
 								return undefined;
 							}
+							if (!title.startsWith("Delegate models")) throw new Error(`unexpected ${title}`);
 							return ++picks === 1 ? options[0] : undefined;
 						},
 					},
 				});
 				assert.equal(reasoningPicks, known ? 1 : 0);
+				assert.equal(picks, 2);
 				assert.equal(readFileSync(userPath, "utf8"), saved);
 			}
 			assert.ok(notices.some(text => text.includes("Cannot determine reasoning levels")));
