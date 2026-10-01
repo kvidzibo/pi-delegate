@@ -53,6 +53,7 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 - Shared local capacity requires Linux and `/usr/bin/flock`. All local providers share one slot per agent directory; hosted jobs bypass it. Reload older sessions to participate.
 - **No sandbox.** Children have your system permissions; shipped roles include shell access. Read-only roles are prompt policy, not write protection. `offline` skips startup networking; it does not block tool network access.
 - Children do not inherit the parent conversation or project instructions. Provide a self-contained task and avoid overlapping edits to shared files.
+- A review covers the full requested diff unless the task asks for a small review.
 - Worker completion is not proof of task correctness. The parent must inspect and validate results.
 - Archives under `~/.pi/agent/delegate/` are retained indefinitely and can contain sensitive prompts, code, thinking and tool output.
 
