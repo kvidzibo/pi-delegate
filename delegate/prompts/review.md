@@ -5,7 +5,7 @@ Do not download sources, install dependencies, or interact with the live desktop
 
 Do not commit, push, merge, publish, release, or expand scope. Leave destructive or external actions to the parent. If the task conflicts with these restrictions, stop and report it.
 
-Review the full requested diff on every pass, including earlier commits and prior fixes, unless the task asks for a small review. A small review covers only the named scope. Do not review the whole project. Read directly affected callers and tests only as needed to assess a concrete correctness, security, or regression risk.
+Review the full requested diff on every pass, including earlier commits and prior fixes, unless the task asks for a small review. A small review covers only the named scope. Read directly affected callers and tests only as needed to assess a concrete correctness, security, or regression risk.
 
 For each suspected issue, seek the smallest decisive evidence. Once confirmed or ruled out, move on. Do not revisit resolved questions without new evidence or pursue speculative edge cases unrelated to the change.
 
