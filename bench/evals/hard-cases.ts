@@ -76,15 +76,15 @@ test("successful queued jobs claim, run, and free capacity", async () => {
 });
 
 test("cancellation while claim is pending releases without dispatch", async () => {
-  const pending = deferred(); const started = deferred(); const released = deferred(); let runs = 0, releases = 0;
+  const pending = deferred(); const started = deferred(); let runs = 0, releases = 0;
   const queue = createQueue({ claim: () => { started.resolve(); return pending.promise; }, run: () => { runs++; } });
   const item = queue.enqueue("x"); await started.promise;
   let settled = false; item.done.then(() => { settled = true; });
   assert.equal(item.cancel(), true); assert.equal(item.cancel(), false);
   await Promise.resolve(); assert.equal(settled, false, "pending claim cleanup must finish before done");
-  pending.resolve(() => { releases++; released.resolve(); });
-  assert.deepEqual(await item.done, { status: "cancelled" }); await released.promise;
-  assert.equal(runs, 0); assert.equal(releases, 1);
+  pending.resolve(() => { releases++; });
+  assert.deepEqual(await item.done, { status: "cancelled" });
+  assert.equal(releases, 1, "done must not precede release completion"); assert.equal(runs, 0);
 });
 
 test("a rejected run completes as failed and still releases its lease", async () => {
@@ -96,18 +96,20 @@ test("a rejected run completes as failed and still releases its lease", async ()
 });
 
 test("running cancellation stays cancelled after late completion and snapshots are isolated", async () => {
-  const running = deferred(), started = deferred(), pool = createPool();
-  const queue = createQueue({ claim: () => pool.tryAcquire("work", 1), run: () => { started.resolve(); return running.promise; } });
-  const item = queue.enqueue({ nested: { count: 1 } }); await started.promise;
-  const view = queue.snapshot(); view[0].status = "corrupted"; view[0].value.nested.count = 99;
-  assert.equal(queue.snapshot()[0].value.nested.count, 1);
-  let settled = false; item.done.then(() => { settled = true; });
-  assert.equal(item.cancel(), true); await Promise.resolve();
-  assert.equal(pool.snapshot().work.used, 1, "running work retains capacity until settlement");
-  assert.equal(pool.tryAcquire("work", 1), undefined); assert.equal(settled, false);
-  running.reject(new Error("late"));
-  assert.deepEqual(await item.done, { status: "cancelled" });
-  assert.equal(queue.snapshot()[0].status, "cancelled"); assert.equal(pool.snapshot().work.used, 0);
+  for (const finish of ["resolve", "reject"]) {
+    const running = deferred(), started = deferred(), pool = createPool();
+    const queue = createQueue({ claim: () => pool.tryAcquire("work", 1), run: () => { started.resolve(); return running.promise; } });
+    const item = queue.enqueue({ nested: { count: 1 } }); await started.promise;
+    const view = queue.snapshot(); view[0].status = "corrupted"; view[0].value.nested.count = 99;
+    assert.equal(queue.snapshot()[0].value.nested.count, 1);
+    let settled = false; item.done.then(() => { settled = true; });
+    assert.equal(item.cancel(), true); await Promise.resolve();
+    assert.equal(pool.snapshot().work.used, 1, "running work retains capacity until settlement");
+    assert.equal(pool.tryAcquire("work", 1), undefined); assert.equal(settled, false);
+    if (finish === "resolve") running.resolve("late success"); else running.reject(new Error("late"));
+    assert.deepEqual(await item.done, { status: "cancelled" });
+    assert.equal(queue.snapshot()[0].status, "cancelled"); assert.equal(pool.snapshot().work.used, 0);
+  }
 });
 
 test("refused and rejected claims never dispatch or retry", async () => {

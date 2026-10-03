@@ -5,6 +5,7 @@ import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hardCases } from "../evals/hard-cases.ts";
 import { hardSolutions, hardReconAnswer } from "./hard-solutions.ts";
+import { validateFixture } from "../evals/validation.ts";
 import { planHistoricalEval, runHistoricalEval, inspectChanges, type HistoricalEvalOptions } from "../evals/runner.ts";
 
 test("hard suite keeps stress oracles independent and detects incomplete solutions without model calls", async t => {
@@ -48,6 +49,24 @@ test("hard suite keeps stress oracles independent and detects incomplete solutio
 	for (const row of summary.results.filter(r => r.kind === "implement")) {
 		assert.equal(row.validation.passed, row.arm === "complete");
 		if (row.arm === "complete") assert.deepEqual([...row.validation.passedTests].sort(), [...hardCases.find(c => c.id === row.taskId)!.expectedTests!].sort());
+	}
+	// Mutation checks ensure the contract cannot pass by awaiting cleanup separately or testing rejection only.
+	const queueCase = hardCases.find(c => c.id === "queued-transfer")!;
+	const reference = hardSolutions[queueCase.id]["workspace/src/queue.mjs"];
+	const mutations = [
+		{ before: 'lease = await claim(value, job.id);\n          if (job.status === "cancelled") { outcome = { status: "cancelled" }; return; }',
+		  after: 'lease = await claim(value, job.id);\n          if (job.status === "cancelled") { resolveDone({status:"cancelled"}); const later = lease; lease = undefined; setImmediate(() => later?.()); return; }' },
+		{ before: 'if (job.status === "cancelled") outcome = { status: "cancelled" };\n          else { job.status = "completed"; outcome = { status: "completed", value: result }; }',
+		  after: 'job.status = "completed"; outcome = { status: "completed", value: result };' },
+	];
+	for (const [i, mutation] of mutations.entries()) {
+		assert.ok(reference.includes(mutation.before));
+		const specimen = join(root, `mutation-${i}`);
+		for (const [p, text] of Object.entries({ ...queueCase.files, ...hardSolutions[queueCase.id], "workspace/src/queue.mjs": reference.replace(mutation.before, mutation.after) })) {
+			const target = join(specimen, p); mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, text);
+		}
+		const validation = await validateFixture(specimen, queueCase, join(root, `mutation-${i}-home`));
+		assert.equal(validation.passed, false, "incorrect lifecycle completion must fail the unchanged contract");
 	}
 	const manifest = JSON.parse(readFileSync(join(options.out, "manifest.json"), "utf8"));
 	assert.equal(manifest.suite, "hard"); assert.equal(manifest.frameworkHash.length, 64); assert.equal(manifest.nodeVersion, process.version);
