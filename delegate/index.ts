@@ -35,7 +35,7 @@ import { respondToBusyQuery } from "./busy-guard.ts";
 import { FileCapacityBroker } from "./capacity.ts";
 import { snapshotCommand } from "./snapshot-command.ts";
 import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits } from "./snapshot-audit.ts";
-import { captureRepository, formatSnapshotBytes, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotEnabled, snapshotNeedsAudit, snapshotSettings } from "./snapshots.ts";
+import { captureRepository, formatSnapshotBytes, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotEnabled, snapshotNeedsAudit, snapshotSettings, type Repository } from "./snapshots.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -259,7 +259,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		if (parentSignal?.aborted) onParentAbort();
 		else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 	});
-	pi.on("before_agent_start", (event) => audits.beginTurn(event.prompt));
 	pi.on("agent_settled", () => { detachParentAbort(); audits.endTurn(); });
 	pi.on("session_compact", () => audits.cancel());
 
@@ -564,16 +563,22 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
 							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, async (onUsage) => {
+								let capturedRepository: Repository | undefined;
+								if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
 								if (captureConfig.defaultEnabled || Object.values(captureConfig.repositories).some(Boolean)) {
 									childSignal.throwIfAborted();
 									const repo = await repositoryFor(cwd, childSignal);
 									if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
 									if (snapshotEnabled(repo, captureConfig)) {
+										if (audits.active || !snapshotEnabled(repo, config.snapshots)) throw new Error("Snapshot capture permission was revoked; retry after the safety audit or settings change.");
 										const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
 										archive.attachSnapshot(snapshot);
+										capturedRepository = repo;
 									}
 								}
 								childSignal.throwIfAborted();
+								if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
+								if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 								return childRunner({
 								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
 								tools: [...tools], offline: resolved.agent.offline,

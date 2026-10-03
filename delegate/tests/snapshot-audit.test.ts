@@ -20,9 +20,9 @@ test("first-use safety audit requires consent and complete unchanged results, wi
 	const paths = { shippedPath: new URL("../config.json", import.meta.url).pathname, userPath };
 	writeFileSync(userPath, JSON.stringify({ snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
 	const config = loadDelegateConfig(paths), messages: string[] = [], notices: string[] = [];
-	let yes = false, confirms = 0, sessionId = "session-one";
+	let yes = false, confirms = 0, sessionId = "session-one", idle = true;
 	const pi: any = { getActiveTools: () => ["delegate"], sendUserMessage: (message: string) => messages.push(message) };
-	const ctx: any = { cwd: repoPath, hasUI: true, model: { id: "selected" }, sessionManager: { getSessionId: () => sessionId },
+	const ctx: any = { cwd: repoPath, hasUI: true, model: { id: "selected" }, isIdle: () => idle, sessionManager: { getSessionId: () => sessionId },
 		ui: { confirm: async () => { confirms++; assert.equal(config.snapshots.repositories[repo.configKey], false); return yes; }, notify: (message: string) => notices.push(message) } };
 	const manager = new SnapshotAudits(pi, config, paths, dir), signal = new AbortController().signal;
 	const passed = { verdict: "passed" as const, checked: [...AUDIT_CHECKS], issues: [] };
@@ -42,6 +42,11 @@ test("first-use safety audit requires consent and complete unchanged results, wi
 		assert.equal(messages.length, 0); assert.equal(confirms, 1);
 		assert.equal(snapshotNeedsAudit(repo, config.snapshots), false, "decline persists an explicit disable");
 		assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+		yes = true; idle = false;
+		assert.equal(await manager.request(ctx, repo, signal), false, "busy-parent consent never queues a follow-up audit");
+		assert.equal(messages.length, 0); assert.equal(manager.active, false);
+		assert.match(notices.at(-1)!, /parent agent is busy/);
+		idle = true;
 		let id = await begin();
 		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, issues: ["redacted finding"] } }), /no unresolved issues/);
 		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, checked: ["source"] } }), /complete coverage/);
@@ -55,7 +60,7 @@ test("first-use safety audit requires consent and complete unchanged results, wi
 		id = await begin();
 		assert.match(await manager.submit(ctx, id, { verdict: "incomplete", checked: ["source"], issues: [] }), /remains disabled/);
 		id = await begin();
-		manager.beginTurn(messages.at(-1)!); manager.endTurn();
+		manager.endTurn();
 		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
 		assert.match(notices.at(-1)!, /incomplete/);
 		id = await begin();
