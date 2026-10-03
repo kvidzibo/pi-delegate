@@ -8,7 +8,7 @@ import { loadDelegateConfig } from "../config.ts";
 import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits } from "../snapshot-audit.ts";
 import { repositoryFor, snapshotEnabled, snapshotNeedsAudit } from "../snapshots.ts";
 
-test("first-use safety audit requires consent and complete unchanged results, without capturing audit inputs", async () => {
+test("first-use safety audit requires consent and unchanged best-effort results, without capturing audit inputs", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "delegate-snapshot-audit-"));
 	const repoPath = join(dir, "repo"), storage = join(dir, "snapshots"), userPath = join(dir, "delegate.json");
 	mkdirSync(repoPath);
@@ -48,8 +48,11 @@ test("first-use safety audit requires consent and complete unchanged results, wi
 		assert.match(notices.at(-1)!, /parent agent is busy/);
 		idle = true;
 		let id = await begin();
-		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, issues: ["redacted finding"] } }), /no unresolved issues/);
-		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, checked: ["source"] } }), /complete coverage/);
+		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, issues: ["redacted finding"] } }), /blocking issues/);
+		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...passed, checked: [] } }), /substantive checks/);
+		const bestEffort = { ...passed, checked: ["source"], warnings: ["docs/images: pixel content unexamined"] };
+		assert.deepEqual(parseAuditCall({ auditId: id, auditResult: bestEffort })!.auditResult, bestEffort);
+		assert.throws(() => parseAuditCall({ auditId: id, auditResult: { ...bestEffort, warnings: [" "] } }), /Invalid snapshot audit/);
 		assert.throws(() => parseAuditCall({ auditId: id, auditResult: passed, kind: "review" }), /cannot be combined/);
 		assert.equal(parseAuditCall({ auditId: null, auditResult: " " }), undefined);
 		assert.equal(parseAuditCall({ auditId: id, auditResult: passed, jobId: null })!.auditId, id);
@@ -87,9 +90,12 @@ test("first-use safety audit requires consent and complete unchanged results, wi
 		assert.equal(snapshotEnabled(repo, config.snapshots), false);
 		writeFileSync(userPath, JSON.stringify({ snapshots: config.snapshots }));
 		id = await begin();
-		const accepted = manager.submit(ctx, id, passed);
+		const accepted = manager.submit(ctx, id, bestEffort);
 		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
-		assert.match(await accepted, /audit passed; capture enabled/);
+		const message = await accepted;
+		assert.match(message, /No secret leak was demonstrated; capture enabled/);
+		assert.match(message, /Checked 1\/5 areas/);
+		assert.match(message, /Warnings:\n- docs\/images: pixel content unexamined/);
 		assert.equal(snapshotEnabled(repo, config.snapshots), true);
 		assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], true);
 		assert.equal(existsSync(storage), false, "even a passed audit must not itself capture");

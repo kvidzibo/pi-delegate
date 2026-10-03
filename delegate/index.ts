@@ -442,7 +442,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",
 			"Use recorded delegate durationMs and Duration as authoritative elapsed timing; recover missing timing from archived metadata.json. Use Unknown only when timing cannot be recovered.",
 			"Local delegate jobs may queue under maxLocalConcurrent; hosted jobs can run independently. Running children retain their slots until they stop.",
-			"Only for a user-approved pending snapshot safety audit, submit auditId and auditResult without child/job arguments. Audit results never launch a child; complete coverage and no issues are required to enable capture. Never include secret values.",
+			"Only for a user-approved pending snapshot safety audit, submit auditId and auditResult without child/job arguments. Audit results never launch a child; passed requires substantive checks and no demonstrated secrets or hard capture blockers. Coverage gaps and non-blocking risks belong in warnings and do not prevent enabling. Never include secret values.",
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
@@ -473,8 +473,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			auditResult: optionalArgument(Type.Object({
 				verdict: Type.Union([Type.Literal("passed"), Type.Literal("blocked"), Type.Literal("incomplete")]),
 				checked: Type.Array(Type.Union(AUDIT_CHECKS.map(check => Type.Literal(check))), { maxItems: AUDIT_CHECKS.length, uniqueItems: true }),
-				issues: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 32, description: "Redacted path/category findings only, never secret values. Empty only when none found." }),
-			}, { additionalProperties: false, description: "Safety audit result, not a child task. passed requires every check and no unresolved issues." })),
+				issues: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 32, description: "Demonstrated secrets or hard capture blockers: redacted paths/categories only, never secret values. Must be empty for passed." }),
+				warnings: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 32, description: "Non-blocking privacy/storage risks, unverified secret-like literals and coverage gaps; redacted paths/categories only. Do not prevent passed." })),
+			}, { additionalProperties: false, description: "Best-effort safety audit, not a child task. passed means no secret leak was demonstrated after substantive checks; partial coverage and warnings are allowed." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			let capabilities: CapabilityManifest | undefined;
