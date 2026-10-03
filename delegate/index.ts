@@ -294,22 +294,26 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 
 	let captureContext: ExtensionContext | undefined;
 	let captureStatusGeneration = 0;
+	let captureStatusController: AbortController | undefined;
 	const refreshCaptureStatus = async (ctx: ExtensionContext): Promise<void> => {
+		captureStatusController?.abort();
+		const controller = new AbortController();
+		captureStatusController = controller;
 		const generation = ++captureStatusGeneration;
 		try {
 			let lines: string[] | undefined;
 			if (Object.values(snapshotSettings(config.snapshots).repositories).some(Boolean)) {
-				const repo = await repositoryFor(ctx.cwd);
+				const repo = await repositoryFor(ctx.cwd, controller.signal);
 				if (snapshotEnabled(repo, config.snapshots)) {
 					const directory = snapshotDirectory(agentDir(), config.snapshots);
-					const stats = await repositorySnapshotStats(repo!, directory);
+					const stats = await repositorySnapshotStats(repo!, directory, controller.signal);
 					lines = [`Eval repository capture enabled · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, `Storage: ${directory}`];
 				}
 			}
 			if (!shuttingDown && captureContext === ctx && generation === captureStatusGeneration) ctx.ui.setWidget("delegate-snapshots", lines);
 		} catch (error) {
 			// UI is an observer, never a dependency of capture/child execution.
-			if (shuttingDown || captureContext !== ctx || generation !== captureStatusGeneration) return;
+			if (controller.signal.aborted || shuttingDown || captureContext !== ctx || generation !== captureStatusGeneration) return;
 			try { ctx.ui.notify(`Snapshot storage: ${error instanceof Error ? error.message : String(error)}`, "error"); } catch { /* detached UI */ }
 		}
 	};
@@ -327,7 +331,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
 		captureContext = ctx;
-		await refreshCaptureStatus(ctx);
+		void refreshCaptureStatus(ctx);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
 	const dialogs = new AbortController();
@@ -340,7 +344,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		description: "Configure eval repository capture (off by default)",
 		handler: async (args, ctx) => {
 			await snapshotCommand(args, ctx, config, configPaths, agentDir(), dialogs.signal);
-			if (captureContext) await refreshCaptureStatus(captureContext);
+			if (captureContext) void refreshCaptureStatus(captureContext);
 		},
 	}, {
 		name: "stats",
@@ -381,6 +385,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		detachParentAbort();
 		modelCommand.stop();
 		captureContext = undefined;
+		captureStatusController?.abort();
+		captureStatusController = undefined;
 		++captureStatusGeneration;
 		try { ui?.setWidget?.("delegate-snapshots", undefined); } catch { /* detached UI */ }
 		gate.shutdown();
@@ -539,7 +545,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 									if (snapshotEnabled(repo, captureConfig)) {
 										const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
 										archive.attachSnapshot(snapshot);
-										if (captureContext) await refreshCaptureStatus(captureContext);
+										if (captureContext) void refreshCaptureStatus(captureContext);
 									}
 								}
 								childSignal.throwIfAborted();

@@ -3,6 +3,7 @@ import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandCo
 import { join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { repositoryFor, repositorySnapshotStats } from "../../delegate/snapshots.ts";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
@@ -73,11 +74,14 @@ export default function probe(pi: ExtensionAPI) {
 		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, repositories: { [repo.configKey]: true } } }));
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
-		let tool: any, release!: () => void, launches = 0, sequence = 0, failWidget = false;
+		let tool: any, release!: () => void, launches = 0, sequence = 0, failWidget = false, widgetThrows = 0;
+		const fsPromises = createRequire(import.meta.url)("node:fs/promises"), originalReaddir = fsPromises.readdir;
+		const pendingMetrics: Array<() => void> = [];
+		let pauseMetrics = true;
 		const widget: string[] = [];
 		const testCtx: any = { ...ctx, cwd: repoPath, hasUI: true, isIdle: () => false,
 			ui: { ...ctx.ui, setStatus() {}, notify() {}, setWidget: (key: string, lines?: string[]) => {
-				if (key === "delegate-snapshots") { if (failWidget) throw new Error("detached UI"); widget.push((lines ?? []).join("\n")); }
+				if (key === "delegate-snapshots") { if (failWidget) { widgetThrows++; throw new Error("detached UI"); } widget.push((lines ?? []).join("\n")); }
 			} },
 		};
 		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
@@ -93,18 +97,31 @@ export default function probe(pi: ExtensionAPI) {
 		});
 		const call = (params: object) => tool.execute(`snapshot-${++sequence}`, params, undefined, undefined, testCtx);
 		const launch = (task: string) => call({ kind: "review", model: "hosted/mock", task, background: true });
-		const waitForLaunch = async () => { for (let i = 0; i < 500 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(release); };
+		const until = async (ready: () => boolean) => { for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(ready(), "expected observer/runner progress"); };
 		try {
-			await handlers.get("session_start")!({}, testCtx);
-			assert.match(widget.at(-1)!, /capture enabled · 0 snapshots · 0 B/);
 			failWidget = true;
-			const held = await launch("hold"); await waitForLaunch();
+			await handlers.get("session_start")!({}, testCtx);
+			await until(() => widgetThrows === 1); // Exceptions from observers cannot escape session startup.
 			failWidget = false;
+			await handlers.get("session_start")!({}, testCtx);
+			await until(() => /capture enabled · 0 snapshots · 0 B/.test(widget.at(-1) ?? ""));
+			fsPromises.readdir = (path: unknown, ...args: unknown[]) => {
+				if (!pauseMetrics || String(path) !== join(storage, repo.id, "captures")) return originalReaddir(path, ...args);
+				return new Promise(resolve => pendingMetrics.push(() => resolve(originalReaddir(path, ...args))));
+			};
+			syncBuiltinESMExports();
+			const held = await launch("hold"); await until(() => !!release);
+			await until(() => pendingMetrics.length > 0); // A pending metrics scan must not withhold child dispatch.
 			const queued = await launch("queued"); assert.equal(queued.details.status, "queued");
 			const cancelled = await launch("cancelled"); await call({ jobId: cancelled.details.jobId, cancel: true });
 			writeFileSync(join(repoPath, "source"), "queued-start\n"); release();
 			await call({ jobId: held.details.jobId });
 			const done = await call({ jobId: queued.details.jobId }); assert.equal(done.details.ok, true);
+			await until(() => pendingMetrics.length > 1);
+			pauseMetrics = false;
+			fsPromises.readdir = originalReaddir; syncBuiltinESMExports();
+			for (const resume of pendingMetrics.splice(0)) resume();
+			await until(() => /capture enabled · 2 snapshots/.test(widget.at(-1) ?? ""));
 			assert.equal(launches, 2); assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
 			const metadata = JSON.parse(readFileSync(join(done.details.sessionFile.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
 			const manifest = JSON.parse(readFileSync(metadata.repositorySnapshot.manifestPath, "utf8"));
@@ -116,6 +133,7 @@ export default function probe(pi: ExtensionAPI) {
 				select: async (title: string, options: string[]) => { assert.match(title, /2 snapshots/); return menu++ === 0 ? options[0] : "Back"; },
 			} });
 			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			await until(() => widget.at(-1) === "");
 			assert.equal(widget.at(-1), "", "disabling clears the startup status");
 			// Recreate a factory with capture enabled and invalid storage: no child may launch.
 			await handlers.get("session_shutdown")!();
@@ -127,6 +145,9 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(bad.details.ok, false); assert.match(bad.content[0].text, /outside the repository/); assert.equal(launches, 2);
 			return { startup: true, configured: true, queuedStartState: true, cancelledNotCaptured: true, linkedArchive: true, failClosed: true, noModelCalls: true };
 		} finally {
+			pauseMetrics = false;
+			fsPromises.readdir = originalReaddir; syncBuiltinESMExports();
+			for (const resume of pendingMetrics.splice(0)) resume();
 			await handlers.get("session_shutdown")?.();
 			if (previousSkip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previousSkip;
 			rmSync(userPath, { force: true });

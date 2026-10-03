@@ -71,6 +71,15 @@ test("opt-in repository captures preserve starting source/index/history, dedupli
 		git("worktree", "add", "-q", "--detach", worktree, "HEAD");
 		const linked = (await repositoryFor(worktree))!;
 		assert.equal(linked.id, repo.id); assert.equal(linked.configKey, repo.configKey);
+		const separate = join(dir, "separate"), gitData = join(dir, "separate-git-data"), separateLinked = join(dir, "separate-linked");
+		git("init", "-q", "-b", "main", "--separate-git-dir", gitData, separate);
+		git("-C", separate, "-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-q", "--allow-empty", "-m", "base");
+		git("-C", separate, "worktree", "add", "-q", "--detach", separateLinked);
+		const separateRepo = (await repositoryFor(separate))!, separateWorktree = (await repositoryFor(separateLinked))!;
+		assert.equal(separateRepo.configKey, gitData);
+		assert.equal(separateWorktree.configKey, separateRepo.configKey);
+		assert.equal(separateWorktree.id, separateRepo.id);
+		assert.equal(snapshotEnabled(separateWorktree, { repositories: { [separateRepo.configKey]: true } }), true);
 		await assert.rejects(captureRepository(repo, join(repoPath, "snapshots"), "bad"), /outside the repository/);
 		const aborted = new AbortController(); aborted.abort();
 		await assert.rejects(captureRepository(repo, storage, "cancelled", aborted.signal));

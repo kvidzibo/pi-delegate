@@ -52,8 +52,9 @@ export async function repositoryFor(cwd: string, signal?: AbortSignal): Promise<
 	}
 	const root = await realpath((await git(cwd, ["rev-parse", "--show-toplevel"], signal)).toString().trim());
 	const common = await realpath((await git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)).toString().trim());
-	// Linked worktrees share the primary checkout's key and storage, not their temporary path.
-	const configKey = basename(common) === ".git" ? dirname(common) : root;
+	// Git cannot recover the primary source path from every separate-git-dir layout.
+	// In that layout the shared Git directory itself is the stable key for all worktrees.
+	const configKey = basename(common) === ".git" ? dirname(common) : common;
 	return { root, configKey, id: hash(common) };
 }
 
@@ -256,7 +257,8 @@ export async function captureRepository(repo: Repository, directory: string, run
 	} finally { await sourceRoot?.close(); await rm(temp, { recursive: true, force: true }); }
 }
 
-export async function repositorySnapshotStats(repo: Repository, directory: string): Promise<{ count: number; bytes: number }> {
+export async function repositorySnapshotStats(repo: Repository, directory: string, signal?: AbortSignal): Promise<{ count: number; bytes: number }> {
+	signal?.throwIfAborted();
 	const root = join(directory, repo.id);
 	try {
 		checkPrivate(await lstat(directory), true);
@@ -266,10 +268,12 @@ export async function repositorySnapshotStats(repo: Repository, directory: strin
 	catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { count: 0, bytes: 0 }; throw error; }
 	let count = 0, bytes = 0;
 	for (const name of ["captures", "objects", "history"]) {
+		signal?.throwIfAborted();
 		const dir = join(root, name);
 		try { checkPrivate(await lstat(dir), true); }
 		catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
 		for (const item of await readdir(dir)) {
+			signal?.throwIfAborted();
 			const stat = await lstat(join(dir, item));
 			checkPrivate(stat, false);
 			bytes += stat.size;

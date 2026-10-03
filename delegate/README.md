@@ -41,9 +41,9 @@ Manual configuration in `~/.pi/agent/delegate.json`:
 }
 ```
 
-Omit `directory` to use `<agent-dir>/delegate-snapshots/`, independently of transcript archive overrides. Keys are canonical absolute primary checkout roots; subdirectories and linked worktrees share that repository's setting/storage. Separate clones are separate repositories. Storage must be outside the checkout and primary repository, owned by you, private, and not reached through symlinks.
+Omit `directory` to use `<agent-dir>/delegate-snapshots/`, independently of transcript archive overrides. Keys are canonical absolute repository paths shown by the menu: the shared Git directory's parent when it is named `.git`, otherwise the shared Git directory itself. This normally means the primary checkout root; separate-Git-directory layouts can use a Git-directory key. Subdirectories and linked worktrees share that repository's setting/storage. Separate clones are separate repositories. Storage must be outside the checkout and primary repository, owned by you, private, and not reached through symlinks.
 
-For enabled repositories, session startup shows capture status, snapshot count and stored-file size above the editor. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. The status refreshes after capture and settings changes. Browsing disabled settings creates no snapshot directories.
+For enabled repositories, session startup shows capture status, snapshot count and stored-file size above the editor. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. The status refreshes asynchronously after capture and settings changes; metrics scans never delay child dispatch or cleanup. Browsing disabled settings creates no snapshot directories.
 
 Each accepted job freezes its capture settings, but captures the **actual launch-time state**, after queue/capacity waits and before starting the child. Cancelled queued jobs are not captured. Failed capture or failure to persist its archive link blocks launch. Successful captures are linked by `repositorySnapshot` in the run's `metadata.json`.
 
