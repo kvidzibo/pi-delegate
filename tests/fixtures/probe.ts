@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { repositoryFor, repositorySnapshotStats } from "../../delegate/snapshots.ts";
+import { AUDIT_CHECKS } from "../../delegate/snapshot-audit.ts";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
@@ -70,19 +71,20 @@ export default function probe(pi: ExtensionAPI) {
 		git("-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-qm", "base");
 		const repo = (await repositoryFor(repoPath))!;
 		const userPath = join(getAgentDir(), "delegate.json"), previousSkip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
-		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
+		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: { [repo.configKey]: true } } }));
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
-		let tool: any, release!: () => void, launches = 0, sequence = 0, failNotice = false, noticeThrows = 0;
-		const notices: string[] = [];
+		let tool: any, release!: () => void, launches = 0, sequence = 0, failNotice = false, noticeThrows = 0, consent = false;
+		const notices: string[] = [], auditMessages: string[] = [];
 		const testCtx: any = { ...ctx, cwd: repoPath, hasUI: true, isIdle: () => false,
-			ui: { ...ctx.ui, setStatus() {}, notify(text: string) {
+			ui: { ...ctx.ui, setStatus() {}, confirm: async () => consent, notify(text: string) {
 				if (failNotice) { noticeThrows++; throw new Error("detached UI"); }
 				notices.push(text);
 			}, setWidget(key: string) { assert.notEqual(key, "delegate-snapshots", "capture status must never be sticky"); } },
 		};
 		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
 			registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+			sendUserMessage: (message: string) => auditMessages.push(message),
 		} as unknown as ExtensionAPI, async input => {
 			launches++;
 			const metadata = JSON.parse(readFileSync(join(input.sessionFile!.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
@@ -119,18 +121,43 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(gunzipSync(readFileSync(join(storage, repo.id, "objects", `${manifest.entries.find((entry: any) => entry.path === "source").hash}.gz`))).toString(), "queued-start\n");
 			let menu = 0;
 			await commands.get("pi-delegate").handler("snapshots", { ...testCtx, ui: { ...testCtx.ui,
-				confirm: async () => true,
 				select: async (title: string, options: string[]) => {
 					assert.match(title, /2 snapshots/);
-					if (menu === 0) assert.match(title, /enabled \(global default\)/);
-					if (menu === 1) assert.match(title, /disabled \(repository override\)/);
-					const pick = ["Disable capture for this repository", "Default capture for repositories — enabled", "Use global default for this repository", "Default capture for repositories — disabled", "Back"][menu++];
+					const pick = menu++ === 0 ? "Disable capture for this repository" : "Back";
 					assert.ok(options.includes(pick)); return pick;
 				},
 			} });
 			const saved = JSON.parse(readFileSync(userPath, "utf8")).snapshots;
-			assert.equal(saved.defaultEnabled, true); assert.deepEqual(saved.repositories, {});
+			assert.equal(saved.defaultEnabled, true); assert.equal(saved.repositories[repo.configKey], false);
 			assert.equal(notices.length, 1, "settings changes must not repeat startup output");
+			// Global enablement in an unknown repository offers consent instead of capturing.
+			await handlers.get("session_shutdown")!();
+			writeFileSync(userPath, JSON.stringify({ snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
+			delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
+				registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+				sendUserMessage: (message: string) => auditMessages.push(message),
+			} as unknown as ExtensionAPI, async () => { launches++; return { text: "mock complete", exitCode: 0, stderrTail: "" }; });
+			const unknown = await call({ kind: "review", model: "hosted/mock", task: "unknown repository", timeoutMs: 2000 });
+			assert.equal(unknown.details.ok, false); assert.match(unknown.content[0].text, /requires a user-approved safety audit/);
+			assert.equal(launches, 2); assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+			await handlers.get("session_start")!({ reason: "startup" }, testCtx);
+			await until(() => notices.some(message => /request an audit later/.test(message)));
+			assert.equal(auditMessages.length, 0, "decline makes no agent request");
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			consent = true;
+			await commands.get("pi-delegate").handler("snapshots", { ...testCtx, ui: { ...testCtx.ui,
+				select: async (_title: string, options: string[]) => { assert.ok(options.includes("Audit repository before enabling capture")); return "Audit repository before enabling capture"; },
+			} });
+			assert.equal(auditMessages.length, 1);
+			assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+			const whileAuditing = await call({ kind: "review", model: "hosted/mock", task: "must not capture audit", timeoutMs: 2000 });
+			assert.equal(whileAuditing.details.ok, false); assert.equal(launches, 2);
+			const auditId = auditMessages[0].match(/Audit ID: ([a-f0-9-]{36})/)![1];
+			const accepted = await call({ auditId, auditResult: { verdict: "passed", checked: [...AUDIT_CHECKS], issues: [] } });
+			assert.equal(accepted.details.ok, true); assert.equal(accepted.details.snapshotAudit, true);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], true);
+			assert.equal((await repositorySnapshotStats(repo, storage)).count, 2, "the audit itself never captures");
+			assert.equal(launches, 2);
 			// Recreate a factory with capture enabled and invalid storage: no child may launch.
 			await handlers.get("session_shutdown")!();
 			writeFileSync(userPath, JSON.stringify({ snapshots: { directory: join(repoPath, "bad-store"), repositories: { [repo.configKey]: true } } }));
