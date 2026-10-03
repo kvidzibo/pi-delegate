@@ -74,7 +74,7 @@ Vary one factor at a time: identical models/thinking for prompt comparisons, ide
 - **No sandbox.** Models and validation code have your system permissions. Scope checks detect some fixture changes afterward; they do not prevent shell writes or network access. Use trusted models/prompts and fixtures. `offline` is not a network sandbox.
 - Coordinate local clients yourself; this runner bypasses ordinary delegate scheduling and shared capacity. It never starts/stops servers or changes model, credential, calibration or extension configuration.
 - Output is private (0700 directories, 0600 files) and retained until you remove it. Keep it outside Git; it can contain sensitive tool output despite sanitized initial fixtures.
-- Implementation checks run the unchanged fixture tests with bounded Node subprocesses and an allowlisted environment. Readonly test changes, unexpected files/directories and symlinks fail scope checks. Validation is skipped when scope is invalid. Owned process groups terminate test workers and CLI descendants on the five-second timeout, cancellation or completion; cleanup failures stop the campaign. Recon checks match expected evidence strings only.
+- Implementation checks run the unchanged fixture tests with bounded Node subprocesses and an allowlisted environment. Passing requires every expected named test to succeed in Node's test-event stream (not skipped/todo); a zero exit before assertions is insufficient. Readonly test changes, unexpected files/directories and symlinks fail scope checks. Validation is skipped when scope is invalid. Owned process groups terminate test workers and CLI descendants on the five-second timeout, cancellation or completion; cleanup failures stop the campaign. Recon checks match expected evidence strings only.
 
 Every task states the actual cwd and case-root path base: `workspace/...` and `related/...` are case-root-relative; tool paths from cwd omit the `workspace/` prefix. Scope checks use that same case root.
 
@@ -90,4 +90,4 @@ npm run test:unit
 npm run check:package
 ```
 
-Tests use injected workers and actual tiny fixture validation subprocesses, never model calls. The repository's normal CI includes the eval harness test and verifies the npm runtime allowlist; installed npm packages contain neither evals nor developer tests.
+Tests use injected workers, an owned fake `pi` RPC executable for the real CLI entrypoint, and actual tiny fixture validation subprocesses, never model calls. The repository's normal CI includes the eval harness test and verifies the npm runtime allowlist; installed npm packages contain neither evals nor developer tests.

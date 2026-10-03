@@ -7,6 +7,7 @@ export type HistoricalCase = {
 	allowedChanges: string[];
 	requiredChanges: string[];
 	testFile?: string;
+	expectedTests?: string[];
 	evidence?: string[];
 };
 
@@ -36,6 +37,7 @@ test("archive action reports the archived item", async () => {
 		allowedChanges: ["workspace/src/actions/archive.mjs"],
 		requiredChanges: ["workspace/src/actions/archive.mjs"],
 		testFile: "workspace/tests/archive.test.mjs",
+		expectedTests: ["archive action reports the archived item"],
 	},
 	{
 		id: "test-ownership",
@@ -63,6 +65,7 @@ test("applies a fractional tax rate to the subtotal", () => {
 		allowedChanges: ["workspace/src/value.mjs"],
 		requiredChanges: ["workspace/src/value.mjs"],
 		testFile: "workspace/tests/value.test.mjs",
+		expectedTests: ["applies a fractional tax rate to the subtotal"],
 	},
 	{
 		id: "complete-deliverables",
@@ -100,6 +103,7 @@ test("state tooltips provide useful labels", () => {
 		allowedChanges: ["workspace/src/feedback.mjs"],
 		requiredChanges: ["workspace/src/feedback.mjs"],
 		testFile: "workspace/tests/feedback.test.mjs",
+		expectedTests: ["filtered-save feedback reports the saved matching count", "state tooltips provide useful labels"],
 	},
 	{
 		id: "cross-repo-path",
@@ -181,5 +185,6 @@ test("CLI doubles its numeric argument", () => {
 		allowedChanges: ["workspace/src/cli.mjs"],
 		requiredChanges: ["workspace/src/cli.mjs"],
 		testFile: "workspace/tests/cli.test.mjs",
+		expectedTests: ["CLI doubles its numeric argument"],
 	},
 ];

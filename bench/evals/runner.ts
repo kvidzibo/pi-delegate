@@ -58,6 +58,7 @@ function prepare(options: HistoricalEvalOptions) {
 	if (options.caseIds !== undefined && (!Array.isArray(options.caseIds) || !options.caseIds.length
 		|| new Set(options.caseIds).size !== options.caseIds.length || options.caseIds.some(id => !historicalCases.some(c => c.id === id)))) throw new Error("Unknown or duplicate historical case selection");
 	const cases = historicalCases.filter(c => !options.caseIds || options.caseIds.includes(c.id));
+	if (cases.some(c => c.testFile && !c.expectedTests?.length)) throw new Error("Missing expected fixture test names");
 	return { out, arms, cases, repeats, timeoutMs, maxRequests };
 }
 

@@ -31,7 +31,7 @@ test("historical evals compare fresh matched cases without model calls and retai
 	for (const c of historicalCases) {
 		assert.match(c.origin.runId, /^[0-9a-f-]{36}$/);
 		for (const path of [...Object.keys(c.files), ...c.allowedChanges, ...c.requiredChanges]) assert.ok(!path.startsWith("/") && !path.split("/").includes(".."));
-		assert.ok(!c.testFile || (!c.allowedChanges.includes(c.testFile) && Object.hasOwn(c.files, c.testFile)));
+		assert.ok(!c.testFile || (!c.allowedChanges.includes(c.testFile) && Object.hasOwn(c.files, c.testFile) && c.expectedTests?.length));
 		assert.ok(!JSON.stringify(c).includes("/home/"), "fixtures contain no original private machine paths");
 	}
 	assert.equal(planHistoricalEval(options).runs, 12); assert.equal(existsSync(options.out), false);
@@ -120,6 +120,19 @@ test("historical evals compare fresh matched cases without model calls and retai
 	const abort = new AbortController();
 	const cancelled = await runHistoricalEval({ ...options, out: join(root, "cancelled"), signal: abort.signal }, async input => { const r = await mock(input, false); abort.abort(); return r; });
 	assert.equal(cancelled.results.length, 1); assert.ok(cancelled.stopped); assert.ok(existsSync(join(root, "cancelled/summary.json")));
+
+	// A zero exit without the independent assertions is not a passing fixture.
+	const bypassed = await runHistoricalEval({ ...options, out: join(root, "early-exit"), caseIds: ["test-ownership"] }, async input => {
+		const r = await mock(input, false);
+		writeFileSync(join(input.cwd, "src/value.mjs"), "process.exit(0);\nexport function totalWithTax(){return -999;}\n");
+		return r;
+	});
+	assert.equal(bypassed.stopped, undefined);
+	for (const row of bypassed.results) {
+		assert.equal(row.workerCompleted, true); assert.equal(row.validation.exitCode, 0);
+		assert.equal(row.validation.passed, false); assert.equal(row.validation.cause, "missing-expected-tests");
+		assert.equal(row.checksPassed, false);
+	}
 
 	// Exercise the real --run entrypoint/native RPC runner through an owned fake `pi` executable.
 	// No model or network calls: this catches recursive eval-CLI launching hidden by injected workers.
