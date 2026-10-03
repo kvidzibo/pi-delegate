@@ -1,6 +1,6 @@
 # Historical delegate eval pilot
 
-Developer-only matched-task evaluations for prompt, model or reasoning changes. Six small fixtures reproduce **failure patterns**, not entire historical projects or sessions. They contain no private log dumps, user data, credentials or machine paths. The runner never reads your historical archives.
+Developer-only matched-task evaluations for prompt, model or reasoning changes. The default six-case `pilot` reproduces **failure patterns**, not entire historical projects or sessions. The opt-in three-case `hard` suite stresses cross-module lifecycles and conflicting evidence. Neither suite contains private log dumps, user data, credentials or machine paths; the runner never reads historical archives.
 
 | Case | Role | Pattern |
 |---|---|---|
@@ -12,6 +12,20 @@ Developer-only matched-task evaluations for prompt, model or reasoning changes. 
 | isolated-cli-test | implement | Completing a CLI regression with explicitly permitted subprocess validation |
 
 `cases.ts` records originating run IDs and observed failures for provenance. The menu and CLI cases are **synthetic proxies**, not real GTK or Pi integration tests. The CLI case does not demonstrate that a restriction caused the historical premature stop. These simple cases cannot establish general coding quality.
+
+## Hard suite
+
+Set `"suite": "hard"` in the same JSON configuration; omitted `suite` defaults to `pilot`. `caseIds` selects only cases within that suite.
+
+| Case | Role | Stress contract |
+|---|---|---|
+| queued-transfer | implement | Cross-module pool/queue ownership, delayed claims, cancellation, failure cleanup and snapshot isolation |
+| restored-draft | implement | Retryable reads, session replacement, edits during restore, safe persistence and throwing observers |
+| completion-receipt | recon | Trace a supervisor failure through multiple modules; distinguish worker outcome from observer/persistence failure and red herrings |
+
+Hard fixtures are synthetic stress contracts inspired by project lessons, **not replayed historical failures**. `hard-cases.ts` records lesson IDs for provenance. Their independent readonly tests use controlled promises rather than timing races. Test-only reference solutions stay outside participant fixtures.
+
+For reasoning comparisons, keep both production role prompts identical in all arms. Use at least two repeats, and explicitly raise `maxRequests`/`timeoutMs` if the plan requires more headroom (for example 24 and 240000). Three levels × three hard cases × two repeats means 18 child runs. Request limits apply per run; the metadata budget applies to the whole campaign. Do not present a budget-limited partial sample as a complete comparison.
 
 Candidate role prompts in `prompts/` are eval-only. They are not loaded by the extension, do not change production defaults, and are excluded from npm along with this entire directory. Promotion requires manual review and a separate approved change.
 
@@ -78,14 +92,14 @@ Vary one factor at a time: identical models/thinking for prompt comparisons, ide
 
 Every task states the actual cwd and case-root path base: `workspace/...` and `related/...` are case-root-relative; tool paths from cwd omit the `workspace/` prefix. Scope checks use that same case root.
 
-`manifest.json` freezes prompt hashes, suite hash, model/limit/pricing settings and provenance. Each run saves copied fixtures, native session, raw events, answer, requested tools, elapsed model runtime, usage/budget receipt, scope changes and independent test/evidence checks. `summary.json` compares narrow check counts, worker completion, median runtime, tool calls, tokens and metadata cost. Runtime excludes subsequent independent fixture validation.
+`manifest.json` freezes suite selection, prompt/suite hashes, an execution-framework source hash, Node version, model/limit/pricing settings and provenance. Each run saves copied fixtures, native session, raw events, answer, requested tools, elapsed model runtime, usage/budget receipt, scope changes and independent test/evidence checks. `summary.json` compares narrow check counts, worker completion, median runtime, tool calls, tokens and metadata cost. Runtime excludes subsequent independent fixture validation.
 
-**Manual review remains required:** inspect claims, citations, contradictions, partial completion, tests actually requested/run, scope and blockers. Keyword matching and passing small fixture tests are not a general correctness verdict. Limited, cancelled, receipt/recording failures and incomplete campaigns must not be presented as complete comparisons. A request/budget/recording failure stops further runs; collected evidence remains available.
+**Manual review remains required:** inspect claims, citations, contradictions, partial completion, tests actually requested/run, scope and blockers. Keyword matching and passing fixture tests are not a general correctness verdict. Citation paths can be semantically equivalent without matching literal evidence strings; review those false negatives manually. Limited, cancelled, receipt/recording failures and incomplete campaigns must not be presented as complete comparisons. A request/budget/recording failure stops further runs; collected evidence remains available.
 
 ## Offline harness validation
 
 ```bash
-node --test --experimental-strip-types bench/tests/historical-eval.test.ts
+node --test --experimental-strip-types bench/tests/historical-eval.test.ts bench/tests/hard-eval.test.ts
 npm run test:unit
 npm run check:package
 ```

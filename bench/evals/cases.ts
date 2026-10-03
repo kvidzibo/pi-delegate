@@ -1,7 +1,7 @@
 export type HistoricalCase = {
 	id: string;
 	kind: "recon" | "implement";
-	origin: { runId: string; failure: string };
+	origin: { runId?: string; lessonIds?: number[]; synthetic?: boolean; failure: string };
 	files: Record<string, string>;
 	task: string;
 	allowedChanges: string[];

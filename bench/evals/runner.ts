@@ -10,6 +10,7 @@ import { isLocalModel } from "../../delegate/tg.ts";
 import { fingerprint, snapshotPricing, type Pricing } from "../../delegate/calibration.ts";
 import { Budget, requestReservation, validBudgetState, type BudgetConfig } from "../budget.ts";
 import { transcriptUsage } from "../runner.ts";
+import { hardCases } from "./hard-cases.ts";
 import { historicalCases, type HistoricalCase } from "./cases.ts";
 import { validateFixture, type Validation } from "./validation.ts";
 
@@ -19,7 +20,7 @@ export type EvalArm = {
 };
 export type HistoricalEvalOptions = {
 	out: string; arms: EvalArm[]; budgetUsd: number; repeats?: number; timeoutMs?: number; maxRequests?: number;
-	caseIds?: string[]; env: NodeJS.Dict<string>; signal?: AbortSignal;
+	suite?: "pilot" | "hard"; caseIds?: string[]; env: NodeJS.Dict<string>; signal?: AbortSignal;
 };
 const rubric = "Manual review required: evidence matches do not establish factual accuracy; tests cover only fixture behavior. Check citations, contradictions, scope, unmet requirements, claimed checks and blockers. Worker completion is not task correctness. These sanitized proxies are not real GTK or Pi integration benchmarks.";
 const save = (path: string, value: unknown) => writeFileSync(path, JSON.stringify(value, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -27,6 +28,8 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 
 function prepare(options: HistoricalEvalOptions) {
 	if (process.platform === "win32") throw new Error("Historical evaluations require POSIX process groups");
+	const suite = options.suite ?? "pilot", catalog = suite === "hard" ? hardCases : historicalCases;
+	if (!["pilot", "hard"].includes(suite)) throw new Error("Unknown evaluation suite");
 	const repeats = options.repeats ?? 1, timeoutMs = options.timeoutMs ?? 120000, maxRequests = options.maxRequests ?? 12;
 	if (!isAbsolute(options.out) || !Number.isFinite(options.budgetUsd) || options.budgetUsd < 0
 		|| !Number.isInteger(repeats) || repeats < 1 || repeats > 5
@@ -56,14 +59,14 @@ function prepare(options: HistoricalEvalOptions) {
 		return { ...arm, pricing, local, budget, promptText: prompts };
 	});
 	if (options.caseIds !== undefined && (!Array.isArray(options.caseIds) || !options.caseIds.length
-		|| new Set(options.caseIds).size !== options.caseIds.length || options.caseIds.some(id => !historicalCases.some(c => c.id === id)))) throw new Error("Unknown or duplicate historical case selection");
-	const cases = historicalCases.filter(c => !options.caseIds || options.caseIds.includes(c.id));
+		|| new Set(options.caseIds).size !== options.caseIds.length || options.caseIds.some(id => !catalog.some(c => c.id === id)))) throw new Error("Unknown or duplicate historical case selection");
+	const cases = catalog.filter(c => !options.caseIds || options.caseIds.includes(c.id));
 	if (cases.some(c => c.testFile && !c.expectedTests?.length)) throw new Error("Missing expected fixture test names");
-	return { out, arms, cases, repeats, timeoutMs, maxRequests };
+	return { out, arms, cases, suite, repeats, timeoutMs, maxRequests };
 }
 
 function describePlan(p: ReturnType<typeof prepare>, budgetUsd: number) {
-	return { cases: p.cases.map(c => ({ id: c.id, kind: c.kind, origin: c.origin })), repeats: p.repeats,
+	return { suite: p.suite, cases: p.cases.map(c => ({ id: c.id, kind: c.kind, origin: c.origin })), repeats: p.repeats,
 		runs: p.cases.length * p.repeats * p.arms.length, timeoutMs: p.timeoutMs, maxRequestsPerRun: p.maxRequests,
 		budgetUsd, arms: p.arms.map(a => ({ id: a.id, model: a.model, thinking: a.thinking, local: a.local,
 			promptHashes: { recon: fingerprint(a.promptText.recon), implement: fingerprint(a.promptText.implement) } })), rubric };
@@ -128,7 +131,8 @@ export async function runHistoricalEval(options: HistoricalEvalOptions, execute:
 	}
 	save(join(p.out, "manifest.json"), { version: 1, createdAt: new Date().toISOString(), ...describePlan(p, options.budgetUsd),
 		models: p.arms.map(({ id, model, thinking, contextWindow, maxTokens, pricing }) => ({ id, model, thinking, contextWindow, maxTokens, pricing })),
-		suiteHash: fingerprint(JSON.stringify(p.cases)), note: "No sandbox or shared-capacity coordination. API-metadata budget, not actual charges or a provider billing cap. No history replay or production prompt/config changes." });
+		suiteHash: fingerprint(JSON.stringify(p.cases)), nodeVersion: process.version,
+		frameworkHash: fingerprint(JSON.stringify(["bench/evals/cli.ts", "bench/evals/runner.ts", "bench/evals/validation.ts", "bench/evals/reporter.mjs", "bench/guard.ts", "bench/budget.ts", "bench/runner.ts", "delegate/spawn.ts", "delegate/calibration.ts", "child-runtime/spawn.ts", "child-runtime/policy.ts"].map(path => [path, fingerprint(readFileSync(join(repo, path), "utf8"))]))), note: "No sandbox or shared-capacity coordination. API-metadata budget, not actual charges or a provider billing cap. No history replay or production prompt/config changes." });
 	const results: Array<Record<string, any>> = [];
 	let spentUsd = 0, spendIncomplete = false, stopped: string | undefined;
 	try {
@@ -147,7 +151,7 @@ export async function runHistoricalEval(options: HistoricalEvalOptions, execute:
 				}
 				const budgetPath = join(p.out, `${prefix}.budget.json`), eventsPath = join(p.out, `${prefix}.jsonl`), sessionFile = join(p.out, `${prefix}.session.jsonl`);
 				const promptSourcePath = join(p.out, "prompts", arm.id, `${task.kind}.md`);
-				const question = `Current working directory: ${cwd}\nCase root: ${root}\nPaths beginning workspace/ or related/ in this task are relative to the case root, not cwd. From cwd, workspace/src/file refers to src/file; use absolute case-root paths if needed. Do not create a second workspace directory.\n\n${task.task.replaceAll("{{root}}", root)}`;
+				const question = `Current working directory: ${cwd}\nCase root: ${root}\nPaths beginning workspace/ or related/ in this task are relative to the case root, not cwd. From cwd, workspace/src/file refers to src/file; use absolute case-root paths if needed. Do not create a second workspace directory. Do not read other runs or campaign artifacts outside your case root.\n\n${task.task.replaceAll("{{root}}", root)}`;
 				save(budgetPath, config); writeFileSync(eventsPath, "", { flag: "wx", mode: 0o600 });
 				const calls: Array<{ name: string; args: unknown }> = [];
 				const recordingAbort = new AbortController(), signal = options.signal ? AbortSignal.any([options.signal, recordingAbort.signal]) : recordingAbort.signal;
