@@ -65,7 +65,7 @@ export function snapshotDirectory(agentDir: string, config?: SnapshotConfig): st
 	return config?.directory ?? join(agentDir, "delegate-snapshots");
 }
 export function snapshotEnabled(repo: Repository | undefined, config?: SnapshotConfig): boolean {
-	return !!repo && config?.repositories[repo.configKey] === true;
+	return !!repo && (config?.repositories[repo.configKey] ?? config?.defaultEnabled ?? false);
 }
 
 function checkPrivate(stat: Awaited<ReturnType<typeof lstat>>, directory: boolean, path: string): void {

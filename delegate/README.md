@@ -26,7 +26,7 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 
 ## Eval repository snapshots
 
-Capture is **off by default**. Open **`/pi-delegate snapshots`** from the options menu to enable/disable it for the current repository or choose a dedicated storage directory. Enabling only saves configuration; the first capture happens before a delegate starts. The directory setting is global; changing it leaves existing captures in the old directory. Other open Pi sessions need `/reload`.
+Capture is **off by default**. Open **`/pi-delegate snapshots`** from the options menu to change the global capture default, enable/disable the current repository, reset it to the global default, or choose a dedicated storage directory. Explicit repository settings override the global default, including `false` when the default is enabled. Enabling only saves configuration; the first capture happens before a delegate starts. The directory setting is global; changing it leaves existing captures in the old directory. Other open Pi sessions need `/reload`.
 
 Manual configuration in `~/.pi/agent/delegate.json`:
 
@@ -34,16 +34,19 @@ Manual configuration in `~/.pi/agent/delegate.json`:
 {
   "snapshots": {
     "directory": "/absolute/private/eval-snapshots",
+    "defaultEnabled": true,
     "repositories": {
-      "/absolute/primary/repository/root": true
+      "/absolute/primary/repository/root": false
     }
   }
 }
 ```
 
+Omit `defaultEnabled` (or set it to `false`) to keep capture opt-in. Setting it to `true` captures every Git repository without an explicit override; remove a repository key to make it follow the default again. Non-Git working directories are never captured.
+
 Omit `directory` to use `<agent-dir>/delegate-snapshots/`, independently of transcript archive overrides. Keys are canonical absolute repository paths shown by the menu: the shared Git directory's parent when it is named `.git`, otherwise the shared Git directory itself. This normally means the primary checkout root; separate-Git-directory layouts can use a Git-directory key. Subdirectories and linked worktrees share that repository's setting/storage. Separate clones are separate repositories. Storage must be outside the checkout and primary repository, owned by you, private, and not reached through symlinks. Existing directories must have no group/other access (`chmod 700`); stored files likewise require private permissions (`chmod 600`). Validation errors identify the failing path and reason, with a permission-fix command when applicable; permissions are never changed automatically.
 
-For enabled repositories, session startup shows capture status, snapshot count and stored-file size above the editor. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. The status refreshes asynchronously after capture and settings changes; metrics scans never delay child dispatch or cleanup. Browsing disabled settings creates no snapshot directories.
+For enabled repositories, session startup prints capture status, snapshot count, stored-file size and storage directory once in the transcript, without adding model context. It is not a sticky widget and does not repeat on `/reload`, capture completion or settings changes. Open the snapshots menu for current counts. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. Startup metrics scans are asynchronous and never delay child dispatch or cleanup. Browsing disabled settings creates no snapshot directories.
 
 Each accepted job freezes its capture settings, but captures the **actual launch-time state**, after queue/capacity waits and before starting the child. Cancelled queued jobs are not captured. Failed capture or failure to persist its archive link blocks launch. Successful captures are linked by `repositorySnapshot` in the run's `metadata.json`.
 

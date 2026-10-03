@@ -17,13 +17,24 @@ export async function snapshotCommand(args: string, ctx: ExtensionCommandContext
 			const stats = await repositorySnapshotStats(repo, directory);
 			const enabled = snapshotEnabled(repo, current);
 			const toggle = `${enabled ? "Disable" : "Enable"} capture for this repository`;
+			const overridden = Object.hasOwn(current.repositories, repo.configKey);
+			const reset = "Use global default for this repository";
+			const defaultToggle = `Default capture for repositories — ${current.defaultEnabled ? "enabled" : "disabled"}`;
 			const storage = `Storage directory — ${directory}`;
-			const choice = await ctx.ui.select(`${feedback ? `${feedback}\n` : ""}Eval snapshots — ${enabled ? "enabled" : "disabled"} · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, [toggle, storage, "Back"], { signal });
+			const choice = await ctx.ui.select(`${feedback ? `${feedback}\n` : ""}Eval snapshots — ${enabled ? "enabled" : "disabled"} (${overridden ? "repository override" : "global default"}) · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, [toggle, ...(overridden ? [reset] : []), defaultToggle, storage, "Back"], { signal });
 			if (choice === undefined || choice === "Back" || signal.aborted) return;
 			let next: SnapshotConfig;
 			if (choice === toggle) {
 				if (!enabled && !await ctx.ui.confirm("Enable repository snapshots?", `Repository: ${repo.configKey}\nStorage: ${directory}\nCaptures tracked and non-ignored untracked source before each delegate starts. Code and Git history may contain secrets; retention is indefinite. Failed captures block launch.`, { signal })) continue;
 				next = { ...current, repositories: { ...current.repositories, [repo.configKey]: !enabled } };
+			} else if (choice === reset) {
+				if (current.defaultEnabled && !enabled && !await ctx.ui.confirm("Enable repository snapshots?", `Use the enabled global default for ${repo.configKey}? Code and Git history may contain secrets; retention is indefinite. Failed captures block launch.`, { signal })) continue;
+				const repositories = { ...current.repositories };
+				delete repositories[repo.configKey];
+				next = { ...current, repositories };
+			} else if (choice === defaultToggle) {
+				if (!current.defaultEnabled && !await ctx.ui.confirm("Enable capture by default?", "Future delegates in every Git repository without an explicit override will capture source and Git history. These may contain secrets; retention is indefinite. Failed captures block launch. Existing repository overrides are preserved.", { signal })) continue;
+				next = { ...current, defaultEnabled: !current.defaultEnabled };
 			} else if (choice === storage) {
 				const value = await ctx.ui.input("Snapshot storage directory (absolute; global setting)", directory, { signal });
 				if (value === undefined || signal.aborted) continue;
