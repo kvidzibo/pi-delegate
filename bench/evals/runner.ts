@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, lstatSync, realpathSync } from "node:fs";
-import { isAbsolute, join, dirname, resolve, relative, basename } from "node:path";
+import { isAbsolute, join, dirname, resolve, relative, basename, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { runPiChild, type RunPiChildInput, type ChildResult } from "../../child-runtime/spawn.ts";
@@ -11,6 +11,7 @@ import { fingerprint, snapshotPricing, type Pricing } from "../../delegate/calib
 import { Budget, requestReservation, validBudgetState, type BudgetConfig } from "../budget.ts";
 import { transcriptUsage } from "../runner.ts";
 import { historicalCases, type HistoricalCase } from "./cases.ts";
+import { validateFixture, type Validation } from "./validation.ts";
 
 export type EvalArm = {
 	id: string; model: string; thinking: string; contextWindow: number; maxTokens: number;
@@ -25,6 +26,7 @@ const save = (path: string, value: unknown) => writeFileSync(path, JSON.stringif
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
 function prepare(options: HistoricalEvalOptions) {
+	if (process.platform === "win32") throw new Error("Historical evaluations require POSIX process groups");
 	const repeats = options.repeats ?? 1, timeoutMs = options.timeoutMs ?? 120000, maxRequests = options.maxRequests ?? 12;
 	if (!isAbsolute(options.out) || !Number.isFinite(options.budgetUsd) || options.budgetUsd < 0
 		|| !Number.isInteger(repeats) || repeats < 1 || repeats > 5
@@ -33,10 +35,10 @@ function prepare(options: HistoricalEvalOptions) {
 		|| !Array.isArray(options.arms) || options.arms.length < 2 || options.arms.length > 8) throw new Error("Invalid historical evaluation options");
 	const normalized = resolve(options.out), out = join(realpathSync(dirname(normalized)), basename(normalized));
 	const withinRepo = relative(realpathSync(repo), out);
-	if (!withinRepo || (!withinRepo.startsWith("..") && !isAbsolute(withinRepo))) throw new Error("Keep evaluation output outside the source checkout");
+	if (!isAbsolute(withinRepo) && withinRepo !== ".." && !withinRepo.startsWith(`..${sep}`)) throw new Error("Keep evaluation output outside the source checkout");
 	const ids = new Set<string>();
 	const arms = options.arms.map(arm => {
-		if (!/^[a-z][a-z0-9-]{0,31}$/.test(arm.id) || ids.has(arm.id)
+		if (typeof arm?.id !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(arm.id) || ids.has(arm.id)
 			|| typeof arm.model !== "string" || !/^[^\s/]+\/[^\s]+$/.test(arm.model)
 			|| !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(arm.thinking)) throw new Error("Invalid or duplicate evaluation arm");
 		ids.add(arm.id);
@@ -103,21 +105,18 @@ export function inspectChanges(root: string, task: HistoricalCase) {
 	} catch (error) { return { changed: [], unexpected: [], missing: [...task.requiredChanges], error: String(error) }; }
 }
 
-type Validation = { ran: boolean; passed: boolean | null; exitCode?: number | string; output?: string };
-function validateFixture(root: string, task: HistoricalCase, home: string): Promise<Validation> {
-	if (!task.testFile) return Promise.resolve({ ran: false, passed: null });
-	mkdirSync(home, { mode: 0o700 });
-	return new Promise(resolve => {
-		execFile(process.execPath, ["--test", join(root, task.testFile!)], {
-			cwd: join(root, "workspace"), timeout: 5000, killSignal: "SIGKILL", maxBuffer: 65536,
-			// Validation code must not receive model credentials or personal application paths.
-			env: { PATH: dirname(process.execPath), HOME: home, USERPROFILE: home, TMPDIR: home, TEMP: home, TMP: home, LANG: "C.UTF-8", TZ: "UTC", SystemRoot: process.env.SystemRoot },
-		}, (error, stdout, stderr) => resolve({ ran: true, passed: !error, exitCode: error?.code ?? 0, output: `${stdout}\n${stderr}`.slice(-65536) }));
-	});
+/** Developer entrypoints are Node scripts, not Pi's CLI; never recursively launch the eval script. */
+export async function runEvalChild(input: RunPiChildInput): Promise<ChildResult> {
+	let actualArgs: string[] = [];
+	const result = await runPiChild({ ...input, spawnFn: (_command, args, options) => {
+		actualArgs = args[0] === process.argv[1] ? args.slice(1) : args;
+		return spawn("pi", actualArgs, options as SpawnOptions);
+	} });
+	return result.diag ? { ...result, diag: { ...result.diag, command: "pi", args: actualArgs } } : result;
 }
 
 /** Explicit developer-only model calls, using fresh sanitized fixtures and the existing dispatch-time budget guard. */
-export async function runHistoricalEval(options: HistoricalEvalOptions, execute: (input: RunPiChildInput) => Promise<ChildResult> = runPiChild) {
+export async function runHistoricalEval(options: HistoricalEvalOptions, execute: (input: RunPiChildInput) => Promise<ChildResult> = runEvalChild) {
 	const p = prepare(options);
 	options.signal?.throwIfAborted();
 	mkdirSync(p.out, { mode: 0o700 }); // Never reuse a run or overwrite prior evidence.
@@ -146,7 +145,8 @@ export async function runHistoricalEval(options: HistoricalEvalOptions, execute:
 					const target = join(root, path); mkdirSync(dirname(target), { recursive: true, mode: 0o700 }); writeFileSync(target, text, { flag: "wx", mode: 0o600 });
 				}
 				const budgetPath = join(p.out, `${prefix}.budget.json`), eventsPath = join(p.out, `${prefix}.jsonl`), sessionFile = join(p.out, `${prefix}.session.jsonl`);
-				const promptSourcePath = join(p.out, "prompts", arm.id, `${task.kind}.md`), question = task.task.replaceAll("{{root}}", root);
+				const promptSourcePath = join(p.out, "prompts", arm.id, `${task.kind}.md`);
+				const question = `Current working directory: ${cwd}\nCase root: ${root}\nPaths beginning workspace/ or related/ in this task are relative to the case root, not cwd. From cwd, workspace/src/file refers to src/file; use absolute case-root paths if needed. Do not create a second workspace directory.\n\n${task.task.replaceAll("{{root}}", root)}`;
 				save(budgetPath, config); writeFileSync(eventsPath, "", { flag: "wx", mode: 0o600 });
 				const calls: Array<{ name: string; args: unknown }> = [];
 				const recordingAbort = new AbortController(), signal = options.signal ? AbortSignal.any([options.signal, recordingAbort.signal]) : recordingAbort.signal;
@@ -184,7 +184,7 @@ export async function runHistoricalEval(options: HistoricalEvalOptions, execute:
 				if (!arm.local && valid) spentUsd += receipt.spentUsd + receipt.reservedUsd;
 				if (!arm.local) spendIncomplete = !reconciled;
 				let changes = inspectChanges(root, task);
-				const validation = !changes.error && !changes.unexpected.length ? await validateFixture(root, task, join(p.out, `${prefix}.validation-home`)) : { ran: false, passed: null };
+				const validation: Validation = !changes.error && !changes.unexpected.length ? await validateFixture(root, task, join(p.out, `${prefix}.validation-home`), options.signal) : { ran: false, passed: null };
 				if (validation.ran) changes = inspectChanges(root, task);
 				const scopeIntact = !changes.error && !changes.unexpected.length;
 				const evidenceMatched = task.evidence ? task.evidence.every(fact => result.text.includes(fact)) : null;
@@ -193,9 +193,9 @@ export async function runHistoricalEval(options: HistoricalEvalOptions, execute:
 				const record = { taskId: task.id, kind: task.kind, origin: task.origin, repeat, arm: arm.id, model: arm.model, thinking: arm.thinking,
 					answer: result.text, workerCompleted, assessment: "manual-review-required", checksPassed, changes, validation, evidenceMatched,
 					receiptComplete, receipt, tokens: usage.tokens, apiMetadataUsd: usage.apiCostUsd, toolCalls: calls.length, calls,
-					elapsedMs, stopReason: result.stopReason, exitCode: result.exitCode, stderr: result.stderrTail, recordingError, eventsPath, sessionFile };
+					elapsedMs, stopReason: result.stopReason, exitCode: result.exitCode, stderr: result.stderrTail, invocation: result.diag ? { command: result.diag.command, args: result.diag.args } : undefined, recordingError, eventsPath, sessionFile };
 				save(join(p.out, `${prefix}.result.json`), record); results.push(record);
-				if (recordingError || !reconciled || (valid && receipt.stopped) || spentUsd > options.budgetUsd) throw new Error(recordingError ?? (valid ? receipt.stopped : undefined) ?? "Unresolved receipt/usage or budget exhausted; stopped");
+				if (validation.cleanupError || recordingError || !reconciled || (valid && receipt.stopped) || spentUsd > options.budgetUsd) throw new Error(validation.cleanupError ?? recordingError ?? (valid ? receipt.stopped : undefined) ?? "Unresolved receipt/usage or budget exhausted; stopped");
 				options.signal?.throwIfAborted();
 			}
 		}

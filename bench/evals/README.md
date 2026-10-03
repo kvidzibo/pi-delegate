@@ -17,7 +17,7 @@ Candidate role prompts in `prompts/` are eval-only. They are not loaded by the e
 
 ## Setup and planning
 
-Use a source checkout, Node 22.19+ and `pi` on PATH. Model calls need configured Pi model access. No extra npm dependencies are required. Each arm explicitly supplies model, thinking, model limits and both role prompts; the runner does not inherit delegate defaults or substitute models/levels. The guard rejects mismatched/clamped thinking or model metadata before provider dispatch.
+Use a source checkout on a POSIX system (Linux/macOS), Node 22.19+ and `pi` on PATH. The developer runner explicitly launches `pi`, not its own Node entrypoint. Model calls need configured Pi model access. No extra npm dependencies are required. Each arm explicitly supplies model, thinking, model limits and both role prompts; the runner does not inherit delegate defaults or substitute models/levels. The guard rejects mismatched/clamped thinking or model metadata before provider dispatch.
 
 Create an absolute JSON config file outside the checkout. Example **local-only** prompt comparison; replace `/absolute/pi-delegate` with your checkout and verify model limits against your Pi model metadata:
 
@@ -74,7 +74,9 @@ Vary one factor at a time: identical models/thinking for prompt comparisons, ide
 - **No sandbox.** Models and validation code have your system permissions. Scope checks detect some fixture changes afterward; they do not prevent shell writes or network access. Use trusted models/prompts and fixtures. `offline` is not a network sandbox.
 - Coordinate local clients yourself; this runner bypasses ordinary delegate scheduling and shared capacity. It never starts/stops servers or changes model, credential, calibration or extension configuration.
 - Output is private (0700 directories, 0600 files) and retained until you remove it. Keep it outside Git; it can contain sensitive tool output despite sanitized initial fixtures.
-- Implementation checks run the unchanged fixture tests with bounded Node subprocesses and an allowlisted environment. Readonly test changes, unexpected files/directories and symlinks fail scope checks. Validation is skipped when scope is invalid. Recon checks match expected evidence strings only.
+- Implementation checks run the unchanged fixture tests with bounded Node subprocesses and an allowlisted environment. Readonly test changes, unexpected files/directories and symlinks fail scope checks. Validation is skipped when scope is invalid. Owned process groups terminate test workers and CLI descendants on the five-second timeout, cancellation or completion; cleanup failures stop the campaign. Recon checks match expected evidence strings only.
+
+Every task states the actual cwd and case-root path base: `workspace/...` and `related/...` are case-root-relative; tool paths from cwd omit the `workspace/` prefix. Scope checks use that same case root.
 
 `manifest.json` freezes prompt hashes, suite hash, model/limit/pricing settings and provenance. Each run saves copied fixtures, native session, raw events, answer, requested tools, elapsed model runtime, usage/budget receipt, scope changes and independent test/evidence checks. `summary.json` compares narrow check counts, worker completion, median runtime, tool calls, tokens and metadata cost. Runtime excludes subsequent independent fixture validation.
 

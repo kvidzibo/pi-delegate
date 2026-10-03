@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, chmodSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { validateFixture } from "../evals/validation.ts";
 import { historicalCases } from "../evals/cases.ts";
 import { runHistoricalEval, planHistoricalEval, inspectChanges, type HistoricalEvalOptions } from "../evals/runner.ts";
 import { requestReservation } from "../budget.ts";
@@ -41,6 +43,7 @@ test("historical evals compare fresh matched cases without model calls and retai
 	assert.throws(() => planHistoricalEval({ ...options, caseIds: ["unknown"] }), /Unknown/);
 	assert.throws(() => planHistoricalEval({ ...options, timeoutMs: 2147483648 }), /Invalid/);
 	assert.throws(() => planHistoricalEval({ ...options, out: join(repo, "eval-output") }), /outside/);
+	assert.throws(() => planHistoricalEval({ ...options, out: join(repo, "..eval-output") }), /outside/);
 
 	const seen: string[] = [];
 	async function mock(input: RunPiChildInput, modify = true) {
@@ -56,6 +59,9 @@ test("historical evals compare fresh matched cases without model calls and retai
 		writeFileSync(`${input.env.PI_DELEGATE_BENCH_BUDGET}.state`, JSON.stringify({ spentUsd: 0, reservedUsd: 0, requests: 0, pending: false }));
 		await input.beforePrompt!(new AbortController().signal);
 		const caseRoot = dirname(input.cwd);
+		assert.ok(input.task.includes(`Current working directory: ${input.cwd}`));
+		assert.ok(input.task.includes(`Case root: ${caseRoot}`));
+		assert.ok(input.task.includes("relative to the case root, not cwd"));
 		assert.equal(inspectChanges(caseRoot, task).changed.length, 0, "every arm starts from the identical clean fixture");
 		if (modify && arm === "candidate" && task.kind === "implement") {
 			const file = join(caseRoot, task.requiredChanges[0]); mkdirSync(dirname(file), { recursive: true });
@@ -114,4 +120,63 @@ test("historical evals compare fresh matched cases without model calls and retai
 	const abort = new AbortController();
 	const cancelled = await runHistoricalEval({ ...options, out: join(root, "cancelled"), signal: abort.signal }, async input => { const r = await mock(input, false); abort.abort(); return r; });
 	assert.equal(cancelled.results.length, 1); assert.ok(cancelled.stopped); assert.ok(existsSync(join(root, "cancelled/summary.json")));
+
+	// Exercise the real --run entrypoint/native RPC runner through an owned fake `pi` executable.
+	// No model or network calls: this catches recursive eval-CLI launching hidden by injected workers.
+	const bin = join(root, "bin"); mkdirSync(bin);
+	const fakePi = join(bin, "pi");
+	writeFileSync(fakePi, `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+const budget = process.env.PI_DELEGATE_BENCH_BUDGET;
+const args = process.argv.slice(2), session = args[args.indexOf('--session') + 1];
+writeFileSync(budget+'.state', JSON.stringify({spentUsd:0,reservedUsd:0,requests:0,pending:false}));
+writeFileSync(session, '{"type":"session","version":3}\\n');
+const lines = createInterface({input:process.stdin});
+lines.on('line', line => {
+ const command = JSON.parse(line); if(command.type !== 'prompt') return;
+ writeFileSync(budget+'.state', JSON.stringify({spentUsd:0,reservedUsd:0,requests:1,pending:false}));
+ const message = {role:'assistant',provider:'ollama',model:'test',stopReason:'stop',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,total:2},content:[{type:'text',text:'related/settings/tests/load.test.ts related/settings/package.json node --experimental-strip-types --test tests/load.test.ts'}]};
+ for(const e of [{type:'response',command:'prompt',success:true,id:command.id},{type:'message_end',message},{type:'agent_settled'}]) console.log(JSON.stringify(e));
+});
+`); chmodSync(fakePi, 0o700);
+	const native = { ...options, out: join(root, "native"), caseIds: ["cross-repo-path"] };
+	writeFileSync(config, JSON.stringify(native));
+	const launched = JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", cli, "--run", config], {
+		encoding: "utf8", timeout: 15000, env: { PATH: `${bin}:${dirname(process.execPath)}`, HOME: root, USERPROFILE: root },
+	}));
+	assert.equal(launched.stopped, undefined); assert.deepEqual(launched.comparisons.map((r: any) => r.checksPassed), [1, 1]);
+	const nativeRows = JSON.parse(readFileSync(join(native.out, "summary.json"), "utf8")).results;
+	assert.ok(nativeRows.every((r: any) => r.invocation.command === "pi" && r.invocation.args[0] === "--mode"));
+
+	// Real Node test workers spawn a hanging CLI with detached stdio; timeout and abort kill the owned group.
+	for (const mode of ["timeout", "abort"]) {
+		const specimen = join(root, mode), pidFile = join(specimen, "pids.json"); mkdirSync(join(specimen, "workspace/tests"), { recursive: true });
+		const testFile = "workspace/tests/hanging.test.mjs";
+		writeFileSync(join(specimen, testFile), `import {spawn} from 'node:child_process';import{writeFileSync}from'node:fs';
+const cli=spawn(process.execPath,['-e','setInterval(()=>{},1000)',${JSON.stringify(specimen)}],{stdio:'ignore'});
+writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:cli.pid,worker:process.pid}));await new Promise(()=>{});\n`);
+		const controller = new AbortController();
+		const validation = validateFixture(specimen, { ...task, testFile }, join(specimen, "home"), controller.signal, mode === "timeout" ? 1000 : 2500);
+		try {
+			for (let i = 0; i < 60 && !existsSync(pidFile); i++) await delay(25);
+			assert.ok(existsSync(pidFile), "hanging fixture started before the lifecycle assertion");
+			if (mode === "abort") controller.abort();
+			const result = await validation;
+			assert.equal(result.passed, false); assert.equal(result.exitCode, null); assert.equal(result.signal, "SIGKILL");
+			assert.equal(result.cause, mode === "abort" ? "aborted" : "timeout"); assert.equal(result.cleanupError, undefined);
+			const pid = JSON.parse(readFileSync(pidFile, "utf8")).pid;
+			let live = true;
+			for (let i = 0; i < 40 && live; i++) {
+				try { process.kill(pid, 0); live = process.platform !== "linux" || !/\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { live = false; }
+				if (live) await delay(25);
+			}
+			assert.equal(live, false, "validation must not leave an executing CLI descendant");
+		} finally {
+			controller.abort(); await validation;
+			if (existsSync(pidFile)) for (const pid of Object.values(JSON.parse(readFileSync(pidFile, "utf8"))) as number[]) {
+				try { if (process.platform === "linux" && readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(specimen)) process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+			}
+		}
+	}
 });
