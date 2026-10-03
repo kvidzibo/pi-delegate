@@ -8,6 +8,30 @@ import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 import { captureRepository, repositoryFor, repositorySnapshotStats, snapshotEnabled } from "../snapshots.ts";
 
+test("unsafe snapshot storage reports the path, reason and safely quoted permission fix", { skip: process.platform === "win32" }, async () => {
+	const dir = mkdtempSync(join(tmpdir(), "delegate-snapshot-permissions-"));
+	const storage = join(dir, "storage 'quoted'"), repo = { root: join(dir, "repo"), configKey: join(dir, "repo"), id: "repo-id" };
+	mkdirSync(storage); chmodSync(storage, 0o775);
+	try {
+		const expected = `Snapshot storage directory ${JSON.stringify(storage)} has permissions 775; group/other access is not allowed.\nFix: chmod 700 -- '${storage.replaceAll("'", "'\\''")}'`;
+		await assert.rejects(repositorySnapshotStats(repo, storage), { message: expected });
+		await assert.rejects(captureRepository(repo, storage, "bad-mode"), { message: expected });
+		// The suggested command must work even when the path contains shell quotes.
+		execFileSync("/bin/sh", ["-c", expected.split("\nFix: ")[1]]);
+		assert.deepEqual(await repositorySnapshotStats(repo, storage), { count: 0, bytes: 0 });
+		const captures = join(storage, repo.id, "captures"), file = join(captures, "capture.json");
+		mkdirSync(captures, { recursive: true, mode: 0o700 });
+		writeFileSync(file, "{}"); chmodSync(file, 0o644);
+		await assert.rejects(repositorySnapshotStats(repo, storage), { message: `Snapshot storage file ${JSON.stringify(file)} has permissions 644; group/other access is not allowed.\nFix: chmod 600 -- '${file.replaceAll("'", "'\\''")}'` });
+		chmodSync(file, 0o600);
+		assert.deepEqual(await repositorySnapshotStats(repo, storage), { count: 1, bytes: 2 });
+		rmSync(file); symlinkSync(join(dir, "missing"), file);
+		await assert.rejects(repositorySnapshotStats(repo, storage), { message: `Snapshot storage file ${JSON.stringify(file)} is a symlink; use a real regular file.` });
+		rmSync(file); mkdirSync(file, { mode: 0o700 });
+		await assert.rejects(repositorySnapshotStats(repo, storage), { message: `Snapshot storage file ${JSON.stringify(file)} is not a regular file.` });
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("opt-in repository captures preserve starting source/index/history, deduplicate and fail closed", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "delegate-snapshot-test-"));
 	const repoPath = join(dir, "repo"), storage = join(dir, "storage"), worktree = join(dir, "worktree");

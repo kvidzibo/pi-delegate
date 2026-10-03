@@ -68,20 +68,27 @@ export function snapshotEnabled(repo: Repository | undefined, config?: SnapshotC
 	return !!repo && config?.repositories[repo.configKey] === true;
 }
 
-function checkPrivate(stat: Awaited<ReturnType<typeof lstat>>, directory: boolean): void {
-	if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.isSymbolicLink()
-		|| (process.platform !== "win32" && ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))) {
-		throw new Error("Snapshot storage must contain private, owned regular files/directories (no symlinks).");
+function checkPrivate(stat: Awaited<ReturnType<typeof lstat>>, directory: boolean, path: string): void {
+	const label = `Snapshot storage ${directory ? "directory" : "file"} ${JSON.stringify(path)}`;
+	if (stat.isSymbolicLink()) throw new Error(`${label} is a symlink; use a real ${directory ? "directory" : "regular file"}.`);
+	if (directory ? !stat.isDirectory() : !stat.isFile()) throw new Error(`${label} is not a ${directory ? "directory" : "regular file"}.`);
+	if (process.platform !== "win32") {
+		if (stat.uid !== process.getuid?.()) throw new Error(`${label} is owned by UID ${stat.uid}; expected UID ${process.getuid?.()}. Choose storage owned by you.`);
+		if ((stat.mode & 0o077) !== 0) {
+			const mode = (stat.mode & 0o7777).toString(8).padStart(3, "0");
+			const quoted = `'${path.replaceAll("'", "'\\''")}'`;
+			throw new Error(`${label} has permissions ${mode}; group/other access is not allowed.\nFix: chmod ${directory ? "700" : "600"} -- ${quoted}`);
+		}
 	}
 }
 async function privateDir(path: string): Promise<void> {
 	await mkdir(path, { recursive: true, mode: 0o700 });
-	checkPrivate(await lstat(path), true);
+	checkPrivate(await lstat(path), true, path);
 	if (await realpath(path) !== resolve(path)) throw new Error("Snapshot storage path must not traverse symlinks.");
 }
 async function privateFile(path: string): Promise<Buffer> {
 	const fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-	try { checkPrivate(await fd.stat(), false); return await fd.readFile(); }
+	try { checkPrivate(await fd.stat(), false, path); return await fd.readFile(); }
 	finally { await fd.close(); }
 }
 function inside(root: string, path: string): boolean {
@@ -186,7 +193,7 @@ async function publish(temp: string, target: string, expected?: Buffer): Promise
 	try { await link(temp, target); }
 	catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		checkPrivate(await lstat(target), false);
+		checkPrivate(await lstat(target), false, target);
 		if (expected && !(await decompress(await privateFile(target), { maxOutputLength: MAX_FILE })).equals(expected)) throw new Error("Existing snapshot object is corrupt.");
 	}
 }
@@ -194,7 +201,7 @@ async function publish(temp: string, target: string, expected?: Buffer): Promise
 async function fileHash(path: string, signal?: AbortSignal): Promise<string> {
 	const fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 	try {
-		checkPrivate(await fd.stat(), false);
+		checkPrivate(await fd.stat(), false, path);
 		const digest = createHash("sha256");
 		for await (const chunk of fd.createReadStream({ autoClose: false })) { signal?.throwIfAborted(); digest.update(chunk); }
 		return digest.digest("hex");
@@ -261,21 +268,21 @@ export async function repositorySnapshotStats(repo: Repository, directory: strin
 	signal?.throwIfAborted();
 	const root = join(directory, repo.id);
 	try {
-		checkPrivate(await lstat(directory), true);
+		checkPrivate(await lstat(directory), true, directory);
 		if (await realpath(directory) !== resolve(directory)) throw new Error("Snapshot storage path must not traverse symlinks.");
-		checkPrivate(await lstat(root), true);
+		checkPrivate(await lstat(root), true, root);
 	}
 	catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { count: 0, bytes: 0 }; throw error; }
 	let count = 0, bytes = 0;
 	for (const name of ["captures", "objects", "history"]) {
 		signal?.throwIfAborted();
 		const dir = join(root, name);
-		try { checkPrivate(await lstat(dir), true); }
+		try { checkPrivate(await lstat(dir), true, dir); }
 		catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
 		for (const item of await readdir(dir)) {
 			signal?.throwIfAborted();
 			const stat = await lstat(join(dir, item));
-			checkPrivate(stat, false);
+			checkPrivate(stat, false, join(dir, item));
 			bytes += stat.size;
 			if (name === "captures" && item.endsWith(".json")) count++;
 		}
