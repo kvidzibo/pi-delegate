@@ -146,6 +146,14 @@ Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
 Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
+## Opt-in eval snapshots
+
+`snapshots` in the user overlay selects canonical primary repository roots and an optional absolute storage directory (default `<agent-dir>/delegate-snapshots`). No repositories are enabled by default. `/pi-delegate snapshots` configures the current repository and shared directory without capturing. Session startup reports completed capture count and deduplicated stored-file bytes; linked worktrees share identity. Settings saves preserve unrelated user configuration and refuse stale snapshot settings.
+
+Freeze capture policy at job acceptance, then capture source/index/HEAD after queue/capacity admission and before invoking the child runner. Cancelled queued jobs never capture. Persist `repositorySnapshot` in native run metadata before launch; any capture/link failure prevents child dispatch. Never modify the live index, refs or working tree. Keep snapshot storage separate/private, publish immutable content-addressed objects and same-HEAD history bundles exclusively, and create one capture manifest per successful preparation. No automatic cleanup of retained captures.
+
+Capture tracked/nonignored-untracked source, executable modes, symlink targets, binary staged changes and starting-HEAD history. Compare two full reads and refuse detected instability; do not claim atomicity or repository-lock enforcement. Refuse unsupported nested/submodule/special-file inputs and unsafe storage instead of silently omitting them. See README for coverage and size limits. No environment dumps, uploads, Docker, grading or default activation.
+
 ## Durable accounting
 
 Archive all accepted kinds, local and hosted, before queueing. Use private UUID directories under `<agent-dir>/delegate/runs` (`PI_DELEGATE_ARCHIVE_DIR` override). Keep native session JSONL, custom prompt, task, and atomic versioned metadata linking the original parent session and tool call. No automatic expiry, pruning, or storage-size eviction. Never store provider credentials/environment dumps. Refuse launches when recording cannot be established; surface later failures without hiding child outcomes.

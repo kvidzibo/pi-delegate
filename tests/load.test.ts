@@ -33,6 +33,12 @@ test("delegate model UI lists roles, searches available models and saves without
 	});
 });
 
+test("opt-in snapshots report storage, capture queued start states and block unsafe launches through real Pi", async () => {
+	assert.deepEqual((await runPiProbe("delegate-snapshots-probe")).result, {
+		startup: true, configured: true, queuedStartState: true, cancelledNotCaptured: true, linkedArchive: true, failClosed: true, noModelCalls: true,
+	});
+});
+
 test("local factory instances share capacity and real lease-only children retain occupancy without changing execution policy", async () => {
 	assert.deepEqual((await runPiProbe("delegate-shared-capacity-probe")).result, {
 		sharedFactories: true, hostedBypass: true, leaseOnlyStartup: true, inheritedOccupancy: true, noModelCalls: true,

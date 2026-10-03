@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { repositoryFor, repositorySnapshotStats } from "../../delegate/snapshots.ts";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
@@ -59,6 +61,72 @@ export default function probe(pi: ExtensionAPI) {
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
 		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
 		return { tools: tools.map((tool) => tool.name) };
+	});
+	register("delegate-snapshots-probe", async (ctx) => {
+		const repoPath = join(getAgentDir(), "snapshot-repo"), storage = join(getAgentDir(), "eval-snapshots");
+		mkdirSync(repoPath);
+		const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, encoding: "utf8" });
+		git("init", "-q", "-b", "main"); writeFileSync(join(repoPath, "source"), "before\n"); git("add", ".");
+		git("-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-qm", "base");
+		const repo = (await repositoryFor(repoPath))!;
+		const userPath = join(getAgentDir(), "delegate.json"), previousSkip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, repositories: { [repo.configKey]: true } } }));
+		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
+		let tool: any, release!: () => void, launches = 0, sequence = 0;
+		const widget: string[] = [];
+		const testCtx: any = { ...ctx, cwd: repoPath, hasUI: true, isIdle: () => false,
+			ui: { ...ctx.ui, setStatus() {}, notify() {}, setWidget: (key: string, lines?: string[]) => { if (key === "delegate-snapshots") widget.push((lines ?? []).join("\n")); } },
+		};
+		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
+			registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+		} as unknown as ExtensionAPI, async input => {
+			launches++;
+			const metadata = JSON.parse(readFileSync(join(input.sessionFile!.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
+			assert.ok(metadata.repositorySnapshot, "capture link is durable before the child runner starts");
+			const manifest = JSON.parse(readFileSync(metadata.repositorySnapshot.manifestPath, "utf8"));
+			assert.equal(manifest.runId, metadata.runId);
+			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; });
+			return { text: "mock complete", exitCode: 0, stderrTail: "" };
+		});
+		const call = (params: object) => tool.execute(`snapshot-${++sequence}`, params, undefined, undefined, testCtx);
+		const launch = (task: string) => call({ kind: "review", model: "hosted/mock", task, background: true });
+		const waitForLaunch = async () => { for (let i = 0; i < 500 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(release); };
+		try {
+			await handlers.get("session_start")!({}, testCtx);
+			assert.match(widget.at(-1)!, /capture enabled · 0 snapshots · 0 B/);
+			const held = await launch("hold"); await waitForLaunch();
+			const queued = await launch("queued"); assert.equal(queued.details.status, "queued");
+			const cancelled = await launch("cancelled"); await call({ jobId: cancelled.details.jobId, cancel: true });
+			writeFileSync(join(repoPath, "source"), "queued-start\n"); release();
+			await call({ jobId: held.details.jobId });
+			const done = await call({ jobId: queued.details.jobId }); assert.equal(done.details.ok, true);
+			assert.equal(launches, 2); assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+			const metadata = JSON.parse(readFileSync(join(done.details.sessionFile.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
+			const manifest = JSON.parse(readFileSync(metadata.repositorySnapshot.manifestPath, "utf8"));
+			const { gunzipSync } = await import("node:zlib");
+			assert.equal(gunzipSync(readFileSync(join(storage, repo.id, "objects", `${manifest.entries.find((entry: any) => entry.path === "source").hash}.gz`))).toString(), "queued-start\n");
+			assert.match(widget.at(-1)!, /capture enabled · 2 snapshots/);
+			let menu = 0;
+			await commands.get("pi-delegate").handler("snapshots", { ...testCtx, ui: { ...testCtx.ui,
+				select: async (title: string, options: string[]) => { assert.match(title, /2 snapshots/); return menu++ === 0 ? options[0] : "Back"; },
+			} });
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			assert.equal(widget.at(-1), "", "disabling clears the startup status");
+			// Recreate a factory with capture enabled and invalid storage: no child may launch.
+			await handlers.get("session_shutdown")!();
+			writeFileSync(userPath, JSON.stringify({ snapshots: { directory: join(repoPath, "bad-store"), repositories: { [repo.configKey]: true } } }));
+			delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
+				on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+			} as unknown as ExtensionAPI, async () => { launches++; throw new Error("must not start"); });
+			const bad = await call({ kind: "review", model: "hosted/mock", task: "bad storage", background: false, timeoutMs: 2000 });
+			assert.equal(bad.details.ok, false); assert.match(bad.content[0].text, /outside the repository/); assert.equal(launches, 2);
+			return { startup: true, configured: true, queuedStartState: true, cancelledNotCaptured: true, linkedArchive: true, failClosed: true, noModelCalls: true };
+		} finally {
+			await handlers.get("session_shutdown")?.();
+			if (previousSkip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previousSkip;
+			rmSync(userPath, { force: true });
+		}
 	});
 	register("delegate-models-probe", async (ctx) => {
 		assert.ok(pi.getCommands().some(command => command.name === "pi-delegate"));

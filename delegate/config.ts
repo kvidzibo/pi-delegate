@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { isNonEmptyStringArray, MAX_TIMER_MS } from "../child-runtime/policy.ts";
@@ -18,6 +18,11 @@ export interface AgentConfig {
 	offline: boolean;
 }
 
+export interface SnapshotConfig {
+	directory?: string;
+	repositories: Record<string, boolean>;
+}
+
 export interface DelegateConfig {
 	maxTaskChars: number;
 	maxConcurrent: number;
@@ -31,6 +36,7 @@ export interface DelegateConfig {
 	agents: Record<Kind, AgentConfig>;
 	localAlternatives: Record<string, Alternative>;
 	calibrationProfiles: string[];
+	snapshots: SnapshotConfig;
 }
 
 export function assertKind(value: unknown): Kind {
@@ -100,6 +106,29 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	};
 }
 
+function parseSnapshots(value: unknown, label = "snapshots"): SnapshotConfig {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} (object)`);
+	const raw = value as Record<string, unknown>;
+	const errors: string[] = [];
+	if (raw.directory !== undefined && (typeof raw.directory !== "string" || raw.directory.length === 0 || !isAbsolute(raw.directory))) {
+		errors.push("directory (non-empty absolute path)");
+	}
+	if (!raw.repositories || typeof raw.repositories !== "object" || Array.isArray(raw.repositories) ||
+		(Object.getPrototypeOf(raw.repositories) !== Object.prototype && Object.getPrototypeOf(raw.repositories) !== null)) {
+		errors.push("repositories (object)");
+	} else {
+		for (const [root, enabled] of Object.entries(raw.repositories)) {
+			if (!isAbsolute(root) || resolve(root) !== root) errors.push(`repositories.${root} (absolute canonical repository root path)`);
+			if (typeof enabled !== "boolean") errors.push(`repositories.${root} (boolean)`);
+		}
+	}
+	if (errors.length) throw new Error(`${label} (${errors.join("; ")})`);
+	return {
+		...(raw.directory === undefined ? {} : { directory: raw.directory as string }),
+		repositories: { ...(raw.repositories as Record<string, boolean>) },
+	};
+}
+
 function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 	const errors: string[] = [];
 	if (!Number.isInteger(parsed.maxTaskChars) || (parsed.maxTaskChars as number) < 1) {
@@ -166,6 +195,9 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 	const parsed = value as Record<string, unknown>;
 	const errors = collectConfigErrors(parsed);
 	const alternatives = parseAlternatives(parsed.localAlternatives);
+	let snapshots: SnapshotConfig = { repositories: {} };
+	try { if (parsed.snapshots !== undefined) snapshots = parseSnapshots(parsed.snapshots); }
+	catch (error) { errors.push(error instanceof Error ? error.message : "snapshots"); }
 	const profiles = parsed.calibrationProfiles ?? [];
 	if (!Array.isArray(profiles) || profiles.length > 100 || !profiles.every(p => typeof p === "string" && isAbsolute(p))) {
 		errors.push("calibrationProfiles (up to 100 absolute file paths)");
@@ -200,6 +232,7 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 		agents,
 		localAlternatives: alternatives,
 		calibrationProfiles: [...profiles],
+		snapshots,
 	};
 }
 
@@ -222,6 +255,19 @@ function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConf
 	return parseAgent(next, label);
 }
 
+function mergeSnapshots(base: SnapshotConfig, extra: unknown, path: string): SnapshotConfig {
+	if (extra === undefined) return base;
+	if (!extra || typeof extra !== "object" || Array.isArray(extra)) throw new Error(`Invalid delegate config: ${path} (snapshots (object))`);
+	const raw = extra as Record<string, unknown>;
+	if (raw.repositories !== undefined && (!raw.repositories || typeof raw.repositories !== "object" || Array.isArray(raw.repositories))) {
+		throw new Error(`Invalid delegate config: ${path} (snapshots.repositories (object))`);
+	}
+	return parseSnapshots({
+		...(raw.directory === undefined ? (base.directory === undefined ? {} : { directory: base.directory }) : { directory: raw.directory }),
+		repositories: { ...base.repositories, ...((raw.repositories ?? {}) as Record<string, unknown>) },
+	}, `Invalid delegate config: ${path} snapshots`);
+}
+
 export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path: string): DelegateConfig {
 	if (!overlay || typeof overlay !== "object" || Array.isArray(overlay)) {
 		throw new Error(`Invalid delegate config: ${path}`);
@@ -240,6 +286,7 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 		agents: { ...base.agents },
 		localAlternatives: extra.localAlternatives ?? base.localAlternatives,
 		calibrationProfiles: extra.calibrationProfiles ?? base.calibrationProfiles,
+		snapshots: mergeSnapshots(base.snapshots, extra.snapshots, path),
 	};
 	if (extra.agents !== undefined) {
 		if (!extra.agents || typeof extra.agents !== "object" || Array.isArray(extra.agents)) {
@@ -281,6 +328,47 @@ export function saveDelegateThinking(paths: ConfigPaths, kind: Kind, current: Ag
 	const patch = { thinking };
 	saveDelegatePatch(paths, kind, current, patch);
 	return patch;
+}
+
+function sameSnapshots(a: SnapshotConfig, b: SnapshotConfig): boolean {
+	if (a.directory !== b.directory) return false;
+	const aKeys = Object.keys(a.repositories).sort();
+	const bKeys = Object.keys(b.repositories).sort();
+	return aKeys.length === bKeys.length && aKeys.every((key, index) => key === bKeys[index] && a.repositories[key] === b.repositories[key]);
+}
+
+/** Persist opt-in repository snapshot settings without disturbing other user configuration. */
+export function saveDelegateSnapshots(paths: ConfigPaths, current: SnapshotConfig, next: SnapshotConfig): void {
+	if (!paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
+	const validatedCurrent = parseSnapshots(current, "current snapshots");
+	const validatedNext = parseSnapshots(next, "next snapshots");
+	let path = paths.userPath;
+	let overlay: Record<string, unknown> & { snapshots?: unknown } = {};
+	let mode = 0o600;
+	let exists = false;
+	try { lstatSync(path); exists = true; }
+	catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	if (exists) {
+		path = realpathSync(path);
+		overlay = JSON.parse(readFileSync(path, "utf8"));
+		mode = statSync(path).mode & 0o777;
+	}
+	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
+	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
+	const saved = mergeDelegateConfig(shipped, overlay, path).snapshots;
+	if (!sameSnapshots(saved, validatedCurrent)) {
+		throw new Error("Snapshots changed on disk. Run /reload before changing them here (reload stops outstanding children).");
+	}
+	const updated = { ...overlay, snapshots: validatedNext };
+	mergeDelegateConfig(shipped, updated, path);
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const temp = `${path}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(temp, `${JSON.stringify(updated, null, 2)}\n`, { mode, flag: "wx" });
+		renameSync(temp, path);
+	} finally {
+		try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	}
 }
 
 function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig, patch: Partial<AgentConfig>): void {

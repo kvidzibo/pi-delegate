@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, keyHint, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
@@ -33,6 +33,8 @@ import { capabilityContent, copyCapabilities, describeCapabilities, type Capabil
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
 import { FileCapacityBroker } from "./capacity.ts";
+import { snapshotCommand } from "./snapshot-command.ts";
+import { captureRepository, formatSnapshotBytes, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotEnabled, snapshotSettings } from "./snapshots.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -290,6 +292,20 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			isPartial: snapshot ? !isTerminal(snapshot) : context.isPartial, isError: context.isError };
 	};
 
+	let captureContext: ExtensionContext | undefined;
+	const refreshCaptureStatus = async (ctx: ExtensionContext): Promise<void> => {
+		ctx.ui.setWidget("delegate-snapshots", undefined);
+		if (!Object.values(snapshotSettings(config.snapshots).repositories).some(Boolean)) return;
+		try {
+			const repo = await repositoryFor(ctx.cwd);
+			if (snapshotEnabled(repo, config.snapshots)) {
+				const directory = snapshotDirectory(agentDir(), config.snapshots);
+				const stats = await repositorySnapshotStats(repo!, directory);
+				if (shuttingDown || captureContext !== ctx) return;
+				ctx.ui.setWidget("delegate-snapshots", [`Eval repository capture enabled · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, `Storage: ${directory}`]);
+			}
+		} catch (error) { ctx.ui.notify(`Snapshot storage: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+	};
 	let busyUnsubscribe: (() => void) | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
@@ -303,6 +319,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		bindUi(ctx);
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
+		captureContext = ctx;
+		await refreshCaptureStatus(ctx);
 	});
 	pi.on("session_tree", (_event, ctx) => cards.restore(ctx.sessionManager.getBranch()));
 	const dialogs = new AbortController();
@@ -310,6 +328,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		name: "models",
 		description: "Choose role models and reasoning levels",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
+	}, {
+		name: "snapshots",
+		description: "Configure eval repository capture (off by default)",
+		handler: async (args, ctx) => {
+			await snapshotCommand(args, ctx, config, configPaths, agentDir(), dialogs.signal);
+			if (captureContext) await refreshCaptureStatus(captureContext);
+		},
 	}, {
 		name: "stats",
 		description: "Recorded child usage (no model calls)",
@@ -348,6 +373,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		busyUnsubscribe = undefined;
 		detachParentAbort();
 		modelCommand.stop();
+		captureContext = undefined;
+		ui?.setWidget?.("delegate-snapshots", undefined);
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();
@@ -481,6 +508,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							}) : { reason: "No hosted alternative configured for this local model" };
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
 					}
+					// Freeze capture policy on acceptance; queued jobs capture their eventual start state.
+					const captureConfig = snapshotSettings(config.snapshots);
+					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
 					const archive = accounting.create({
 						parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 						toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools, capabilities,
@@ -494,7 +524,18 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							kind, model: resolved.model, reasoning: resolved.agent.thinking, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
 							...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
-							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, (onUsage) => childRunner({
+							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, async (onUsage) => {
+								if (Object.values(captureConfig.repositories).some(Boolean)) {
+									childSignal.throwIfAborted();
+									const repo = await repositoryFor(cwd, childSignal);
+									if (snapshotEnabled(repo, captureConfig)) {
+										const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
+										archive.attachSnapshot(snapshot);
+										if (captureContext) await refreshCaptureStatus(captureContext);
+									}
+								}
+								childSignal.throwIfAborted();
+								return childRunner({
 								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
 								tools: [...tools], offline: resolved.agent.offline,
 								...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
@@ -502,7 +543,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
 								signal: childSignal, env: process.env,
 								onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
-							}), childSignal),
+								});
+							}, childSignal),
 						});
 					} catch (error) {
 						accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });

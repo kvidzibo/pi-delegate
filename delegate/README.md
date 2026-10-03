@@ -24,6 +24,35 @@ Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. I
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients and the calibration runner are not covered.
 
+## Eval repository snapshots
+
+Capture is **off by default**. Open **`/pi-delegate snapshots`** from the options menu to enable/disable it for the current repository or choose a dedicated storage directory. Enabling only saves configuration; the first capture happens before a delegate starts. The directory setting is global; changing it leaves existing captures in the old directory. Other open Pi sessions need `/reload`.
+
+Manual configuration in `~/.pi/agent/delegate.json`:
+
+```json
+{
+  "snapshots": {
+    "directory": "/absolute/private/eval-snapshots",
+    "repositories": {
+      "/absolute/primary/repository/root": true
+    }
+  }
+}
+```
+
+Omit `directory` to use `<agent-dir>/delegate-snapshots/`, independently of transcript archive overrides. Keys are canonical absolute primary checkout roots; subdirectories and linked worktrees share that repository's setting/storage. Separate clones are separate repositories. Storage must be outside the checkout and primary repository, owned by you, private, and not reached through symlinks.
+
+For enabled repositories, session startup shows capture status, snapshot count and stored-file size above the editor. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. The status refreshes after capture and settings changes. Browsing disabled settings creates no snapshot directories.
+
+Each accepted job freezes its capture settings, but captures the **actual launch-time state**, after queue/capacity waits and before starting the child. Cancelled queued jobs are not captured. Failed capture or failure to persist its archive link blocks launch. Successful captures are linked by `repositorySnapshot` in the run's `metadata.json`.
+
+Captures contain current tracked and non-ignored untracked files, executable modes, symlink targets, deletions, a binary staged patch, and a Git bundle rooted at the starting HEAD (no unrelated branch refs). Unborn repositories have no history bundle. Files are compressed into SHA-256-addressed objects; unchanged content and same-HEAD history are shared. Storage layout is `<directory>/<repository-id>/{objects,history,captures}/`; manifests describe file hashes, starting HEAD, coverage and provenance. The live checkout/index is never modified.
+
+**Constraints:** ignored files, dependencies, caches, empty directories and external services are not captured. Submodules/nested repositories and special tracked files are refused rather than silently producing incomplete captures. Non-UTF-8 filenames are refused. Limits are 128 MiB per regular file, 2 GiB total source and 100,000 paths. Capture checks file stability and compares two full source/index/HEAD reads; detected changes refuse launch. This is not an atomic filesystem snapshot or a repository write lock: coordinate concurrent writers for stronger guarantees.
+
+**Privacy:** source and reachable Git history can contain secrets, including tracked or previously committed credentials. Captures are private, never uploaded or automatically deleted, and are not redacted because changing code would defeat reproduction. Review repository contents before enabling. No environment or credential files outside the repository are copied. This feature captures inputs only; it does not run Docker or grade results.
+
 ## Cross-extension busy query
 
 Extensions may query delegate activity by emitting `pi.events.emit('delegate:query-busy', { reply: busy => ... })`. The reply is synchronous: `true` means shutdown is underway or queued/running delegate jobs exist; otherwise it is `false`. If no listener responds, availability is unknown; fail closed (treat delegate as busy). Invalid payloads are ignored. The listener is removed on session shutdown and re-registered for each session.
