@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -57,6 +58,16 @@ test("opt-in repository captures preserve starting source/index/history, dedupli
 		assert.equal(readdirSync(join(storage, repo.id, "history")).length, 1);
 		const stats = await repositorySnapshotStats(repo, storage);
 		assert.equal(stats.count, 2); assert.ok(stats.bytes > 0);
+		const bundlePath = join(storage, repo.id, manifest.history), bundleBytes = readFileSync(bundlePath);
+		writeFileSync(bundlePath, "corrupt");
+		await assert.rejects(captureRepository(repo, storage, "corrupt-history"), /history is corrupt/);
+		assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+		writeFileSync(bundlePath, bundleBytes);
+		const blob = git("rev-parse", "HEAD:tracked").trim();
+		execFileSync("git", ["update-index", "--index-info"], { cwd: repoPath, input: `0 ${"0".repeat(40)}\ttracked\n100644 ${blob} 1\ttracked\n100644 ${blob} 2\ttracked\n100644 ${blob} 3\ttracked\n` });
+		await assert.rejects(captureRepository(repo, storage, "conflicted"), /unmerged Git indexes/);
+		assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+		git("reset", "-q", "HEAD");
 		git("worktree", "add", "-q", "--detach", worktree, "HEAD");
 		const linked = (await repositoryFor(worktree))!;
 		assert.equal(linked.id, repo.id); assert.equal(linked.configKey, repo.configKey);
@@ -70,5 +81,27 @@ test("opt-in repository captures preserve starting source/index/history, dedupli
 		await assert.rejects(captureRepository(repo, storage, "fifo"), /unsupported file/);
 		assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
 		assert.ok(!readdirSync(join(storage, repo.id)).some(name => name.startsWith(".capture-")));
+		rmSync(join(repoPath, "fifo")); git("reset", "-q", "HEAD");
+		// Swap an ancestor after validation, open the leaf, then restore it before the next scan.
+		// Both scans can be fooled with pathname reads; pinned parent descriptors retain inside bytes.
+		const nested = join(repoPath, "nested"), parked = join(repoPath, "parked"), outside = join(dir, "outside");
+		mkdirSync(nested); mkdirSync(outside);
+		writeFileSync(join(nested, "race-source"), "inside\n"); writeFileSync(join(outside, "race-source"), "external-secret\n");
+		const fsPromises = createRequire(import.meta.url)("node:fs/promises"), originalOpen = fsPromises.open;
+		let swaps = 0;
+		fsPromises.open = async (path: unknown, ...args: unknown[]) => {
+			if (!String(path).endsWith("/race-source")) return originalOpen(path, ...args);
+			renameSync(nested, parked); symlinkSync(outside, nested); swaps++;
+			try { return await originalOpen(path, ...args); }
+			finally { rmSync(nested); renameSync(parked, nested); }
+		};
+		syncBuiltinESMExports();
+		try {
+			const safe = await captureRepository(repo, storage, "ancestor-swap");
+			const safeManifest = JSON.parse(readFileSync(safe.manifestPath, "utf8"));
+			const entry = safeManifest.entries.find((entry: any) => entry.path === "nested/race-source");
+			assert.equal(gunzipSync(readFileSync(join(storage, repo.id, "objects", `${entry.hash}.gz`))).toString(), "inside\n");
+			assert.equal(swaps, 2, "both scan reads exercise the ancestor replacement race");
+		} finally { fsPromises.open = originalOpen; syncBuiltinESMExports(); }
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

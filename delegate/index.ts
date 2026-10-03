@@ -293,18 +293,25 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	};
 
 	let captureContext: ExtensionContext | undefined;
+	let captureStatusGeneration = 0;
 	const refreshCaptureStatus = async (ctx: ExtensionContext): Promise<void> => {
-		ctx.ui.setWidget("delegate-snapshots", undefined);
-		if (!Object.values(snapshotSettings(config.snapshots).repositories).some(Boolean)) return;
+		const generation = ++captureStatusGeneration;
 		try {
-			const repo = await repositoryFor(ctx.cwd);
-			if (snapshotEnabled(repo, config.snapshots)) {
-				const directory = snapshotDirectory(agentDir(), config.snapshots);
-				const stats = await repositorySnapshotStats(repo!, directory);
-				if (shuttingDown || captureContext !== ctx) return;
-				ctx.ui.setWidget("delegate-snapshots", [`Eval repository capture enabled · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, `Storage: ${directory}`]);
+			let lines: string[] | undefined;
+			if (Object.values(snapshotSettings(config.snapshots).repositories).some(Boolean)) {
+				const repo = await repositoryFor(ctx.cwd);
+				if (snapshotEnabled(repo, config.snapshots)) {
+					const directory = snapshotDirectory(agentDir(), config.snapshots);
+					const stats = await repositorySnapshotStats(repo!, directory);
+					lines = [`Eval repository capture enabled · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, `Storage: ${directory}`];
+				}
 			}
-		} catch (error) { ctx.ui.notify(`Snapshot storage: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+			if (!shuttingDown && captureContext === ctx && generation === captureStatusGeneration) ctx.ui.setWidget("delegate-snapshots", lines);
+		} catch (error) {
+			// UI is an observer, never a dependency of capture/child execution.
+			if (shuttingDown || captureContext !== ctx || generation !== captureStatusGeneration) return;
+			try { ctx.ui.notify(`Snapshot storage: ${error instanceof Error ? error.message : String(error)}`, "error"); } catch { /* detached UI */ }
+		}
 	};
 	let busyUnsubscribe: (() => void) | undefined;
 	pi.on("session_start", async (_event, ctx) => {
@@ -374,7 +381,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		detachParentAbort();
 		modelCommand.stop();
 		captureContext = undefined;
-		ui?.setWidget?.("delegate-snapshots", undefined);
+		++captureStatusGeneration;
+		try { ui?.setWidget?.("delegate-snapshots", undefined); } catch { /* detached UI */ }
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();

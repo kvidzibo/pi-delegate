@@ -73,10 +73,12 @@ export default function probe(pi: ExtensionAPI) {
 		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, repositories: { [repo.configKey]: true } } }));
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
-		let tool: any, release!: () => void, launches = 0, sequence = 0;
+		let tool: any, release!: () => void, launches = 0, sequence = 0, failWidget = false;
 		const widget: string[] = [];
 		const testCtx: any = { ...ctx, cwd: repoPath, hasUI: true, isIdle: () => false,
-			ui: { ...ctx.ui, setStatus() {}, notify() {}, setWidget: (key: string, lines?: string[]) => { if (key === "delegate-snapshots") widget.push((lines ?? []).join("\n")); } },
+			ui: { ...ctx.ui, setStatus() {}, notify() {}, setWidget: (key: string, lines?: string[]) => {
+				if (key === "delegate-snapshots") { if (failWidget) throw new Error("detached UI"); widget.push((lines ?? []).join("\n")); }
+			} },
 		};
 		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
 			registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
@@ -95,7 +97,9 @@ export default function probe(pi: ExtensionAPI) {
 		try {
 			await handlers.get("session_start")!({}, testCtx);
 			assert.match(widget.at(-1)!, /capture enabled · 0 snapshots · 0 B/);
+			failWidget = true;
 			const held = await launch("hold"); await waitForLaunch();
+			failWidget = false;
 			const queued = await launch("queued"); assert.equal(queued.details.status, "queued");
 			const cancelled = await launch("cancelled"); await call({ jobId: cancelled.details.jobId, cancel: true });
 			writeFileSync(join(repoPath, "source"), "queued-start\n"); release();
