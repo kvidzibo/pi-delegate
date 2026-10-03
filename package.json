@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Pi parent child tool: named agents, model from config",
   "author": "Tomas Rackauskas",
   "keywords": ["pi-package"],
@@ -20,7 +20,17 @@
   "pi": {
     "extensions": ["./delegate"]
   },
+  "files": [
+    "delegate/*.ts",
+    "delegate/*.json",
+    "delegate/*.md",
+    "delegate/prompts/*.md",
+    "child-runtime/*.ts",
+    "child-runtime/*.md"
+  ],
   "scripts": {
+    "eval:historical": "node --experimental-strip-types bench/evals/cli.ts",
+    "check:package": "node scripts/check-package.mjs",
     "test": "npm run test:unit && npm run test:load",
     "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts bench/tests/*.test.ts",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"

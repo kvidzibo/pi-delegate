@@ -14,3 +14,4 @@ jobs:
           node-version: "22"
       # Factory load (npm run test:load) needs `pi` on PATH; not available here.
       - run: npm run test:unit
+      - run: npm run check:package

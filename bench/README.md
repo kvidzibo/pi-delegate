@@ -2,6 +2,8 @@
 
 [Quick start](../README.md) · [Delegate usage](../delegate/README.md)
 
+**Source-checkout tooling only:** `bench/`, its tests, eval candidates and generated results are excluded from the npm tarball and never auto-loaded. See [historical evals](evals/README.md) for matched prompt/model/reasoning comparisons using sanitized historical failure patterns. Normal CI tests the harness without model calls.
+
 Opt-in benchmarks calibrate the API-equivalent value of successful local work against a hosted alternative. This is **not measured net savings**, a subscription refund or a general quality assessment. Normal delegation and stats never launch benchmarks or call the alternative.
 
 ## Configure profiles

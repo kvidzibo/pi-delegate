@@ -62,10 +62,13 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 Run from the repository root:
 
 ```bash
-npm run test:unit       # no Pi required; also runs in CI
+npm run test:unit       # no Pi/model calls; also runs in CI
+npm run check:package   # verifies the runtime-only npm tarball
 xvfb-run -a npm test    # includes offline CLI/UI checks; needs Pi and Xvfb
 ```
 
 Tests make no model calls. Delegation guidance ships with the extension; do not duplicate role/model policy in `AGENTS.md`.
 
-See [child-runtime](child-runtime/README.md), [opt-in benchmarks](bench/README.md) and the [implementation contract](delegate/SPEC.md) when working on those areas.
+The npm package contains runtime code, role prompts, configuration and runtime documentation—not tests, benchmarks, evals or results. Use a source checkout for development and opt-in model comparisons.
+
+See [child-runtime](child-runtime/README.md), [developer benchmarks/evals](https://github.com/kvidzibo/pi-delegate/tree/main/bench) and the [implementation contract](delegate/SPEC.md). The historical eval pilot compares six sanitized failure-pattern fixtures with explicit model/prompt/reasoning arms; candidate prompts remain eval-only. Plan with `npm run eval:historical -- --plan /absolute/config.json`; `--run` explicitly makes model calls. See the source-only [eval guide](https://github.com/kvidzibo/pi-delegate/tree/main/bench/evals).
