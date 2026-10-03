@@ -20,6 +20,7 @@ export interface AgentConfig {
 
 export interface SnapshotConfig {
 	directory?: string;
+	defaultEnabled?: boolean;
 	repositories: Record<string, boolean>;
 }
 
@@ -110,6 +111,7 @@ function parseSnapshots(value: unknown, label = "snapshots"): SnapshotConfig {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} (object)`);
 	const raw = value as Record<string, unknown>;
 	const errors: string[] = [];
+	if (raw.defaultEnabled !== undefined && typeof raw.defaultEnabled !== "boolean") errors.push("defaultEnabled (boolean)");
 	if (raw.directory !== undefined && (typeof raw.directory !== "string" || raw.directory.length === 0 || !isAbsolute(raw.directory))) {
 		errors.push("directory (non-empty absolute path)");
 	}
@@ -125,6 +127,7 @@ function parseSnapshots(value: unknown, label = "snapshots"): SnapshotConfig {
 	if (errors.length) throw new Error(`${label} (${errors.join("; ")})`);
 	return {
 		...(raw.directory === undefined ? {} : { directory: raw.directory as string }),
+		...(raw.defaultEnabled === undefined ? {} : { defaultEnabled: raw.defaultEnabled as boolean }),
 		repositories: { ...(raw.repositories as Record<string, boolean>) },
 	};
 }
@@ -264,6 +267,7 @@ function mergeSnapshots(base: SnapshotConfig, extra: unknown, path: string): Sna
 	}
 	return parseSnapshots({
 		...(raw.directory === undefined ? (base.directory === undefined ? {} : { directory: base.directory }) : { directory: raw.directory }),
+		defaultEnabled: raw.defaultEnabled === undefined ? base.defaultEnabled : raw.defaultEnabled,
 		repositories: { ...base.repositories, ...((raw.repositories ?? {}) as Record<string, unknown>) },
 	}, `Invalid delegate config: ${path} snapshots`);
 }
@@ -331,7 +335,7 @@ export function saveDelegateThinking(paths: ConfigPaths, kind: Kind, current: Ag
 }
 
 function sameSnapshots(a: SnapshotConfig, b: SnapshotConfig): boolean {
-	if (a.directory !== b.directory) return false;
+	if (a.directory !== b.directory || (a.defaultEnabled ?? false) !== (b.defaultEnabled ?? false)) return false;
 	const aKeys = Object.keys(a.repositories).sort();
 	const bKeys = Object.keys(b.repositories).sort();
 	return aKeys.length === bKeys.length && aKeys.every((key, index) => key === bKeys[index] && a.repositories[key] === b.repositories[key]);

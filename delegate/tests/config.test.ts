@@ -167,15 +167,18 @@ test("repository snapshot configuration defaults, validates, merges, and saves s
 	assert.deepEqual(base.snapshots, { repositories: {} });
 	assert.throws(() => parseDelegateConfig({ ...base, snapshots: { repositories: { relative: true } } }, "bad"), /canonical repository root/);
 	assert.throws(() => parseDelegateConfig({ ...base, snapshots: { directory: "relative", repositories: {} } }, "bad"), /absolute path/);
-	const merged = mergeDelegateConfig(base, { snapshots: { directory: "/snapshots" } }, "overlay");
-	assert.deepEqual(merged.snapshots, { directory: "/snapshots", repositories: {} });
+	assert.throws(() => mergeDelegateConfig(base, { snapshots: { defaultEnabled: "true" } }, "bad"), /defaultEnabled.*boolean/);
+	const merged = mergeDelegateConfig(base, { snapshots: { directory: "/snapshots", defaultEnabled: true } }, "overlay");
+	assert.deepEqual(merged.snapshots, { directory: "/snapshots", defaultEnabled: true, repositories: {} });
+	assert.equal(mergeDelegateConfig(merged, { snapshots: { repositories: { "/repo": false } } }, "overlay").snapshots.defaultEnabled, true);
+	assert.equal(mergeDelegateConfig(merged, { snapshots: { defaultEnabled: false } }, "overlay").snapshots.defaultEnabled, false);
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-snapshots-"));
 	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
 	try {
 		const overlay = { note: "preserve", snapshots: { repositories: { "/repo": true } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).snapshots;
-		const next = { directory: "/snapshots", repositories: { "/repo": true, "/other": false } };
+		const next = { directory: "/snapshots", defaultEnabled: true, repositories: { "/repo": true, "/other": false } };
 		saveDelegateSnapshots(paths, current, next);
 		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), { note: "preserve", snapshots: next });
 		const before = readFileSync(paths.userPath, "utf8");

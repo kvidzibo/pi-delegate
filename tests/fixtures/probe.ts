@@ -3,8 +3,8 @@ import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandCo
 import { join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { createRequire, syncBuiltinESMExports } from "node:module";
 import { repositoryFor, repositorySnapshotStats } from "../../delegate/snapshots.ts";
+import { AUDIT_CHECKS } from "../../delegate/snapshot-audit.ts";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
@@ -71,21 +71,20 @@ export default function probe(pi: ExtensionAPI) {
 		git("-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-qm", "base");
 		const repo = (await repositoryFor(repoPath))!;
 		const userPath = join(getAgentDir(), "delegate.json"), previousSkip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
-		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, repositories: { [repo.configKey]: true } } }));
+		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: { [repo.configKey]: true } } }));
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
-		let tool: any, release!: () => void, launches = 0, sequence = 0, failWidget = false, widgetThrows = 0;
-		const fsPromises = createRequire(import.meta.url)("node:fs/promises"), originalReaddir = fsPromises.readdir;
-		const pendingMetrics: Array<() => void> = [];
-		let pauseMetrics = true;
-		const widget: string[] = [];
+		let tool: any, release!: () => void, auditRelease: (() => void) | undefined, launches = 0, sequence = 0, failNotice = false, noticeThrows = 0, consent = false;
+		const notices: string[] = [], auditMessages: string[] = [];
 		const testCtx: any = { ...ctx, cwd: repoPath, hasUI: true, isIdle: () => false,
-			ui: { ...ctx.ui, setStatus() {}, notify() {}, setWidget: (key: string, lines?: string[]) => {
-				if (key === "delegate-snapshots") { if (failWidget) { widgetThrows++; throw new Error("detached UI"); } widget.push((lines ?? []).join("\n")); }
-			} },
+			ui: { ...ctx.ui, setStatus() {}, confirm: async () => consent, notify(text: string) {
+				if (failNotice) { noticeThrows++; throw new Error("detached UI"); }
+				notices.push(text);
+			}, setWidget(key: string) { assert.notEqual(key, "delegate-snapshots", "capture status must never be sticky"); } },
 		};
 		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
 			registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+			sendUserMessage: (message: string) => auditMessages.push(message),
 		} as unknown as ExtensionAPI, async input => {
 			launches++;
 			const metadata = JSON.parse(readFileSync(join(input.sessionFile!.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
@@ -99,42 +98,100 @@ export default function probe(pi: ExtensionAPI) {
 		const launch = (task: string) => call({ kind: "review", model: "hosted/mock", task, background: true });
 		const until = async (ready: () => boolean) => { for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(ready(), "expected observer/runner progress"); };
 		try {
-			failWidget = true;
-			await handlers.get("session_start")!({}, testCtx);
-			await until(() => widgetThrows === 1); // Exceptions from observers cannot escape session startup.
-			failWidget = false;
-			await handlers.get("session_start")!({}, testCtx);
-			await until(() => /capture enabled · 0 snapshots · 0 B/.test(widget.at(-1) ?? ""));
-			fsPromises.readdir = (path: unknown, ...args: unknown[]) => {
-				if (!pauseMetrics || String(path) !== join(storage, repo.id, "captures")) return originalReaddir(path, ...args);
-				return new Promise(resolve => pendingMetrics.push(() => resolve(originalReaddir(path, ...args))));
-			};
-			syncBuiltinESMExports();
+			failNotice = true;
+			await handlers.get("session_start")!({ reason: "startup" }, testCtx);
+			await until(() => noticeThrows > 0); // Exceptions from observers cannot escape session startup.
+			failNotice = false;
+			await handlers.get("session_start")!({ reason: "startup" }, testCtx);
+			await until(() => notices.length === 1);
+			assert.match(notices[0], /capture enabled · 0 snapshots · 0 B\nStorage:/);
+			await handlers.get("session_start")!({ reason: "reload" }, testCtx);
+			assert.equal(notices.length, 1, "reload must not repeat startup output");
 			const held = await launch("hold"); await until(() => !!release);
-			await until(() => pendingMetrics.length > 0); // A pending metrics scan must not withhold child dispatch.
 			const queued = await launch("queued"); assert.equal(queued.details.status, "queued");
 			const cancelled = await launch("cancelled"); await call({ jobId: cancelled.details.jobId, cancel: true });
 			writeFileSync(join(repoPath, "source"), "queued-start\n"); release();
 			await call({ jobId: held.details.jobId });
 			const done = await call({ jobId: queued.details.jobId }); assert.equal(done.details.ok, true);
-			await until(() => pendingMetrics.length > 1);
-			pauseMetrics = false;
-			fsPromises.readdir = originalReaddir; syncBuiltinESMExports();
-			for (const resume of pendingMetrics.splice(0)) resume();
-			await until(() => /capture enabled · 2 snapshots/.test(widget.at(-1) ?? ""));
+			assert.equal(notices.length, 1, "captures must not repeat startup output");
 			assert.equal(launches, 2); assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
 			const metadata = JSON.parse(readFileSync(join(done.details.sessionFile.replace(/\/session\.jsonl$/, ""), "metadata.json"), "utf8"));
 			const manifest = JSON.parse(readFileSync(metadata.repositorySnapshot.manifestPath, "utf8"));
 			const { gunzipSync } = await import("node:zlib");
 			assert.equal(gunzipSync(readFileSync(join(storage, repo.id, "objects", `${manifest.entries.find((entry: any) => entry.path === "source").hash}.gz`))).toString(), "queued-start\n");
-			assert.match(widget.at(-1)!, /capture enabled · 2 snapshots/);
 			let menu = 0;
 			await commands.get("pi-delegate").handler("snapshots", { ...testCtx, ui: { ...testCtx.ui,
-				select: async (title: string, options: string[]) => { assert.match(title, /2 snapshots/); return menu++ === 0 ? options[0] : "Back"; },
+				select: async (title: string, options: string[]) => {
+					assert.match(title, /2 snapshots/);
+					const pick = menu++ === 0 ? "Disable capture for this repository" : "Back";
+					assert.ok(options.includes(pick)); return pick;
+				},
 			} });
+			const saved = JSON.parse(readFileSync(userPath, "utf8")).snapshots;
+			assert.equal(saved.defaultEnabled, true); assert.equal(saved.repositories[repo.configKey], false);
+			assert.equal(notices.length, 1, "settings changes must not repeat startup output");
+			// Global enablement in an unknown repository offers consent instead of capturing.
+			await handlers.get("session_shutdown")!();
+			writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
+			delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
+				registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
+				sendUserMessage: (message: string) => auditMessages.push(message),
+			} as unknown as ExtensionAPI, async input => {
+				launches++;
+				if (input.task === "audit-hold") await new Promise<void>(resolve => { auditRelease = resolve; });
+				return { text: "mock complete", exitCode: 0, stderrTail: "" };
+			});
+			const unknown = await call({ kind: "review", model: "hosted/mock", task: "unknown repository", timeoutMs: 2000 });
+			assert.equal(unknown.details.ok, false); assert.match(unknown.content[0].text, /requires a user-approved safety audit/);
+			assert.equal(launches, 2); assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+			await handlers.get("session_start")!({ reason: "startup" }, testCtx);
+			await until(() => notices.some(message => /request an audit later/.test(message)));
+			assert.equal(auditMessages.length, 0, "decline makes no agent request");
 			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
-			await until(() => widget.at(-1) === "");
-			assert.equal(widget.at(-1), "", "disabling clears the startup status");
+			consent = true;
+			const auditCtx = { ...testCtx, isIdle: () => true };
+			await commands.get("pi-delegate").handler("snapshots", { ...auditCtx, ui: { ...testCtx.ui,
+				select: async (_title: string, options: string[]) => { assert.ok(options.includes("Audit repository before enabling capture")); return "Audit repository before enabling capture"; },
+			} });
+			assert.equal(auditMessages.length, 1);
+			assert.equal((await repositorySnapshotStats(repo, storage)).count, 2);
+			const whileAuditing = await call({ kind: "review", model: "hosted/mock", task: "must not capture audit", timeoutMs: 2000 });
+			assert.equal(whileAuditing.details.ok, false); assert.equal(launches, 2);
+			const auditId = auditMessages[0].match(/Audit ID: ([a-f0-9-]{36})/)![1];
+			const accepted = await call({ auditId, auditResult: { verdict: "passed", checked: [...AUDIT_CHECKS], issues: [] } });
+			assert.equal(accepted.details.ok, true); assert.equal(accepted.details.snapshotAudit, true);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], true);
+			assert.equal((await repositorySnapshotStats(repo, storage)).count, 2, "the audit itself never captures");
+			assert.equal(launches, 2);
+			const requestAudit = async () => {
+				await commands.get("pi-delegate").handler("snapshots", { ...auditCtx, ui: { ...testCtx.ui,
+					select: async (_title: string, options: string[]) => options.includes("Re-audit this repository") ? "Re-audit this repository" : "Audit repository before enabling capture",
+				} });
+				return auditMessages.at(-1)!.match(/Audit ID: ([a-f0-9-]{36})/)![1];
+			};
+			// A job queued while enabled must not capture or launch after a re-audit starts.
+			auditRelease = undefined;
+			const auditHeld = await launch("audit-hold"); await until(() => !!auditRelease);
+			const queuedBeforeAudit = await launch("queued-before-audit"); assert.equal(queuedBeforeAudit.details.status, "queued");
+			let reAuditId = await requestAudit();
+			auditRelease!(); await call({ jobId: auditHeld.details.jobId });
+			const blockedQueue = await call({ jobId: queuedBeforeAudit.details.jobId });
+			assert.equal(blockedQueue.details.ok, false); assert.match(blockedQueue.content[0].text, /audit is pending/);
+			assert.equal(launches, 3); assert.equal((await repositorySnapshotStats(repo, storage)).count, 3);
+			await call({ auditId: reAuditId, auditResult: { verdict: "incomplete", checked: [], issues: [] } });
+			// Even after the incomplete audit settles, revoked permission beats frozen queue policy.
+			reAuditId = await requestAudit();
+			await call({ auditId: reAuditId, auditResult: { verdict: "passed", checked: [...AUDIT_CHECKS], issues: [] } });
+			auditRelease = undefined;
+			const revokedHeld = await launch("audit-hold"); await until(() => !!auditRelease);
+			const queuedBeforeDecline = await launch("queued-before-decline"); assert.equal(queuedBeforeDecline.details.status, "queued");
+			reAuditId = await requestAudit();
+			await call({ auditId: reAuditId, auditResult: { verdict: "incomplete", checked: [], issues: [] } });
+			auditRelease!(); await call({ jobId: revokedHeld.details.jobId });
+			const revokedQueue = await call({ jobId: queuedBeforeDecline.details.jobId });
+			assert.equal(revokedQueue.details.ok, false); assert.match(revokedQueue.content[0].text, /permission was revoked/);
+			assert.equal(launches, 4); assert.equal((await repositorySnapshotStats(repo, storage)).count, 4);
+			const successfulLaunches = launches;
 			// Recreate a factory with capture enabled and invalid storage: no child may launch.
 			await handlers.get("session_shutdown")!();
 			writeFileSync(userPath, JSON.stringify({ snapshots: { directory: join(repoPath, "bad-store"), repositories: { [repo.configKey]: true } } }));
@@ -142,12 +199,9 @@ export default function probe(pi: ExtensionAPI) {
 				on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
 			} as unknown as ExtensionAPI, async () => { launches++; throw new Error("must not start"); });
 			const bad = await call({ kind: "review", model: "hosted/mock", task: "bad storage", background: false, timeoutMs: 2000 });
-			assert.equal(bad.details.ok, false); assert.match(bad.content[0].text, /outside the repository/); assert.equal(launches, 2);
+			assert.equal(bad.details.ok, false); assert.match(bad.content[0].text, /outside the repository/); assert.equal(launches, successfulLaunches);
 			return { startup: true, configured: true, queuedStartState: true, cancelledNotCaptured: true, linkedArchive: true, failClosed: true, noModelCalls: true };
 		} finally {
-			pauseMetrics = false;
-			fsPromises.readdir = originalReaddir; syncBuiltinESMExports();
-			for (const resume of pendingMetrics.splice(0)) resume();
 			await handlers.get("session_shutdown")?.();
 			if (previousSkip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previousSkip;
 			rmSync(userPath, { force: true });

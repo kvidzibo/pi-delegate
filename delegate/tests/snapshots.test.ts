@@ -55,6 +55,10 @@ test("opt-in repository captures preserve starting source/index/history, dedupli
 		symlinkSync("/outside/not-read", join(repoPath, "link"));
 		const repo = (await repositoryFor(repoPath))!;
 		assert.equal(snapshotEnabled(repo), false);
+		assert.equal(snapshotEnabled(repo, { defaultEnabled: true, repositories: {} }), false, "global defaults require an audit before capture");
+		assert.equal(snapshotEnabled(undefined, { defaultEnabled: true, repositories: {} }), false);
+		assert.equal(snapshotEnabled(repo, { defaultEnabled: true, repositories: { [repo.configKey]: false } }), false);
+		assert.equal(snapshotEnabled(repo, { defaultEnabled: false, repositories: { [repo.configKey]: true } }), true);
 		assert.deepEqual(await repositorySnapshotStats(repo, storage), { count: 0, bytes: 0 });
 		assert.equal(readdirSync(dir).includes("storage"), false, "disabled queries never create storage");
 		assert.equal(snapshotEnabled(repo, { repositories: { [repo.configKey]: true } }), true);

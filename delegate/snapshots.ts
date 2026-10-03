@@ -67,6 +67,9 @@ export function snapshotDirectory(agentDir: string, config?: SnapshotConfig): st
 export function snapshotEnabled(repo: Repository | undefined, config?: SnapshotConfig): boolean {
 	return !!repo && config?.repositories[repo.configKey] === true;
 }
+export function snapshotNeedsAudit(repo: Repository | undefined, config?: SnapshotConfig): boolean {
+	return !!repo && config?.defaultEnabled === true && !Object.hasOwn(config.repositories, repo.configKey);
+}
 
 function checkPrivate(stat: Awaited<ReturnType<typeof lstat>>, directory: boolean, path: string): void {
 	const label = `Snapshot storage ${directory ? "directory" : "file"} ${JSON.stringify(path)}`;
@@ -188,6 +191,22 @@ async function scan(root: FileHandle, signal: AbortSignal | undefined, save?: (e
 	return { head, entries, staged, index, treeHash: hash(JSON.stringify({ head, entries, staged: hash(staged), index: hash(index) })) };
 }
 
+/** Audit identity only: no source, patch or history contents are written to snapshot storage. */
+export async function repositoryAuditState(repo: Repository, signal?: AbortSignal): Promise<string> {
+	const root = await pinnedDirectory(repo.root);
+	try {
+		const cwd = `/proc/${process.pid}/fd/${root.fd}`;
+		const history = async (head: string | null) => head ? hash(await git(cwd, ["rev-list", "--objects", "--no-object-names", head], signal)) : null;
+		const first = await scan(root, signal), firstHistory = await history(first.head);
+		const second = await scan(root, signal), secondHistory = await history(second.head);
+		const current = await lstat(repo.root), pinned = await root.stat();
+		if (current.dev !== pinned.dev || current.ino !== pinned.ino || first.treeHash !== second.treeHash || firstHistory !== secondHistory) {
+			throw new Error("Repository changed during safety audit preparation; retry the audit.");
+		}
+		return hash(JSON.stringify({ tree: first.treeHash, history: firstHistory }));
+	} finally { await root.close(); }
+}
+
 /** Exclusive publication, safe for concurrent sessions capturing the same repository. */
 async function publish(temp: string, target: string, expected?: Buffer): Promise<void> {
 	try { await link(temp, target); }
@@ -208,10 +227,14 @@ async function fileHash(path: string, signal?: AbortSignal): Promise<string> {
 	} finally { await fd.close(); }
 }
 
-export async function captureRepository(repo: Repository, directory: string, runId: string, signal?: AbortSignal): Promise<SnapshotRef> {
+export function assertSnapshotLocation(repo: Repository, directory: string): void {
 	if (!isAbsolute(directory) || inside(repo.root, resolve(directory)) || inside(repo.configKey, resolve(directory))) {
 		throw new Error("Snapshot directory must be absolute and outside the repository.");
 	}
+}
+
+export async function captureRepository(repo: Repository, directory: string, runId: string, signal?: AbortSignal): Promise<SnapshotRef> {
+	assertSnapshotLocation(repo, directory);
 	await privateDir(directory);
 	const root = join(directory, repo.id);
 	await privateDir(root);
