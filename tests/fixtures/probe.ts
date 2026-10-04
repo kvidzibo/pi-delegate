@@ -191,6 +191,40 @@ export default function probe(pi: ExtensionAPI) {
 			const revokedQueue = await call({ jobId: queuedBeforeDecline.details.jobId });
 			assert.equal(revokedQueue.details.ok, false); assert.match(revokedQueue.content[0].text, /permission was revoked/);
 			assert.equal(launches, 4); assert.equal((await repositorySnapshotStats(repo, storage)).count, 4);
+			// Expired clean reports are warnings with preserved findings, not tool errors.
+			reAuditId = await requestAudit();
+			await handlers.get("session_compact")!();
+			const stale = await call({ auditId: reAuditId, auditResult: { verdict: "passed", checked: ["source"], issues: [], warnings: ["history: unexamined slice"] } });
+			assert.equal(stale.details.ok, true); assert.equal(stale.details.auditWarning, true);
+			assert.equal(handlers.get("tool_result")!({ toolName: "delegate", details: stale.details }), undefined);
+			assert.match(stale.content[0].text, /session was compacted/);
+			assert.match(stale.content[0].text, /No secret leak or hard capture blocker was reported/);
+			assert.match(stale.content[0].text, /checked 1\/5 areas/);
+			assert.match(stale.content[0].text, /history: unexamined slice/);
+			const colors: string[] = [];
+			tool.renderResult(stale, { expanded: false, isPartial: false }, { fg: (color: string, text: string) => { colors.push(color); return text; } }, { state: {} });
+			assert.deepEqual(colors, ["warning"]);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			const messageCount = auditMessages.length;
+			const manual = async (confirm: boolean) => {
+				let picks = 0;
+				await commands.get("pi-delegate").handler("snapshots", { ...auditCtx, ui: { ...testCtx.ui,
+					select: async (_title: string, options: string[]) => {
+						const choice = picks++ === 0 ? "Enable capture anyway (manual approval)" : "Back";
+						assert.ok(options.includes(choice)); return choice;
+					},
+					confirm: async (title: string, message: string) => {
+						assert.match(title, /Warning/); assert.match(message, /may contain secrets/);
+						assert.match(message, /Hard capture\/storage checks still apply/); return confirm;
+					},
+				} });
+			};
+			await manual(false);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			await manual(true);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], true);
+			assert.equal(auditMessages.length, messageCount, "manual approval does not request another model audit");
+			assert.equal((await repositorySnapshotStats(repo, storage)).count, 4, "manual approval never creates snapshots");
 			const successfulLaunches = launches;
 			// Recreate a factory with capture enabled and invalid storage: no child may launch.
 			await handlers.get("session_shutdown")!();

@@ -64,7 +64,7 @@ test("first-use safety audit requires consent and unchanged best-effort results,
 		assert.match(await manager.submit(ctx, id, { verdict: "incomplete", checked: ["source"], issues: [] }), /remains disabled/);
 		id = await begin();
 		manager.endTurn();
-		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
+		await assert.rejects(manager.submit(ctx, id, passed), /finished its turn without submitting/);
 		assert.match(notices.at(-1)!, /incomplete/);
 		id = await begin();
 		writeFileSync(join(repoPath, "source"), "changed after consent\n");
@@ -77,7 +77,7 @@ test("first-use safety audit requires consent and unchanged best-effort results,
 		await assert.rejects(manager.submit(ctx, id, passed), /Repository changed/, "newly reachable history invalidates an audit even with unchanged HEAD/source");
 		id = await begin();
 		sessionId = "other-session";
-		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
+		await assert.rejects(manager.submit(ctx, id, passed), /session changed after audit approval/);
 		sessionId = "session-one"; manager.cancel();
 		id = await begin();
 		const cancelled = manager.submit(ctx, id, passed); manager.cancel();

@@ -7,7 +7,20 @@ export const AUDIT_CHECKS = ["source", "staged", "history", "capture-constraints
 export type AuditResult = { verdict: "passed" | "blocked" | "incomplete"; checked: string[]; issues: string[]; warnings?: string[] };
 export interface SnapshotAuditActions {
 	request(ctx: ExtensionContext, repo: Repository, signal: AbortSignal): Promise<boolean>;
-	cancel(): void;
+	cancel(reason?: string): void;
+}
+
+/** An expired approval is recoverable feedback, not a failed safety check. */
+export class SnapshotAuditWarning extends Error {
+	constructor(reason: string, result: AuditResult) {
+		const findings = result.issues.length ? `Blocking issues reported:\n${result.issues.map(issue => `- ${issue}`).join("\n")}`
+			: result.verdict === "passed" ? "No secret leak or hard capture blocker was reported by the checks performed."
+			: "No blocking issues were reported, but the audit did not pass.";
+		super(`Warning: ${reason}\nSubmitted audit: ${result.verdict}; checked ${result.checked.length}/${AUDIT_CHECKS.length} areas. ${findings}` +
+			`${result.warnings?.length ? `\nAudit warnings:\n${result.warnings.map(warning => `- ${warning}`).join("\n")}` : ""}\n` +
+			"This submission did not enable snapshots; these findings are not a current safety approval. Open /pi-delegate snapshots to run a new audit or choose Enable capture anyway (manual approval). Explicit confirmation accepts the risk of missed or newly introduced secrets; hard capture/storage checks still apply.");
+		this.name = "SnapshotAuditWarning";
+	}
 }
 interface PendingAudit {
 	id: string;
@@ -48,6 +61,7 @@ export class SnapshotAudits implements SnapshotAuditActions {
 	private preparing?: AbortController;
 	private submitting?: AbortController;
 	private generation = 0;
+	private invalidated = new Map<string, string>();
 	private pi: ExtensionAPI;
 	private config: DelegateConfig;
 	private paths: ConfigPaths;
@@ -56,7 +70,11 @@ export class SnapshotAudits implements SnapshotAuditActions {
 		this.pi = pi; this.config = config; this.paths = paths; this.agentDir = agentDir;
 	}
 	get active(): boolean { return !!this.pending || !!this.preparing || !!this.submitting; }
-	cancel(): void {
+	cancel(reason = "Snapshot settings or audit request changed."): void {
+		if (this.pending) {
+			this.invalidated.set(this.pending.id, reason);
+			if (this.invalidated.size > 16) this.invalidated.delete(this.invalidated.keys().next().value!);
+		}
 		this.generation++;
 		this.preparing?.abort(); this.preparing = undefined;
 		this.submitting?.abort(); this.submitting = undefined;
@@ -65,8 +83,8 @@ export class SnapshotAudits implements SnapshotAuditActions {
 	endTurn(): void {
 		if (!this.pending) return;
 		const ctx = this.pending.ctx;
-		this.cancel();
-		this.notify(ctx, "Snapshot audit incomplete; capture remains disabled. Retry from /pi-delegate snapshots.", "warning");
+		this.cancel("The agent finished its turn without submitting the audit result.");
+		this.notify(ctx, "Snapshot audit incomplete: the agent finished without submitting its result. Capture remains disabled. Open /pi-delegate snapshots to retry or enable manually.", "warning");
 	}
 	private notify(ctx: ExtensionContext, text: string, type: "info" | "warning" | "error"): void {
 		try { ctx.ui.notify(text, type); } catch { /* UI cannot enable capture or disrupt cleanup. */ }
@@ -121,7 +139,11 @@ export class SnapshotAudits implements SnapshotAuditActions {
 	}
 	async submit(ctx: ExtensionContext, id: string, result: AuditResult, signal?: AbortSignal): Promise<string> {
 		const pending = this.pending;
-		if (!pending || pending.id !== id || pending.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("No matching user-approved snapshot audit in this session; request a new audit.");
+		if (!pending || pending.id !== id || pending.sessionId !== ctx.sessionManager.getSessionId()) {
+			const reason = this.invalidated.get(id) ?? (pending?.id === id ? "The session changed after audit approval."
+				: "No matching user-approved snapshot audit is available in this session/runtime; it may have been reloaded, replaced, or already submitted. The exact cause is unavailable.");
+			throw new SnapshotAuditWarning(reason, result);
+		}
 		// Consume once before asynchronous checks so parallel/late submissions cannot enable twice.
 		this.pending = undefined;
 		this.submitting = pending.controller;
@@ -129,7 +151,7 @@ export class SnapshotAudits implements SnapshotAuditActions {
 		try {
 			combined.throwIfAborted();
 			const repo = await repositoryFor(ctx.cwd, combined);
-			if (!repo || repo.root !== pending.repo.root || repo.id !== pending.repo.id) throw new Error("Snapshot audit repository changed; request a new audit.");
+			if (!repo || repo.root !== pending.repo.root || repo.id !== pending.repo.id) throw new SnapshotAuditWarning("Snapshot audit repository changed after approval.", result);
 			if (result.verdict !== "passed") {
 				const message = `Snapshot audit ${result.verdict}; capture remains disabled. Address reported issues and retry from /pi-delegate snapshots.`;
 				return message;
@@ -139,10 +161,14 @@ export class SnapshotAudits implements SnapshotAuditActions {
 			await repositorySnapshotStats(repo, directory, combined);
 			const state = await repositoryAuditState(repo, combined);
 			combined.throwIfAborted();
-			if (state !== pending.state) throw new Error("Repository changed during the audit; capture remains disabled. Request a new audit.");
-			if (pending.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Snapshot audit session changed; request a new audit.");
+			if (state !== pending.state) throw new SnapshotAuditWarning("Repository changed during the audit (source, staged changes, or reachable history).", result);
+			if (pending.sessionId !== ctx.sessionManager.getSessionId()) throw new SnapshotAuditWarning("Snapshot audit session changed after approval.", result);
 			const enabled = { ...pending.expected, repositories: { ...pending.expected.repositories, [repo.configKey]: true } };
-			saveDelegateSnapshots(this.paths, pending.expected, enabled);
+			try { saveDelegateSnapshots(this.paths, pending.expected, enabled); }
+			catch (error) {
+				if (error instanceof Error && error.message.startsWith("Snapshots changed on disk.")) throw new SnapshotAuditWarning(error.message, result);
+				throw error;
+			}
 			this.config.snapshots = enabled;
 			const warnings = result.warnings ?? [];
 			const message = `No secret leak was demonstrated; capture enabled for this repository. Checked ${result.checked.length}/${AUDIT_CHECKS.length} areas. Best-effort assessment; unchecked data or later changes may contain secrets.${warnings.length ? `\nWarnings:\n${warnings.map(warning => `- ${warning}`).join("\n")}` : ""}`;
