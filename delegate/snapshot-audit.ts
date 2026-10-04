@@ -59,7 +59,7 @@ export function parseAuditCall(params: Record<string, unknown>): { auditId: stri
 export class SnapshotAudits implements SnapshotAuditActions {
 	private pending?: PendingAudit;
 	private preparing?: AbortController;
-	private submitting?: AbortController;
+	private submitting?: PendingAudit;
 	private generation = 0;
 	private invalidated = new Map<string, string>();
 	private pi: ExtensionAPI;
@@ -70,14 +70,15 @@ export class SnapshotAudits implements SnapshotAuditActions {
 		this.pi = pi; this.config = config; this.paths = paths; this.agentDir = agentDir;
 	}
 	get active(): boolean { return !!this.pending || !!this.preparing || !!this.submitting; }
-	cancel(reason = "Snapshot settings or audit request changed."): void {
-		if (this.pending) {
-			this.invalidated.set(this.pending.id, reason);
+	cancel(reason = "The audit was cancelled."): void {
+		const audit = this.pending ?? this.submitting;
+		if (audit) {
+			this.invalidated.set(audit.id, reason);
 			if (this.invalidated.size > 16) this.invalidated.delete(this.invalidated.keys().next().value!);
 		}
 		this.generation++;
 		this.preparing?.abort(); this.preparing = undefined;
-		this.submitting?.abort(); this.submitting = undefined;
+		this.submitting?.controller.abort(); this.submitting = undefined;
 		this.pending?.controller.abort(); this.pending = undefined;
 	}
 	endTurn(): void {
@@ -91,7 +92,7 @@ export class SnapshotAudits implements SnapshotAuditActions {
 	}
 	async request(ctx: ExtensionContext, repo: Repository, signal: AbortSignal): Promise<boolean> {
 		if (!ctx.hasUI || signal.aborted) return false;
-		this.cancel();
+		this.cancel("A new audit request replaced the previous audit.");
 		const controller = new AbortController(), generation = this.generation;
 		this.preparing = controller;
 		const combined = AbortSignal.any([signal, controller.signal]);
@@ -146,7 +147,7 @@ export class SnapshotAudits implements SnapshotAuditActions {
 		}
 		// Consume once before asynchronous checks so parallel/late submissions cannot enable twice.
 		this.pending = undefined;
-		this.submitting = pending.controller;
+		this.submitting = pending;
 		const combined = AbortSignal.any([pending.controller.signal, ...(signal ? [signal] : [])]);
 		try {
 			combined.throwIfAborted();
@@ -173,9 +174,12 @@ export class SnapshotAudits implements SnapshotAuditActions {
 			const warnings = result.warnings ?? [];
 			const message = `No secret leak was demonstrated; capture enabled for this repository. Checked ${result.checked.length}/${AUDIT_CHECKS.length} areas. Best-effort assessment; unchecked data or later changes may contain secrets.${warnings.length ? `\nWarnings:\n${warnings.map(warning => `- ${warning}`).join("\n")}` : ""}`;
 			return message;
+		} catch (error) {
+			if (combined.aborted) throw new SnapshotAuditWarning(this.invalidated.get(id) ?? "The audit submission was interrupted.", result);
+			throw error;
 		} finally {
 			pending.controller.abort();
-			if (this.submitting === pending.controller) this.submitting = undefined;
+			if (this.submitting === pending) this.submitting = undefined;
 		}
 	}
 }

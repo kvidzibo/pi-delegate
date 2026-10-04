@@ -81,7 +81,7 @@ test("first-use safety audit requires consent and unchanged best-effort results,
 		sessionId = "session-one"; manager.cancel();
 		id = await begin();
 		const cancelled = manager.submit(ctx, id, passed); manager.cancel();
-		await assert.rejects(cancelled, /abort/i);
+		await assert.rejects(cancelled, /Warning: The audit was cancelled\.[\s\S]*No secret leak or hard capture blocker was reported/);
 		assert.equal(snapshotEnabled(repo, config.snapshots), false);
 		id = await begin();
 		const disk = JSON.parse(readFileSync(userPath, "utf8"));

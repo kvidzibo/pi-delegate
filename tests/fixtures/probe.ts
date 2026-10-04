@@ -205,6 +205,17 @@ export default function probe(pi: ExtensionAPI) {
 			tool.renderResult(stale, { expanded: false, isPartial: false }, { fg: (color: string, text: string) => { colors.push(color); return text; } }, { state: {} });
 			assert.deepEqual(colors, ["warning"]);
 			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
+			// The same warning contract holds if cancellation interrupts in-flight checks.
+			reAuditId = await requestAudit();
+			const submitting = call({ auditId: reAuditId, auditResult: { verdict: "passed", checked: ["source"], issues: [], warnings: ["history: unexamined slice"] } });
+			await handlers.get("session_compact")!();
+			const interrupted = await submitting;
+			assert.equal(interrupted.details.ok, true); assert.equal(interrupted.details.auditWarning, true);
+			assert.equal(handlers.get("tool_result")!({ toolName: "delegate", details: interrupted.details }), undefined);
+			assert.match(interrupted.content[0].text, /session was compacted/);
+			assert.match(interrupted.content[0].text, /No secret leak or hard capture blocker was reported/);
+			assert.match(interrupted.content[0].text, /history: unexamined slice/);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).snapshots.repositories[repo.configKey], false);
 			const messageCount = auditMessages.length;
 			const manual = async (confirm: boolean) => {
 				let picks = 0;
