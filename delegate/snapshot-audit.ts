@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { saveDelegateSnapshots, type ConfigPaths, type DelegateConfig, type SnapshotConfig } from "./config.ts";
-import { assertSnapshotLocation, repositoryAuditState, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotNeedsAudit, type Repository } from "./snapshots.ts";
+import { assertSnapshotLocation, repositoryAuditState, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotNeedsAudit, SnapshotRepositoryChangedError, type Repository } from "./snapshots.ts";
 
 export const AUDIT_CHECKS = ["source", "staged", "history", "capture-constraints", "storage"] as const;
 export type AuditResult = { verdict: "passed" | "blocked" | "incomplete"; checked: string[]; issues: string[]; warnings?: string[] };
@@ -176,6 +176,7 @@ export class SnapshotAudits implements SnapshotAuditActions {
 			return message;
 		} catch (error) {
 			if (combined.aborted) throw new SnapshotAuditWarning(this.invalidated.get(id) ?? "The audit submission was interrupted.", result);
+			if (error instanceof SnapshotRepositoryChangedError) throw new SnapshotAuditWarning("Repository changed during safety audit verification (source, staged changes, or reachable history).", result);
 			throw error;
 		} finally {
 			pending.controller.abort();
