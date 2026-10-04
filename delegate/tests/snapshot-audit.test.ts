@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
 import { loadDelegateConfig } from "../config.ts";
-import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits } from "../snapshot-audit.ts";
+import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits, SnapshotAuditWarning } from "../snapshot-audit.ts";
 import { repositoryFor, snapshotEnabled, snapshotNeedsAudit } from "../snapshots.ts";
 
 test("first-use safety audit requires consent and unchanged best-effort results, without capturing audit inputs", async () => {
@@ -64,12 +65,32 @@ test("first-use safety audit requires consent and unchanged best-effort results,
 		assert.match(await manager.submit(ctx, id, { verdict: "incomplete", checked: ["source"], issues: [] }), /remains disabled/);
 		id = await begin();
 		manager.endTurn();
-		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
+		await assert.rejects(manager.submit(ctx, id, passed), /finished its turn without submitting/);
 		assert.match(notices.at(-1)!, /incomplete/);
 		id = await begin();
 		writeFileSync(join(repoPath, "source"), "changed after consent\n");
 		await assert.rejects(manager.submit(ctx, id, passed), /Repository changed/);
 		assert.equal(snapshotEnabled(repo, config.snapshots), false);
+		// A change between verification reads also preserves findings as a warning.
+		id = await begin();
+		const fsPromises = createRequire(import.meta.url)("node:fs/promises"), originalOpen = fsPromises.open;
+		let sourceReads = 0;
+		fsPromises.open = async (path: unknown, ...args: unknown[]) => {
+			if (String(path).endsWith("/source") && ++sourceReads === 2) writeFileSync(join(repoPath, "source"), "changed between verification reads\n");
+			return originalOpen(path, ...args);
+		};
+		syncBuiltinESMExports();
+		try {
+			await assert.rejects(manager.submit(ctx, id, bestEffort), error => {
+				assert.ok(error instanceof SnapshotAuditWarning);
+				assert.match(error.message, /Repository changed during safety audit verification/);
+				assert.match(error.message, /No secret leak or hard capture blocker was reported/);
+				assert.match(error.message, /docs\/images: pixel content unexamined/);
+				return true;
+			});
+			assert.equal(sourceReads, 2);
+			assert.equal(snapshotEnabled(repo, config.snapshots), false);
+		} finally { fsPromises.open = originalOpen; syncBuiltinESMExports(); }
 		git("add", "source"); git("-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-qm", "changed source");
 		writeFileSync(join(repoPath, ".git", "shallow"), git("rev-parse", "HEAD"));
 		id = await begin();
@@ -77,11 +98,11 @@ test("first-use safety audit requires consent and unchanged best-effort results,
 		await assert.rejects(manager.submit(ctx, id, passed), /Repository changed/, "newly reachable history invalidates an audit even with unchanged HEAD/source");
 		id = await begin();
 		sessionId = "other-session";
-		await assert.rejects(manager.submit(ctx, id, passed), /No matching/);
+		await assert.rejects(manager.submit(ctx, id, passed), /session changed after audit approval/);
 		sessionId = "session-one"; manager.cancel();
 		id = await begin();
 		const cancelled = manager.submit(ctx, id, passed); manager.cancel();
-		await assert.rejects(cancelled, /abort/i);
+		await assert.rejects(cancelled, /Warning: The audit was cancelled\.[\s\S]*No secret leak or hard capture blocker was reported/);
 		assert.equal(snapshotEnabled(repo, config.snapshots), false);
 		id = await begin();
 		const disk = JSON.parse(readFileSync(userPath, "utf8"));

@@ -34,7 +34,7 @@ import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
 import { FileCapacityBroker } from "./capacity.ts";
 import { snapshotCommand } from "./snapshot-command.ts";
-import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits } from "./snapshot-audit.ts";
+import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits, SnapshotAuditWarning } from "./snapshot-audit.ts";
 import { captureRepository, formatSnapshotBytes, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotEnabled, snapshotNeedsAudit, snapshotSettings, type Repository } from "./snapshots.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -244,7 +244,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	// of tying background cancellation to the spawn/collect call that happened to be active.
 	let parentSignal: AbortSignal | undefined;
 	const onParentAbort = (): void => {
-		audits.cancel();
+		audits.cancel("The parent agent was interrupted.");
 		// Include completed jobs whose notices are still waiting for the parent to go idle.
 		for (const snap of scheduler.list()) gate.consume(snap.id);
 		scheduler.cancelAll();
@@ -260,7 +260,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 	});
 	pi.on("agent_settled", () => { detachParentAbort(); audits.endTurn(); });
-	pi.on("session_compact", () => audits.cancel());
+	pi.on("session_compact", () => audits.cancel("The session was compacted during the audit."));
 
 	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
@@ -330,7 +330,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	let busyUnsubscribe: (() => void) | undefined;
 	pi.on("session_start", async (event, ctx) => {
 		shuttingDown = false;
-		audits.cancel();
+		audits.cancel(event.reason === "reload" ? "Extensions were reloaded during the audit." : "The session changed during the audit.");
 		busyUnsubscribe?.();
 		const events = pi.events;
 		if (events?.on) {
@@ -345,7 +345,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		captureContext = ctx;
 		if (ctx.hasUI && event.reason !== "reload") void showCaptureStartup(ctx);
 	});
-	pi.on("session_tree", (_event, ctx) => { audits.cancel(); cards.restore(ctx.sessionManager.getBranch()); });
+	pi.on("session_tree", (_event, ctx) => { audits.cancel("The session branch changed during the audit."); cards.restore(ctx.sessionManager.getBranch()); });
 	const dialogs = new AbortController();
 	registerDelegateCommand(pi, [{
 		name: "models",
@@ -390,7 +390,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
-		audits.cancel();
+		audits.cancel("The session runtime shut down during the audit.");
 		dialogs.abort();
 		busyUnsubscribe?.();
 		busyUnsubscribe = undefined;
@@ -488,8 +488,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				bindUi(ctx);
 				const auditCall = parseAuditCall(params);
 				if (auditCall) {
-					const message = await audits.submit(ctx, auditCall.auditId, auditCall.auditResult, signal);
-					return { content: [{ type: "text" as const, text: message }], details: { ok: true, snapshotAudit: true, auditVerdict: auditCall.auditResult.verdict } };
+					try {
+						const message = await audits.submit(ctx, auditCall.auditId, auditCall.auditResult, signal);
+						return { content: [{ type: "text" as const, text: message }], details: { ok: true, snapshotAudit: true, auditVerdict: auditCall.auditResult.verdict } };
+					} catch (error) {
+						if (!(error instanceof SnapshotAuditWarning)) throw error;
+						return { content: [{ type: "text" as const, text: error.message }], details: { ok: true, snapshotAudit: true, auditVerdict: auditCall.auditResult.verdict, auditWarning: true } };
+					}
 				}
 				const parsed = parseDelegateCall(params, config);
 				if (parsed.mode === "spawn" && audits.active) throw new Error("A snapshot safety audit is pending; finish it before launching delegates.");
@@ -654,10 +659,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			context.state.delegateResult = result;
-			const auditDetails = result.details as { snapshotAudit?: boolean; auditVerdict?: string; ok?: boolean } | undefined;
+			const auditDetails = result.details as { snapshotAudit?: boolean; auditVerdict?: string; auditWarning?: boolean; ok?: boolean } | undefined;
 			const auditArgs = context.state.delegateArgs as { auditId?: string } | undefined;
 			if (auditDetails?.snapshotAudit || auditArgs?.auditId) {
-				const color = auditDetails?.ok === false ? "error" : auditDetails?.auditVerdict === "passed" ? "muted" : "warning";
+				const color = auditDetails?.ok === false ? "error" : auditDetails?.auditWarning ? "warning" : auditDetails?.auditVerdict === "passed" ? "muted" : "warning";
 				return new Text(theme.fg(color, result.content.filter(item => item.type === "text").map(item => (item as { text: string }).text).join("\n")), 0, 0);
 			}
 			return renderChildResult({ theme, read: () => readRow({ ...context, expanded, isPartial }),

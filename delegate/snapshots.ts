@@ -12,6 +12,10 @@ const MAX_FILE = 128 * 1024 * 1024, MAX_TOTAL = 2 * 1024 * 1024 * 1024;
 const hash = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 export interface Repository { root: string; configKey: string; id: string }
 export interface SnapshotRef { version: 1; repositoryId: string; snapshotId: string; manifestPath: string; treeHash: string }
+/** Detected instability, distinct from unsupported inputs and storage failures. */
+export class SnapshotRepositoryChangedError extends Error {
+	name = "SnapshotRepositoryChangedError";
+}
 interface Entry { path: string; mode: number; type: "file" | "symlink"; hash: string; size: number }
 
 async function git(cwd: string, args: string[], signal?: AbortSignal): Promise<Buffer> {
@@ -146,7 +150,7 @@ async function sourceFile(root: FileHandle, path: string): Promise<{ entry: Entr
 				length += result.bytesRead;
 			}
 			const after = await fd.stat();
-			if (length !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error("Repository changed during snapshot capture; retry the delegate.");
+			if (length !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new SnapshotRepositoryChangedError("Repository changed during snapshot capture; retry the delegate.");
 			const bytes = data.subarray(0, length);
 			return { entry: { path, mode: before.mode & 0o111 ? 0o100755 : 0o100644, type: "file", hash: hash(bytes), size: length }, data: bytes };
 		} finally { await fd.close(); }
@@ -201,7 +205,7 @@ export async function repositoryAuditState(repo: Repository, signal?: AbortSigna
 		const second = await scan(root, signal), secondHistory = await history(second.head);
 		const current = await lstat(repo.root), pinned = await root.stat();
 		if (current.dev !== pinned.dev || current.ino !== pinned.ino || first.treeHash !== second.treeHash || firstHistory !== secondHistory) {
-			throw new Error("Repository changed during safety audit preparation; retry the audit.");
+			throw new SnapshotRepositoryChangedError("Repository changed during safety audit verification; retry the audit.");
 		}
 		return hash(JSON.stringify({ tree: first.treeHash, history: firstHistory }));
 	} finally { await root.close(); }
@@ -260,7 +264,7 @@ export async function captureRepository(repo: Repository, directory: string, run
 		}
 		const second = await scan(sourceRoot, signal);
 		const currentRoot = await lstat(repo.root), pinnedRoot = await sourceRoot.stat();
-		if (currentRoot.dev !== pinnedRoot.dev || currentRoot.ino !== pinnedRoot.ino || first.treeHash !== second.treeHash) throw new Error("Repository changed during snapshot capture; retry the delegate.");
+		if (currentRoot.dev !== pinnedRoot.dev || currentRoot.ino !== pinnedRoot.ino || first.treeHash !== second.treeHash) throw new SnapshotRepositoryChangedError("Repository changed during snapshot capture; retry the delegate.");
 		signal?.throwIfAborted();
 		for (const entry of first.entries) {
 			const blob = join(temp, `${entry.hash}.gz`);
