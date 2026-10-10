@@ -12,6 +12,7 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface AgentConfig {
+	enabled?: boolean;
 	model: string;
 	tools: string[];
 	thinking: ThinkingLevel;
@@ -52,6 +53,7 @@ export function resolveAgent(
 	config: DelegateConfig,
 ): { kind: Kind; model: string; agent: AgentConfig } {
 	const agent = config.agents[kind];
+	if (agent.enabled === false) throw new Error(`delegate refused: ${kind} is disabled in configuration.`);
 	const model = override?.trim() ? override.trim() : agent.model;
 	if (!model) throw new Error("delegate refused: model is empty.");
 	return { kind, model, agent };
@@ -93,11 +95,13 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	} catch (error) {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
+	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (!isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
 	const model = (parsed.model as string).trim();
 	if (!model) throw new Error(`${label} (model (non-empty string))`);
 	return {
+		enabled: parsed.enabled === undefined ? true : parsed.enabled as boolean,
 		model,
 		tools: tools as string[],
 		thinking: parsed.thinking as ThinkingLevel,
@@ -243,10 +247,12 @@ function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConf
 	}
 	const parsed = extra as Record<string, unknown>;
 	const next: Record<string, unknown> = {
+		enabled: base.enabled,
 		model: base.model,
 		tools: base.tools,
 		thinking: base.thinking,
 	};
+	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;

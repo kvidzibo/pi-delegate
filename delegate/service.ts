@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { assertNotNested, normalizeTask, resolveChildCwd } from "../child-runtime/policy.ts";
 import type { PiInvocation } from "../child-runtime/spawn.ts";
@@ -10,6 +10,7 @@ import { FileCapacityBroker } from "./capacity.ts";
 import { assertKind, resolveAgent, type AgentConfig, type DelegateConfig, type Kind } from "./config.ts";
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
+import { prepareReviewTask } from "./review-diff.ts";
 import { isLocalModel } from "./tg.ts";
 
 /** Shared acceptance/execution path. Hosts own consent, observers and lifecycle. */
@@ -31,6 +32,7 @@ export function enqueueDelegate(input: {
 	onAccepted?: (archive: ArchivedRun) => void;
 	beforeRun?: (archive: ArchivedRun, signal: AbortSignal) => Promise<void> | void;
 }): JobSnapshot {
+	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = { ...input.agent, tools: [...input.agent.tools] };
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
@@ -48,8 +50,13 @@ export function enqueueDelegate(input: {
 				const preparation = input.beforeRun?.(archive, childSignal);
 				if (preparation) await preparation;
 				childSignal.throwIfAborted();
+				const task = input.identity.kind === "review"
+					? await prepareReviewTask(input.task, input.identity.cwd, archive.paths.dir, childSignal, input.env)
+					: input.task;
+				childSignal.throwIfAborted();
+				if (task !== input.task) writeFileSync(archive.paths.task, task, { mode: 0o600 });
 				return (input.childRunner ?? runChild)({
-					task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
+					task, cwd: input.identity.cwd, model: input.identity.requestedModel,
 					thinking: agent.thinking, tools: [...tools],
 					...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 					hardTimeoutMs: input.config.hardTimeoutMs, maxOutputBytes: input.config.maxOutputBytes,

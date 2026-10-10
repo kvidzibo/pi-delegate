@@ -67,11 +67,16 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const api = { render, update, context, invalidations: () => invalidations };
 		rows.set(id, api); return api;
 	};
+	const untilRun = async (ready: () => boolean) => {
+		for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10));
+		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
+	};
 	const launch = async (tool: any, id: string, options: object = {}) => {
 		const args = { kind: "review", model: "xai/grok-4.6", task: "Review timeout and abort handling", background: true, ...options };
 		const r = row(tool, id, args);
 		const result = await tool.execute(id, args, undefined, (r: any) => rows.get(id).update(r), testCtx);
 		r.update(result, false);
+		if (result.details.status === "running") await untilRun(() => runs.some(run => run.input.sessionFile === result.details.sessionFile));
 		entries.push({ type: "message", message: { role: "toolResult", toolName: "delegate", toolCallId: id, details: result.details } });
 		return { row: r, result };
 	};
@@ -84,6 +89,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		}, undefined, () => { if (++updates === throwAt) throw new Error("dead observer"); }, testCtx);
 		assert.equal(accepted.details.ok, true);
 		assert.ok(accepted.details.jobId);
+		await untilRun(() => runs.length === beforeRuns + 1);
 		assert.equal(runs.length, beforeRuns + 1);
 		runs.at(-1)!.resolve(success);
 		const collected = await first.tool.execute(`throwing-collect-${throwAt}`, { jobId: accepted.details.jobId }, undefined,
@@ -234,7 +240,9 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	}
 
 	// Foreground error results use the returned tool details rather than the live card.
+	const beforeForeground = runs.length;
 	const foregroundLaunch = launch(restored.tool, "foreground-failure", { background: false, timeoutMs: 2000 });
+	await untilRun(() => runs.length === beforeForeground + 1);
 	runs.at(-1)!.resolve({ text: "", stderrTail: "", stopReason: "hard_timeout", exitCode: 1 });
 	const foreground = await foregroundLaunch;
 	assert.equal(foreground.result.details.ok, false);

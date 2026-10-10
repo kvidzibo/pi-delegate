@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Delegate coding tasks to Pi workers through MCP or the Pi extension",
   "bin": {
     "pi-delegate-mcp": "./dist/server.js"

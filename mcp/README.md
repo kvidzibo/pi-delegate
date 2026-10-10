@@ -36,7 +36,7 @@ For a checkout, set `command` to your Node executable and prepend `/absolute/pat
 
 ### Configuration
 
-Role models, tools, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI change role models and reasoning without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
+Role enablement (`agents.<role>.enabled`, default `true`), models, tools, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI change role models and reasoning without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
 
 Options:
 
@@ -51,7 +51,9 @@ Options:
 
 Directory/config options resolve relative to the launch directory; use absolute paths in client configuration. Keep the same agent directory across participating clients to retain shared local-worker coordination. Changing it creates a separate capacity namespace and model/credential setup.
 
-**Snapshot capture is always disabled in MCP**, even when inherited delegate configuration contains repository approvals or a global audit offer. Configuration is not modified. Snapshot auditing/approval remains an extension-only workflow.
+Review jobs use the shared [automatic Git diff capture](../delegate/README.md#automatic-review-diffs), without granting `bash` to the reviewer. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role enablement/tools are manual configuration settings, not writable through the operator API.
+
+**Eval repository snapshot capture is always disabled in MCP**, even when inherited delegate configuration contains repository approvals or a global audit offer. Configuration is not modified. Snapshot auditing/approval remains an extension-only workflow.
 
 ## Tools
 
@@ -212,7 +214,7 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 
 - **No sandbox.** Workspace validation selects where work starts; shell commands can still access other paths, processes, credentials and network services available to the server's OS account.
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
-- Read-only roles are prompt policy; their shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
+- Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. Other read-only roles rely on prompt policy; their shell access is not write protection. Automatic review diffs include non-ignored untracked files across the checkout; exclude secrets before starting a review. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable extension discovery, context files, skills and prompt templates; local runs explicitly load only the private lease helper.
 - No tool can change role configuration, enable snapshots or authorize capture. The optional operator-only RPC extension changes only role models/reasoning; snapshots remain forcibly disabled.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.

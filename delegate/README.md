@@ -16,13 +16,23 @@ For manual configuration, override [shipped defaults](config.json) in that user 
 }
 ```
 
-Each role accepts `model`, `tools` and `thinking`. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Each role accepts `enabled` (default `true`), `model`, `tools` and `thinking`. Set `"agents": { "implement": { "enabled": false } }` to refuse new implementation jobs, including calls with model overrides. Other roles are unaffected; already accepted jobs keep their policy. Role names remain fixed. Enable/disable is a manual configuration setting, not a model-picker or operator-settings control. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
 
 Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients are not covered.
+
+## Automatic review diffs
+
+`review` defaults to `read`, `grep`, `find` and `ls`—no `bash`, `write` or `edit`. Existing user `tools` overrides still replace the defaults; remove `bash` there too if configured. Other roles keep their existing tools.
+
+Before a review child starts, both hosts capture a whole-checkout Git diff, even when `cwd` is a subdirectory. The base is the merge base of HEAD and the first existing ref in this order: local `main`, local `master`, `origin/main`, `origin/master`. No fetch occurs. The diff contains net committed, staged and unstaged changes plus non-ignored untracked files, including binary patches and symlink targets. Submodules have Gitlink summaries, not recursive file diffs. Clean main/master checkouts produce an empty diff; outside Git, the child receives only the task and a no-diff notice.
+
+The child task points to a private `review.diff` beside its archived `task.md`; the archive retains the exact dispatched task. Capture happens after queue waits, not at acceptance. It does not require child shell access or enable eval snapshots. The reviewer reads the complete file using offsets when needed. Git is required; missing main/master, unborn HEAD, conflicts, capture errors, unsupported untracked entries or a diff over 16 MiB block child launch rather than silently supplying a partial diff. Archives must be outside the checkout. Git operations time out after 30 seconds each and respect cancellation.
+
+**Privacy and limits:** exclude secrets before launching reviews. Diffs are retained indefinitely with the private run archive and may be sent to the configured reviewer model. Capture is not atomic: avoid concurrent writers and report mismatches with current files. Git external diff/textconv drivers, clean/process filters, hooks and fsmonitor hooks are disabled during capture; filtered files are compared as raw working-tree bytes. Removing `bash` limits the reviewer’s tools, not its filesystem read access; this is not a sandbox.
 
 ## Eval repository snapshots
 

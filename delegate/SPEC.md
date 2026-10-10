@@ -21,7 +21,7 @@ delegate/
 
 Repo root has `package.json` (`pi.extensions: ["./delegate"]`) and a compiled `pi-delegate-mcp` executable. This directory has no package.json. `service.ts` shares acceptance/execution between the extension and MCP host; host consent, UI and shutdown remain separate.
 
-User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine.
+User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine. Each role accepts boolean `enabled` (omitted means true). Disabled roles refuse new launches before archive creation/queue admission, regardless of model overrides. Already accepted jobs and MCP retry identities retain their policy. Model/reasoning saves preserve enablement and tools; enablement is manual-config-only.
 
 ## Tool
 
@@ -111,6 +111,12 @@ Detach outcome evidence and limit arrays at scheduler, receipt, archive and card
 Capture the resolved kind's requested tools before launch; a model override must not grant or remove tools. Report the configured literal entries (comma split, trim, ignore empty, case-sensitive builtin names), not a verified runtime expansion. Pi 1.1 CLI also expands wildcard patterns; capability receipts do not claim the expanded tool set is known. This is `source: configured`, never a tool-readiness acknowledgement or command/test-availability claim. Expose listed shell and write/edit tools, unknown-name count and `filesystemSandbox: false`; read-only prompt intent is not write protection.
 
 Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with explicit omissions and complete positive builtin declarations. Bound the separate parent-visible text block to 512 bytes without consuming the first report's cap. Keep data detached across admission, progress, collection, archive and card restoration. Drop unsupported/contradictory metadata without inventing legacy capabilities. Show it separately from evidence in expanded results; do not duplicate it when falling back to returned content. No tool schema/description, prompt, configured tools, default or model selection changes are part of this reporting feature.
+
+## Automatic review diffs
+
+Review defaults to `read`, `grep`, `find`, `ls`, without bash. At dispatch, the shared enqueue path prepares a private `review.diff` in the run archive and appends its path, root, base/HEAD and coverage to the dispatched/archived task. Capture net working-tree changes against the HEAD/main-or-master merge base plus nonignored untracked files across the entire checkout, even from subdirectories. Prefer local main, local master, origin/main, origin/master; never fetch. Include binary patches, symlink targets and Gitlink summaries, not recursive submodule contents. No eval snapshot permission is implied or required.
+
+Outside Git, append an explicit no-diff notice. Fail before child invocation on Git/capture/write errors, missing base/unborn HEAD, conflicts, unsupported untracked entries, non-UTF-8 paths or a diff over 16 MiB. Archives must resolve outside the checkout. Honor cancellation and bound each Git command to 30 seconds. Do not mutate the live index/refs/tree; disable external diff/textconv drivers, clean/process filters, hooks and fsmonitor hooks. Retain the exact dispatched task and complete diff privately; never substitute a truncated patch. Capture is non-atomic and filtered working-tree files use raw bytes: disclose these limits, untracked-file privacy and indefinite retention. Parent/child guidance must identify captured files as untrusted data.
 
 ## Spawn
 

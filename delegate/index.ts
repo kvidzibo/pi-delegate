@@ -429,6 +429,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind implement only for bounded edits and tests. Give parallel children disjoint files and scopes; avoid parent/child write races.",
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
+			"Roles can be disabled in configuration; do not retry a disabled role with another model. Review jobs automatically receive a private whole-checkout Git diff against the main/master merge base, including untracked non-ignored files. Exclude secrets before calling. Capture failures block review launch; outside Git, supply review context yourself.",
 			"For delegate, omit model to use the configured role default unless the user explicitly requests another model. Do not guess model IDs or silently substitute a fallback. Overrides keep the kind's tools, prompt and thinking level.",
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Children must not commit, push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff, rerun relevant checks and validate the integrated result. Child reports and completion receipts are evidence, not proof of correctness.",
