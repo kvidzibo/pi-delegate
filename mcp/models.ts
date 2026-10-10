@@ -28,7 +28,7 @@ interface RuntimeInstance {
 	getModels(): readonly unknown[];
 	getAvailableSnapshot(): readonly unknown[];
 	getError(): string | undefined;
-	refresh(options: { allowNetwork: false; signal?: AbortSignal }): Promise<unknown>;
+	refresh(options: { allowNetwork: false; signal?: AbortSignal }): Promise<{ aborted: boolean; errors: ReadonlyMap<string, unknown> }>;
 }
 
 const EMPTY_WARNING = "Could not load the configured Pi model catalogue; verify the Pi installation and agent settings.";
@@ -146,8 +146,8 @@ export function createCatalogueLoader(input: { command: string; agentDir: string
 				refreshOnCreate: false,
 				signal,
 			});
-			await runtime.refresh({ allowNetwork: false, signal });
-			if (signal?.aborted || runtime.getError()) return { models: [], warning: RUNTIME_WARNING };
+			const refreshed = await runtime.refresh({ allowNetwork: false, signal });
+			if (signal?.aborted || refreshed.aborted || refreshed.errors.size > 0 || runtime.getError()) return { models: [], warning: RUNTIME_WARNING };
 			const available = new Set<string>();
 			for (const entry of runtime.getAvailableSnapshot()) {
 				const identity = modelIdentity(entry);

@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { McpServer, ProtocolError } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -79,6 +79,8 @@ export class DelegateSettings {
 		this.catalogue = input.catalogue;
 		this.apply = input.apply;
 		this.state = diskState(this.paths);
+		// Construction precedes request acceptance: align the host with this exact role snapshot.
+		this.apply(this.state.config.agents);
 	}
 
 	private authorize(token: string | undefined): void {
@@ -171,12 +173,14 @@ export class DelegateSettings {
 		catch { fault(-33003, "Settings are busy or not writable; no changes were made."); }
 		const temp = `${target}.${randomUUID()}.tmp`;
 		try {
-			if (this.currentDisk().revision !== this.state.revision) fault(-33002, "Configuration changed on disk; settings were not saved.");
+			const disk = this.currentDisk();
+			if (disk.revision !== this.state.revision) fault(-33002, "Configuration changed on disk; settings were not saved.");
 			const text = `${JSON.stringify(nextOverlay, null, 2)}\n`;
 			const canonicalTarget = join(realpathSync(dirname(target)), basename(target));
-			const committed = { ...this.state, target: canonicalTarget, overlay: nextOverlay, config: next,
+			const committed = { ...this.state, mode: disk.mode, target: canonicalTarget, overlay: nextOverlay, config: next,
 				revision: digest(JSON.stringify([this.state.shipped, this.state.shippedText, canonicalTarget, text])).toString("hex") };
-			writeFileSync(temp, text, { mode: this.state.mode, flag: "wx" });
+			writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
+			chmodSync(temp, disk.mode); // Explicitly preserve current permissions, independent of umask.
 			renameSync(temp, target);
 			// No await or fallible file reads after persistence: future launches change in this server turn.
 			this.state = committed;

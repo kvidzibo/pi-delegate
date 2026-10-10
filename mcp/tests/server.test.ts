@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -294,10 +294,13 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 	const initial = { maxConcurrent: 1, custom: { retained: true }, snapshots: { repositories: {} },
 		agents: { recon: { model: "ollama/before", thinking: "low", offline: true } } };
 	writeFileSync(overlay, JSON.stringify(initial));
+	// Simulate a service snapshot loaded before a concurrent startup role edit.
+	const startupConfig = loadDelegateConfig(paths);
+	startupConfig.agents.recon = { ...startupConfig.agents.recon, model: "test/after", thinking: "high", offline: false };
 	const captured: { model: string; thinking: string; offline?: boolean }[] = [];
 	let release: (() => void) | undefined;
 	const service = new DelegateService({
-		workspace: temp, agentDir: join(temp, "agent"), config: loadDelegateConfig(paths),
+		workspace: temp, agentDir: join(temp, "agent"), config: startupConfig,
 		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused", args: [] },
 		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
 		childRunner: async input => {
@@ -364,7 +367,13 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.ok((await request(SETTINGS_UPDATE, { token, revision: before.revision,
 			patch: { agents: { recon: { model: "test/after", thinking: "high" } } } })).error, "offline startup changes need explicit acknowledgement");
 		assert.equal(readFileSync(overlay, "utf8"), originalText);
-		const after = (await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" } } })).result;
+		chmodSync(overlay, 0o660);
+		const mask = process.umask(0o022);
+		let after: any;
+		try {
+			after = (await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" } } })).result;
+			assert.equal(statSync(overlay).mode & 0o777, 0o660, "preserve actual permissions despite umask");
+		} finally { process.umask(mask); }
 		assert.equal(after.values.agents.recon.offline, false);
 		assert.notEqual(after.revision, before.revision);
 		assert.equal((await update({ agents: { recon: { thinking: "off" } } })).error.code, -33002);
@@ -384,18 +393,20 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			{ model: "ollama/before", thinking: "low", offline: true },
 			{ model: "test/after", thinking: "high", offline: false },
 		]);
+		chmodSync(overlay, 0o600); // A later chmod must never be undone using cached startup permissions.
 		const concurrent = await Promise.all([
 			update({ agents: { recon: { thinking: "off" } } }, after.revision),
 			update({ agents: { recon: { thinking: "high" } } }, after.revision),
 		]);
 		assert.equal(concurrent.filter(reply => reply.result).length, 1);
+		assert.equal(statSync(overlay).mode & 0o777, 0o600);
 		assert.equal(concurrent.find(reply => reply.error).error.code, -33002);
 		const abort = new AbortController(); abort.abort();
 		const current = await settings.get(token);
 		const persisted = readFileSync(overlay, "utf8");
 		await assert.rejects(settings.update({ token, revision: current.revision, patch: { agents: { recon: { thinking: "high" } } } }, abort.signal));
 		assert.equal(readFileSync(overlay, "utf8"), persisted);
-		const readOnly = new DelegateSettings({ token, paths: { shippedPath: paths.shippedPath }, catalogue, apply: () => assert.fail("must not apply") });
+		const readOnly = new DelegateSettings({ token, paths: { shippedPath: paths.shippedPath }, catalogue, apply: () => {} });
 		const readOnlyDescription = await readOnly.get(token);
 		assert.equal(readOnlyDescription.writable, false);
 		await assert.rejects(readOnly.update({ token, revision: readOnlyDescription.revision, patch: { agents: { recon: { thinking: "low" } } } }), /disabled/);
