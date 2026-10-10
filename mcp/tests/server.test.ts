@@ -12,6 +12,8 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createMcpServer } from "../tools.ts";
 import { DelegateService } from "../../delegate/service.ts";
 import { loadDelegateConfig } from "../../delegate/config.ts";
+import { DelegateSettings, SETTINGS_EXTENSION, SETTINGS_GET, SETTINGS_UPDATE } from "../settings.ts";
+import { createCatalogueLoader } from "../models.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -28,7 +30,7 @@ if (!args.includes('--mode') || !args.includes('rpc') || !args.includes('--no-co
 readFileSync(args[args.indexOf('--system-prompt') + 1]);
 const record = data => appendFileSync(process.env.WORKER_LOG, JSON.stringify(data) + '\\n');
 const send = data => process.stdout.write(JSON.stringify(data) + '\\n');
-record({pid:process.pid, args, type:'start'});
+record({pid:process.pid, args, type:'start', hasSettingsToken:process.env.PI_DELEGATE_SETTINGS_TOKEN !== undefined});
 process.on('SIGTERM', () => {record({pid:process.pid,type:'stop'}); process.exit(0)});
 const lease = process.env.PI_DELEGATE_LEASE_STARTUP;
 if (lease) {
@@ -69,7 +71,8 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		agents: { recon: { model: "test/worker", offline: true }, implement: { model: "test/worker", offline: true } },
 	}));
 	const env = { PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, SystemRoot: process.env.SystemRoot,
-		PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_DELEGATE_LOG: "0", WORKER_LOG: workerLog };
+		PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_DELEGATE_LOG: "0", WORKER_LOG: workerLog,
+		PI_DELEGATE_SETTINGS_TOKEN: "a".repeat(43) };
 	const launch = (extra: string[] = [], overrides: Record<string, string> = {}) => spawn(process.execPath, [
 		join(root, "dist/server.js"), "--workspace", workspace, "--agent-dir", join(temp, "agent"),
 		"--config", config, "--pi-command", worker, ...extra,
@@ -106,6 +109,7 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		};
 		const init = await request("initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "offline-test", version: "1" } });
 		assert.equal(init.result.serverInfo.name, "pi-delegate");
+		assert.equal(init.result.capabilities.experimental[SETTINGS_EXTENSION].version, 1);
 		child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
 		const call = async (name: string, args: unknown) => {
 			const reply = await request("tools/call", { name, arguments: args });
@@ -117,6 +121,11 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 	try {
 		await cancelledStartProbe(temp, workspace, config);
 		const client = await connect();
+		assert.equal((await client.request(SETTINGS_GET)).error.code, -33001);
+		const operatorSettings = await client.request(SETTINGS_GET, { token: env.PI_DELEGATE_SETTINGS_TOKEN });
+		assert.equal(operatorSettings.result.schemaVersion, 1);
+		assert.deepEqual(operatorSettings.result.models, [], "non-Pi executable cannot supply a catalogue");
+		assert.equal(operatorSettings.result.writable, false);
 		const listed = await client.request("tools/list");
 		assert.deepEqual(listed.result.tools.map((tool: any) => tool.name).sort(), ["delegate_control", "delegate_start", "delegate_status"]);
 		const launchArgs = { kind: "implement", task: "hold", requestId: "retry-safe" };
@@ -209,6 +218,7 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		assert.match(nestingError, /Nesting is forbidden/);
 		const workerEvents = readFileSync(workerLog, "utf8").trim().split("\n").map(line => JSON.parse(line));
 		assert.equal(workerEvents.filter(event => event.type === "start").length, 7);
+		assert.ok(workerEvents.filter(event => event.type === "start").every(event => !event.hasSettingsToken));
 		assert.equal(workerEvents.filter(event => event.type === "prompt" && event.task === "hold").length, 4);
 		assert.ok(workerEvents.filter(event => event.type === "start").every(event => !event.args.includes("--workspace")));
 	} finally {
@@ -275,6 +285,132 @@ async function cancelledStartProbe(temp: string, workspace: string, configPath: 
 		await client.close();
 	}
 }
+
+test("operator settings stay off tools and atomically affect future jobs only", { timeout: 15000 }, async () => {
+	const temp = mkdtempSync(join(tmpdir(), "pi-delegate-settings-"));
+	const overlay = join(temp, "delegate.json");
+	const paths = { shippedPath: join(root, "delegate/config.json"), userPath: overlay };
+	const token = "operator_test_" + "x".repeat(32);
+	const initial = { maxConcurrent: 1, custom: { retained: true }, snapshots: { repositories: {} },
+		agents: { recon: { model: "ollama/before", thinking: "low", offline: true } } };
+	writeFileSync(overlay, JSON.stringify(initial));
+	const captured: { model: string; thinking: string; offline?: boolean }[] = [];
+	let release: (() => void) | undefined;
+	const service = new DelegateService({
+		workspace: temp, agentDir: join(temp, "agent"), config: loadDelegateConfig(paths),
+		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused", args: [] },
+		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
+		childRunner: async input => {
+			captured.push({ model: input.model, thinking: input.thinking, offline: input.offline });
+			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; input.signal?.addEventListener("abort", resolve, { once: true }); });
+			return { text: "offline result", exitCode: 0, stopReason: "stop", stderrTail: "" };
+		},
+	});
+	let catalogueCalls = 0;
+	const catalogue = async () => {
+		catalogueCalls++;
+		return { models: [
+			{ id: "ollama/before", label: "Before", available: true, thinking: ["low"] as const },
+			{ id: "test/after", label: "After", available: true, thinking: ["off", "high"] as const },
+			{ id: "test/unavailable", label: "Unavailable", available: false, thinking: ["low"] as const },
+		].map(model => ({ ...model, thinking: [...model.thinking] })) };
+	};
+	const settings = new DelegateSettings({ token, paths, catalogue, apply: agents => service.updateRoleSettings(agents) });
+	const [client, wire] = InMemoryTransport.createLinkedPair();
+	const replies = new Map<number, (message: any) => void>();
+	client.onmessage = (message: any) => { const reply = replies.get(message.id); replies.delete(message.id); reply?.(message); };
+	let seq = 0;
+	const request = async (method: string, params: unknown = {}) => {
+		const id = ++seq;
+		const received = new Promise<any>(resolve => replies.set(id, resolve));
+		await client.send({ jsonrpc: "2.0", id, method, params });
+		return received;
+	};
+	const handle = serveStdio(() => createMcpServer(service, "test", settings), { transport: wire });
+	try {
+		await client.start();
+		const initialized = await request("initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "operator-ui", version: "1" } });
+		assert.equal(initialized.result.capabilities.experimental[SETTINGS_EXTENSION].getMethod, SETTINGS_GET);
+		await client.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+		const tools = (await request("tools/list")).result.tools;
+		assert.deepEqual(tools.map((tool: any) => tool.name).sort(), ["delegate_control", "delegate_start", "delegate_status"]);
+		assert.ok((await request("tools/call", { name: SETTINGS_UPDATE, arguments: { token } })).error, "custom methods are not callable as tools");
+		assert.equal((await request(SETTINGS_GET, { token: "wrong" })).error.code, -33001);
+		assert.equal(catalogueCalls, 0, "unauthorized requests cannot load credentials/catalogues");
+		const before = (await request(SETTINGS_GET, { token })).result;
+		assert.equal(before.writable, true);
+		assert.equal(before.sources.agents.recon.model, "user");
+		assert.equal(before.sources.agents.review.model, "default");
+		assert.deepEqual(Object.keys(before.values), ["agents"]);
+		assert.deepEqual(Object.keys(before.values.agents.recon).sort(), ["model", "offline", "thinking"]);
+		assert.ok(!JSON.stringify(before).includes(token));
+		const held = service.start({ kind: "recon", task: "hold", requestId: "old-running" }).job;
+		await service.status(held.jobId, 50);
+		assert.equal(captured.length, 1);
+		const queued = service.start({ kind: "recon", task: "queued", requestId: "old-queued" }).job;
+		assert.equal(queued.status, "queued");
+		const update = (patch: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch, confirmOfflineChange: true });
+		const originalText = readFileSync(overlay, "utf8");
+		for (const patch of [
+			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: ["bash"] } } },
+			{ agents: { recon: { offline: false } } }, { agents: { recon: {} } },
+			{ agents: { recon: { model: "test/unavailable" } } },
+			{ agents: { recon: { model: "test/after" } } }, // old reasoning is unsupported; don't silently clamp
+			{ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/unavailable" } } },
+		]) {
+			assert.ok((await update(patch)).error, JSON.stringify(patch));
+			assert.equal(readFileSync(overlay, "utf8"), originalText, "failed multi-role updates cannot partially save");
+		}
+		assert.ok((await request(SETTINGS_UPDATE, { token, revision: before.revision,
+			patch: { agents: { recon: { model: "test/after", thinking: "high" } } } })).error, "offline startup changes need explicit acknowledgement");
+		assert.equal(readFileSync(overlay, "utf8"), originalText);
+		const after = (await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" } } })).result;
+		assert.equal(after.values.agents.recon.offline, false);
+		assert.notEqual(after.revision, before.revision);
+		assert.equal((await update({ agents: { recon: { thinking: "off" } } })).error.code, -33002);
+		assert.equal(service.start({ kind: "recon", task: "hold", requestId: "old-running" }).job.jobId, held.jobId, "settings changes must not break accepted-job retries");
+		const fresh = service.start({ kind: "recon", task: "fresh", requestId: "new-job" }).job;
+		assert.equal(fresh.model, "test/after");
+		const saved = JSON.parse(readFileSync(overlay, "utf8"));
+		assert.deepEqual(saved.custom, initial.custom);
+		assert.deepEqual(saved.snapshots, initial.snapshots);
+		assert.deepEqual(saved.agents.recon, { model: "test/after", thinking: "high", offline: false });
+		release!();
+		await service.status(held.jobId, 10000);
+		await service.status(queued.jobId, 10000);
+		await service.status(fresh.jobId, 10000);
+		assert.deepEqual(captured, [
+			{ model: "ollama/before", thinking: "low", offline: true },
+			{ model: "ollama/before", thinking: "low", offline: true },
+			{ model: "test/after", thinking: "high", offline: false },
+		]);
+		const concurrent = await Promise.all([
+			update({ agents: { recon: { thinking: "off" } } }, after.revision),
+			update({ agents: { recon: { thinking: "high" } } }, after.revision),
+		]);
+		assert.equal(concurrent.filter(reply => reply.result).length, 1);
+		assert.equal(concurrent.find(reply => reply.error).error.code, -33002);
+		const abort = new AbortController(); abort.abort();
+		const current = await settings.get(token);
+		const persisted = readFileSync(overlay, "utf8");
+		await assert.rejects(settings.update({ token, revision: current.revision, patch: { agents: { recon: { thinking: "high" } } } }, abort.signal));
+		assert.equal(readFileSync(overlay, "utf8"), persisted);
+		const readOnly = new DelegateSettings({ token, paths: { shippedPath: paths.shippedPath }, catalogue, apply: () => assert.fail("must not apply") });
+		const readOnlyDescription = await readOnly.get(token);
+		assert.equal(readOnlyDescription.writable, false);
+		await assert.rejects(readOnly.update({ token, revision: readOnlyDescription.revision, patch: { agents: { recon: { thinking: "low" } } } }), /disabled/);
+		writeFileSync(overlay, JSON.stringify({ ...saved, maxConcurrent: 2 }));
+		assert.equal((await settings.get(token)).conflict, true);
+		assert.equal((await update({ agents: { recon: { thinking: "high" } } }, current.revision)).error.code, -33002);
+		assert.deepEqual((await createCatalogueLoader({ command: join(temp, "missing-pi"), agentDir: temp })()).models, []);
+		settings.stop();
+		await assert.rejects(settings.get(token), /shutting down/);
+	} finally {
+		release?.();
+		await service.shutdown(); await handle.close(); await client.close();
+		rmSync(temp, { recursive: true, force: true });
+	}
+});
 
 function childNotify(child: ChildProcessWithoutNullStreams, message: Record<string, unknown>): void {
 	child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
