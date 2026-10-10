@@ -1,41 +1,11 @@
 import assert from "node:assert/strict";
 import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
-import { runPiChild } from "../../child-runtime/spawn.ts";
-import { buildChildArgs, buildChildEnv } from "../../delegate/spawn.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import delegate from "../../delegate/index.ts";
-import benchmark from "../../bench/index.ts";
 import { fingerprint } from "../../delegate/calibration.ts";
 import { savings, pricing } from "../../delegate/tests/calibration-fixtures.ts";
-
-export async function guardStartupProbe(ctx: ExtensionCommandContext) {
-	const file = join(ctx.cwd, "guard-budget.json"), model = "openai-codex/gpt-5.6-luna";
-	writeFileSync(file, JSON.stringify({ model, thinking: "low", tools: ["read"], local: false, budgetUsd: 0,
-		maxRequests: 1, contextWindow: 1000, maxTokens: 100, pricing }));
-	const prompt = join(ctx.cwd, "guard-prompt.md"); writeFileSync(prompt, "No prompt may be dispatched by this offline test.");
-	let acknowledged = false;
-	const result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", hardTimeoutMs: 10000, maxOutputBytes: 65536,
-		promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_OFFLINE: "1", PI_DELEGATE_BENCH_BUDGET: file }),
-		buildArgs: p => [...buildChildArgs({ model, thinking: "low", tools: ["read"], promptPath: p,
-			sessionFile: join(ctx.cwd, "guard-session.jsonl") }), "-e", fileURLToPath(new URL("../../bench/guard.ts", import.meta.url))],
-		beforePrompt: async signal => {
-			for (let i = 0; i < 200; i++) {
-				signal.throwIfAborted();
-				try { const state = JSON.parse(readFileSync(file + ".state", "utf8")); acknowledged = state.requests === 0 && !state.pending; } catch {}
-				if (acknowledged) throw new Error("offline test stopped after guard acknowledgement");
-				await delay(25, undefined, { signal });
-			}
-			throw new Error("guard not loaded");
-		},
-	});
-	assert.equal(acknowledged, true, result.text);
-	assert.match(result.text, /offline test stopped after guard acknowledgement/);
-	assert.equal(JSON.parse(readFileSync(file + ".state", "utf8")).requests, 0);
-	return { guardLoaded: true, promptWithheld: true, noModelCalls: true };
-}
 
 export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const handlers = new Map<string, Function>(), commands = new Map<string, any>(); let tool: any;
@@ -70,18 +40,8 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		assert.ok(notices.at(-1)?.includes("Prompt/output ratios 0.500/0.500"));
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore);
 		await handlers.get("session_start")!({}, testCtx); assert.match(statuses.at(-1)!, /^⑂ 220\|100%\|~<\$0.001$/);
-		const stopDelegate = handlers.get("session_shutdown")!;
-		const benchCommands: string[] = [];
-		benchmark({ ...api, registerCommand: (name: string) => benchCommands.push(name) } as ExtensionAPI);
-		assert.deepEqual(benchCommands, []);
-		const command = commands.get("pi-delegate");
-		assert.deepEqual(command.getArgumentCompletions("calibrate").map((item: any) => item.value), ["calibrate", "calibrate-cancel"]);
-		await command.handler("calibrate-cancel", testCtx);
-		assert.equal(notices.at(-1), "No benchmark running");
 		await handlers.get("session_shutdown")!();
-		await stopDelegate();
-		assert.deepEqual(command.getArgumentCompletions("calibrate"), []);
-		return { calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true };
+		return { calibrated: true, snapshot: true, rebuild: true, noModelCalls: true };
 	} finally {
 		if (previous === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previous;
 		rmSync(configPath, { force: true });

@@ -36,10 +36,10 @@ test("single delegate command routes menu choices, arguments and optional entrie
 	assert.deepEqual(complete("m"), ["models"]);
 	assert.deepEqual(complete("stats t"), ["stats today"]);
 	assert.deepEqual(complete("models x"), []);
-	events.on(OPTIONS_EVENT, options => options.push(option("calibrate")));
-	assert.deepEqual(complete("c"), ["calibrate"]);
-	await command.handler('calibrate {"budgetUsd":1}', ctx);
-	assert.equal(calls.at(-1), 'calibrate:{"budgetUsd":1}');
+	events.on(OPTIONS_EVENT, options => options.push(option("export")));
+	assert.deepEqual(complete("e"), ["export"]);
+	await command.handler('export {"format":"json"}', ctx);
+	assert.equal(calls.at(-1), 'export:{"format":"json"}');
 	events.on(OPTIONS_EVENT, options => options.push({ name: "stop", description: "shutdown", handler: async () => lifetime.abort() }));
 	let shutdownMenus = 0;
 	await command.handler("", { ...ctx, ui: { ...ctx.ui, select: async () => { shutdownMenus++; return "stop — shutdown"; } } });

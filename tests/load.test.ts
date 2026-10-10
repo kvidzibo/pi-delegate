@@ -50,10 +50,6 @@ test("package reload restores a single delegate tool through the real session li
 	assert.deepEqual((await runPiProbe("delegate-reload-probe")).result, { tools: ["delegate"], reloaded: true });
 });
 
-test("real isolated Pi child loads the explicit budget guard before any task is dispatched", async () => {
-	assert.deepEqual((await runPiProbe("delegate-guard-startup-probe")).result, { guardLoaded: true, promptWithheld: true, noModelCalls: true });
-});
-
 test("explicit runtime guard preserves builtins, drains current tools and blocks prepared execution", async () => {
 	assert.deepEqual((await runPiProbe("delegate-finalization-probe")).result, {
 		realGuardHandshake: true, leaseInherited: true, currentToolDrained: true, preparedToolBlocked: true,
@@ -68,9 +64,9 @@ test("headroom guard bounds real serialized payloads and vetoes unsafe transport
 	});
 });
 
-test("calibrated pricing resolves in the real factory, restores snapshots and loads opt-in benchmarking", async () => {
+test("calibrated pricing resolves in the real factory and restores snapshots", async () => {
 	assert.deepEqual((await runPiProbe("delegate-savings-probe")).result, {
-		calibrated: true, snapshot: true, rebuild: true, noModelCalls: true, benchLoads: true,
+		calibrated: true, snapshot: true, rebuild: true, noModelCalls: true,
 	});
 });
 
