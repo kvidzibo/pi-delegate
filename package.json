@@ -1,7 +1,10 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.15.0",
-  "description": "Pi parent child tool: named agents, model from config",
+  "version": "0.16.0",
+  "description": "Delegate coding tasks to Pi workers through MCP or the Pi extension",
+  "bin": { "pi-delegate-mcp": "./dist/server.js" },
+  "engines": { "node": ">=22.19.0" },
+  "files": ["dist", "delegate", "child-runtime", "bench", "docs", "mcp/README.md", "README.md", "LICENSE"],
   "author": "Tomas Rackauskas",
   "keywords": ["pi-package"],
   "license": "MIT",
@@ -21,9 +24,25 @@
     "extensions": ["./delegate"]
   },
   "scripts": {
-    "test": "npm run test:unit && npm run test:load",
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "test": "npm run test:unit && npm run test:mcp && npm run test:load",
     "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts bench/tests/*.test.ts",
+    "test:mcp": "npm run build && node --test --experimental-strip-types mcp/tests/*.test.ts",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true },
+    "typebox": { "optional": true }
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

@@ -16,10 +16,11 @@ test("configured capabilities survive overlays, model overrides, observers, coll
 	});
 });
 
-test("installed Pi CLI tool selection uses exact comma-separated names, not wildcard/case aliases", async () => {
+test("installed Pi CLI tool selection preserves exact names and expands wildcard patterns", async () => {
 	for (const [input, expected] of [
 		[["read", "grep", "find", "ls", "bash"], ["read", "grep", "find", "ls", "bash"]],
-		[["read, bash, BASH", "*", "all", "none", "unknown", "delegate"], ["read", "bash", "delegate"]],
+		[["read, bash, BASH", "all", "none", "unknown", "delegate"], ["read", "bash", "delegate"]],
+		[["*"], ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls", "delegate"]],
 		[[" , , "], []],
 	] as Array<[string[], string[]]>) {
 		const result = (await runPiProbe("delegate-allowlist-probe", undefined, input)).result as { tools: string[] };

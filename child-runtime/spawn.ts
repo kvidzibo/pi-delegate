@@ -95,6 +95,10 @@ export interface RunPiChildInput {
 	resourceLease?: InheritedLease;
 	/** Explicit lease-only handshake; mutually exclusive with execution. No runtime/tool policy changes. */
 	leaseStartupMs?: number;
+	/** Explicit worker executable and prefix arguments for non-Pi hosts. */
+	invocation?: PiInvocation;
+	/** Packaged lease helper; omitted for the source-based Pi extension. */
+	leaseGuardPath?: string;
 	spawnFn?: SpawnFn;
 	killTree?: (proc: ChildProcess) => void;
 }
@@ -345,10 +349,12 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	}
 	if (leaseConfig) {
 		if (!args.includes("--no-extensions")) args.push("--no-extensions");
-		args.push("--extension", fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
+		args.push("--extension", input.leaseGuardPath ?? fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
 		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
 	}
-	const invocation = getPiInvocation(args);
+	const invocation = input.invocation
+		? { command: input.invocation.command, args: [...input.invocation.args, ...args] }
+		: getPiInvocation(args);
 	const started = Date.now();
 	const spawnFn = input.spawnFn ?? spawn;
 	const terminate = input.killTree ?? killChildTree;

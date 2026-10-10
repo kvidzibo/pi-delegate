@@ -20,7 +20,9 @@ jobs:
       # Trusted publishing needs npm CLI >= 11.5.1 (Node 22 image may ship older).
       - run: npm install -g npm@latest
       # Factory load (npm run test:load) needs `pi` on PATH; not available here.
+      - run: npm ci --ignore-scripts
       - run: npm run test:unit
+      - run: npm run test:mcp
       - name: Publish if version is new
         run: |
           set -euo pipefail

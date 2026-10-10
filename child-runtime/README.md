@@ -2,7 +2,7 @@
 
 Helpers for running Pi child processes over RPC. This is an internal library, not a standalone command or automatically loaded extension.
 
-Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract. The [`runChild` adapter](../delegate/spawn.ts) supplies delegate-specific arguments, environment and diagnostics. Callers provide the prompt file and session arguments.
+Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract. The [`runChild` adapter](../delegate/spawn.ts) supplies delegate-specific arguments, environment and diagnostics. Callers provide the prompt file and session arguments. Hosts that are not Pi must supply an explicit `invocation` (executable plus prefix arguments); the default invocation reuses the current Pi CLI. Compiled hosts also supply `leaseGuardPath` for their packaged local-worker helper.
 
 ## Important constraints
 
