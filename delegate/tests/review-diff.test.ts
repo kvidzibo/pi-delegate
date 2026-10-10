@@ -82,6 +82,11 @@ test("review dispatch supplies the complete private Git diff without bash and fa
 		assert.equal(git("status", "--porcelain=v1", "-z"), beforeStatus);
 		assert.equal(service.start({ kind: "review", task: "Review all changes", cwd: "sub", requestId: "review" }).reused, true);
 		assert.equal(launched.length, 2);
+		for (const flag of ["assume-unchanged", "skip-worktree"]) {
+			git("update-index", `--${flag}`, "tracked.txt");
+			await assert.rejects(prepareReviewTask("Hidden edits", repo, temp, new AbortController().signal), /index flags/);
+			git("update-index", `--no-${flag}`, "tracked.txt");
+		}
 
 		git("branch", "-D", "main");
 		const refused = service.start({ kind: "review", task: "No base", requestId: "no-base" }).job;
@@ -172,4 +177,54 @@ test("dispatch rechecks host authorization after asynchronous review preparation
 		await scheduler.shutdown(); accounting.close();
 		rmSync(temp, { recursive: true, force: true });
 	}
+});
+
+test("review refuses non-UTF-8 filenames in the index and deleted base-only paths", async () => {
+	const temp = mkdtempSync(join(tmpdir(), "delegate-review-paths-")), repo = join(temp, "repo");
+	mkdirSync(repo);
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, encoding: "utf8" });
+	try {
+		git("init", "-qb", "main"); git("commit", "--allow-empty", "-qm", "base");
+		const invalid = Buffer.concat([Buffer.from(`${repo}/`), Buffer.from([0xff])]);
+		writeFileSync(invalid, "invalid path\n"); git("add", "--all");
+		const capture = () => prepareReviewTask("Invalid path", repo, temp, new AbortController().signal);
+		await assert.rejects(capture(), /UTF-8 tracked and base filenames/);
+		git("commit", "-qm", "invalid base path");
+		rmSync(invalid); git("add", "-u");
+		await assert.rejects(capture(), /UTF-8 tracked and base filenames/);
+		assert.ok(!existsSync(join(temp, "review.diff")));
+	} finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
+test("missing partial-clone blobs cannot trigger transports, even without lazy-fetch environment support", async () => {
+	const temp = mkdtempSync(join(tmpdir(), "delegate-review-promisor-"));
+	const source = join(temp, "source"), repo = join(temp, "clone"), marker = join(temp, "transport-ran");
+	mkdirSync(source);
+	const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	try {
+		git(source, "init", "-qb", "main");
+		writeFileSync(join(source, "file"), "missing base blob\n"); git(source, "add", "."); git(source, "commit", "-qm", "base");
+		git(source, "switch", "-qc", "feature");
+		writeFileSync(join(source, "file"), "available head blob\n"); git(source, "commit", "-qam", "feature");
+		git(source, "config", "uploadpack.allowFilter", "true");
+		git(temp, "clone", "--filter=blob:none", "--no-checkout", "--branch", "feature", `file://${source}`, repo);
+		git(repo, "checkout", "-q", "feature");
+		const transport = join(temp, "transport.cjs");
+		writeFileSync(transport, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "transport executed"); process.exit(1);`);
+		git(repo, "config", "remote.origin.url", `ext::${process.execPath} ${transport}`);
+		git(repo, "config", "protocol.ext.allow", "always");
+		await assert.rejects(prepareReviewTask("Partial clone", repo, temp, new AbortController().signal));
+		assert.ok(!existsSync(marker));
+		// Emulate older Git ignoring GIT_NO_LAZY_FETCH; the transport denylist must still fail closed.
+		const bin = join(temp, "bin"); mkdirSync(bin);
+		const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+		writeFileSync(join(bin, "git"), `#!${process.execPath}\nconst { execFileSync } = require("node:child_process");
+delete process.env.GIT_NO_LAZY_FETCH;
+try { process.stdout.write(execFileSync(${JSON.stringify(realGit)}, process.argv.slice(2), { stdio: ["ignore", "pipe", "pipe"] })); }
+catch (error) { process.stdout.write(error.stdout || ""); process.stderr.write(error.stderr || ""); process.exit(error.status || 1); }
+`, { mode: 0o755 });
+		await assert.rejects(prepareReviewTask("Old Git partial clone", repo, temp, new AbortController().signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /transport.*not allowed/);
+		assert.ok(!existsSync(marker));
+		assert.ok(!existsSync(join(temp, "review.diff")));
+	} finally { rmSync(temp, { recursive: true, force: true }); }
 });

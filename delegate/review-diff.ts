@@ -12,7 +12,11 @@ async function git(cwd: string, args: string[], signal: AbortSignal, inherited: 
 	// Do not let an enclosing Git command redirect capture to another repository/index.
 	const env = { ...inherited };
 	for (const key of Object.keys(env)) if (key.startsWith("GIT_")) delete env[key];
-	Object.assign(env, { LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" });
+	Object.assign(env, {
+		LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1",
+		// Also deny every transport: older Git versions can ignore GIT_NO_LAZY_FETCH.
+		GIT_ALLOW_PROTOCOL: "",
+	});
 	try {
 		const result = await exec("git", ["--no-pager", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args], {
 			cwd, env, signal, encoding: "buffer", maxBuffer: MAX_BYTES, timeout: 30_000,
@@ -64,6 +68,12 @@ export async function prepareReviewTask(task: string, cwd: string, archiveDir: s
 	const baseCommit = (await run(root, ["merge-base", baseTip, head])).stdout.toString().trim();
 	if ((await run(root, ["ls-files", "--unmerged", "-z"])).stdout.length) {
 		throw new Error("Resolve Git conflicts before requesting an automatic review diff.");
+	}
+	const tracked = (await run(root, ["ls-files", "-v", "-z"])).stdout;
+	const basePaths = (await run(root, ["ls-tree", "-r", "--name-only", "-z", baseCommit])).stdout;
+	if (!isUtf8(tracked) || !isUtf8(basePaths)) throw new Error("Review diff requires UTF-8 tracked and base filenames.");
+	if (tracked.toString().split("\0").some(entry => /^[a-zS] /.test(entry))) {
+		throw new Error("Review diff refuses assume-unchanged/skip-worktree index flags (including sparse checkouts); they can hide tracked edits.");
 	}
 	// --no-textconv does not disable clean/process filters, which Git can run while diffing.
 	const filters = await run(root, ["config", "--null", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|process|required)$"], [1]);
