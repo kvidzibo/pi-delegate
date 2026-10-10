@@ -557,6 +557,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					// Freeze capture policy on acceptance; queued jobs capture their eventual start state.
 					const captureConfig = snapshotSettings(config.snapshots);
 					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
+					let capturedRepository: Repository | undefined;
 					snap = enqueueDelegate({
 						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
 						identity: {
@@ -573,7 +574,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
 							if (!captureConfig.defaultEnabled && !Object.values(captureConfig.repositories).some(Boolean)) return;
 							return (async () => {
-								let capturedRepository: Repository | undefined;
 								childSignal.throwIfAborted();
 								const repo = await repositoryFor(cwd, childSignal);
 								if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
@@ -584,9 +584,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 									capturedRepository = repo;
 								}
 								childSignal.throwIfAborted();
-								if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
-								if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 							})();
+						},
+						beforeDispatch: () => {
+							if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
+							if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 						},
 					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");

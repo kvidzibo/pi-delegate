@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { loadDelegateConfig, mergeDelegateConfig } from "../config.ts";
 import { prepareReviewTask } from "../review-diff.ts";
-import { DelegateService } from "../service.ts";
+import { DelegateService, enqueueDelegate } from "../service.ts";
+import { Accounting } from "../accounting.ts";
+import { JobScheduler } from "../jobs.ts";
 
 const delegateDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -95,8 +97,79 @@ test("review dispatch supplies the complete private Git diff without bash and fa
 		await assert.rejects(prepareReviewTask("Unsafe archive", repo, join(repo, "archive"), signal), /outside the checkout/);
 		const cancelled = new AbortController(); cancelled.abort();
 		await assert.rejects(prepareReviewTask("Cancelled", repo, temp, cancelled.signal), /abort/i);
+		const broken = join(temp, "broken"); mkdirSync(broken);
+		writeFileSync(join(broken, ".git"), "gitdir: /missing/delegate-review-test\n");
+		await assert.rejects(prepareReviewTask("Broken checkout", broken, temp, signal), /not a git repository/);
+
+		// Reproduce no-index's ambiguous exit 1 by removing a file after lstat, just before Git sees it.
+		rmSync(join(repo, "archive"), { recursive: true });
+		const bin = join(temp, "bin"); mkdirSync(bin);
+		const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+		writeFileSync(join(bin, "git"), `#!${process.execPath}\nconst { execFileSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("--no-index") && args.at(-1) === "late.txt") require("node:fs").unlinkSync("late.txt");
+try { process.stdout.write(execFileSync(${JSON.stringify(realGit)}, args)); }
+catch (error) { process.stdout.write(error.stdout || ""); process.stderr.write(error.stderr || ""); process.exit(error.status || 1); }
+`, { mode: 0o755 });
+		await assert.rejects(prepareReviewTask("File disappeared", repo, temp, signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /late\.txt/);
+		assert.ok(!existsSync(join(temp, "review.diff")), "access errors must not produce a partial patch");
 	} finally {
 		await service.shutdown();
+		rmSync(temp, { recursive: true, force: true });
+	}
+});
+
+test("Gitlink capture never runs submodule-local filters or status", async () => {
+	const temp = mkdtempSync(join(tmpdir(), "delegate-review-submodule-"));
+	const repo = join(temp, "repo"), sub = join(repo, "module"), marker = join(temp, "filter-ran");
+	mkdirSync(sub, { recursive: true });
+	const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd, encoding: "utf8" });
+	try {
+		git(repo, "init", "-qb", "main"); git(sub, "init", "-qb", "main");
+		writeFileSync(join(sub, "source"), "base\n");
+		writeFileSync(join(sub, ".gitattributes"), "source filter=probe\n");
+		git(sub, "add", "."); git(sub, "commit", "-qm", "base");
+		const initial = git(sub, "rev-parse", "HEAD").trim();
+		git(repo, "update-index", "--add", "--cacheinfo", `160000,${initial},module`);
+		git(repo, "commit", "-qm", "base gitlink");
+		writeFileSync(join(sub, "source"), "next commit\n"); git(sub, "commit", "-qam", "next");
+		const next = git(sub, "rev-parse", "HEAD").trim();
+		git(sub, "config", "filter.probe.clean", `touch '${marker}'; cat`);
+		writeFileSync(join(sub, "source"), "dirty submodule\n");
+		await prepareReviewTask("Gitlink", repo, temp, new AbortController().signal);
+		assert.ok(!existsSync(marker), "submodule-local clean filters must not execute");
+		const diff = readFileSync(join(temp, "review.diff"), "utf8");
+		assert.ok(diff.includes(`-Subproject commit ${initial}`));
+		assert.ok(diff.includes(`+Subproject commit ${next}`));
+		assert.ok(!diff.includes("-dirty"));
+	} finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
+test("dispatch rechecks host authorization after asynchronous review preparation", async () => {
+	const temp = mkdtempSync(join(tmpdir(), "delegate-review-policy-"));
+	const config = loadDelegateConfig({ shippedPath: join(delegateDir, "config.json") });
+	const accounting = new Accounting(join(temp, "archive"));
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 1 });
+	let authorized = true, launched = false, checked = false;
+	try {
+		const job = enqueueDelegate({
+			scheduler, accounting, agent: config.agents.review, config,
+			identity: { parentSessionId: "policy", toolCallId: "policy", kind: "review", cwd: temp, requestedModel: "test/review", thinking: "off" },
+			task: "Review", promptPath: join(delegateDir, "prompts/review.md"), timeoutMs: 10000, background: true,
+			beforeRun: () => { assert.ok(authorized); queueMicrotask(() => { authorized = false; }); },
+			beforeDispatch: archive => {
+				checked = true;
+				assert.match(readFileSync(archive.paths.task, "utf8"), /outside a Git checkout/);
+				if (!authorized) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
+			},
+			childRunner: async () => { launched = true; throw new Error("must not launch"); },
+		});
+		const result = await scheduler.wait(job.id, { timeoutMs: 10000 });
+		assert.equal(result.status, "failed");
+		assert.match(result.answer ?? "", /permission was revoked/);
+		assert.equal(checked, true); assert.equal(launched, false);
+	} finally {
+		await scheduler.shutdown(); accounting.close();
 		rmSync(temp, { recursive: true, force: true });
 	}
 });

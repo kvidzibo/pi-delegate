@@ -31,6 +31,8 @@ export function enqueueDelegate(input: {
 	childRunner?: typeof runChild;
 	onAccepted?: (archive: ArchivedRun) => void;
 	beforeRun?: (archive: ArchivedRun, signal: AbortSignal) => Promise<void> | void;
+	/** Recheck host authorization after all asynchronous preparation, immediately before child dispatch. */
+	beforeDispatch?: (archive: ArchivedRun, signal: AbortSignal) => void;
 }): JobSnapshot {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = { ...input.agent, tools: [...input.agent.tools] };
@@ -55,6 +57,8 @@ export function enqueueDelegate(input: {
 					: input.task;
 				childSignal.throwIfAborted();
 				if (task !== input.task) writeFileSync(archive.paths.task, task, { mode: 0o600 });
+				input.beforeDispatch?.(archive, childSignal);
+				childSignal.throwIfAborted();
 				return (input.childRunner ?? runChild)({
 					task, cwd: input.identity.cwd, model: input.identity.requestedModel,
 					thinking: agent.thinking, tools: [...tools],
