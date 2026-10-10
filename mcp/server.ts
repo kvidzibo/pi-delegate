@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { serveStdio, StdioServerTransport, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import { loadDelegateConfig } from "../delegate/config.ts";
 import { DelegateService } from "../delegate/service.ts";
 import { createMcpServer } from "./tools.ts";
@@ -24,6 +24,15 @@ Standalone stdio MCP server. Requires Pi on PATH; no parent Pi extension.
 
 Snapshots are disabled. Workers are not sandboxed. Jobs belong to this connection.
 `;
+
+/** Observe the real wire lifetime, not per-instance probe/fallback closures. */
+class OwnedStdioTransport extends StdioServerTransport {
+	onDisconnect?: () => void;
+	async close(): Promise<void> {
+		try { await super.close(); }
+		finally { this.onDisconnect?.(); }
+	}
+}
 
 function resolvePath(path: string): string {
 	return resolve(path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path);
@@ -55,16 +64,19 @@ async function main(): Promise<void> {
 		allowModelOverride: values["allow-model-override"],
 		env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
 	});
-	const handle = serveStdio(() => createMcpServer(service, PACKAGE_VERSION), {
-		onerror: error => process.stderr.write(`MCP: ${error.message}\n`),
-	});
+	let handle: StdioServerHandle | undefined;
 	let closing: Promise<void> | undefined;
-	const close = (): Promise<void> => closing ??= service.shutdown().finally(() => handle.close());
+	const close = (): Promise<void> => closing ??= service.shutdown().finally(() => handle?.close());
 	const report = (error: unknown): void => {
 		process.exitCode = 1;
 		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 	};
 	const shutdown = (): void => { void close().catch(report); };
+	const transport = new OwnedStdioTransport();
+	transport.onDisconnect = shutdown;
+	handle = serveStdio(() => createMcpServer(service, PACKAGE_VERSION), {
+		transport, onerror: error => process.stderr.write(`MCP: ${error.message}\n`),
+	});
 	process.stdin.once("end", shutdown);
 	process.stdin.once("close", shutdown);
 	process.stdout.once("error", shutdown);

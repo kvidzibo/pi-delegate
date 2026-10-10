@@ -81,6 +81,7 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		const replies = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 		const lines: any[] = [];
 		child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+		child.stdin.on("error", () => {}); // The closed transport may reject pending client writes.
 		child.stdout.on("data", chunk => {
 			tail += chunk.toString();
 			let end: number;
@@ -172,6 +173,16 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		const restarted = await connect();
 		assert.equal((await restarted.call("delegate_status", { jobId: id })).isError, true);
 		const stopped = once(restarted.child, "close"); restarted.child.stdin.end(); await stopped;
+		// SDK-initiated wire closure does not necessarily emit stdin EOF/close.
+		const brokenWire = await connect();
+		const active = (await brokenWire.call("delegate_start", { kind: "implement", task: "hold", requestId: "transport-close" })).structuredContent.job;
+		await brokenWire.call("delegate_status", { jobId: active.jobId, waitMs: 50 });
+		const transportClosed = once(brokenWire.child, "close");
+		brokenWire.child.stdin.write("x".repeat(11 * 1024 * 1024)); // No newline and no client EOF.
+		assert.equal((await transportClosed)[0], 0, brokenWire.stderr());
+		const disconnectedMetadata = JSON.parse(readFileSync(join(dirname(active.archive.sessionFile), "metadata.json"), "utf8"));
+		assert.equal(disconnectedMetadata.stopReason, "aborted");
+		assert.match(brokenWire.stderr(), /buffer/i);
 		// Independent MCP processes must retain the same user-scoped local lease namespace.
 		writeFileSync(config, JSON.stringify({ maxConcurrent: 1, agents: {
 			recon: { model: "ollama/offline-fixture", offline: true },
@@ -197,11 +208,16 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		assert.equal((await once(nested, "close"))[0], 1);
 		assert.match(nestingError, /Nesting is forbidden/);
 		const workerEvents = readFileSync(workerLog, "utf8").trim().split("\n").map(line => JSON.parse(line));
-		assert.equal(workerEvents.filter(event => event.type === "start").length, 6);
-		assert.equal(workerEvents.filter(event => event.type === "prompt" && event.task === "hold").length, 3);
+		assert.equal(workerEvents.filter(event => event.type === "start").length, 7);
+		assert.equal(workerEvents.filter(event => event.type === "prompt" && event.task === "hold").length, 4);
 		assert.ok(workerEvents.filter(event => event.type === "start").every(event => !event.args.includes("--workspace")));
 	} finally {
-		for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+		await Promise.all(children.map(child => {
+			if (child.exitCode !== null || child.signalCode !== null) return;
+			const closed = once(child, "close");
+			child.kill("SIGTERM");
+			return closed;
+		}));
 		rmSync(temp, { recursive: true, force: true });
 	}
 });
