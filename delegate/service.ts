@@ -50,7 +50,7 @@ export function enqueueDelegate(input: {
 				childSignal.throwIfAborted();
 				return (input.childRunner ?? runChild)({
 					task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
-					thinking: agent.thinking, tools: [...tools], offline: agent.offline,
+					thinking: agent.thinking, tools: [...tools],
 					...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 					hardTimeoutMs: input.config.hardTimeoutMs, maxOutputBytes: input.config.maxOutputBytes,
 					promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,

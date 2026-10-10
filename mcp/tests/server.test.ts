@@ -296,15 +296,16 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 	writeFileSync(overlay, JSON.stringify(initial));
 	// Simulate a service snapshot loaded before a concurrent startup role edit.
 	const startupConfig = loadDelegateConfig(paths);
-	startupConfig.agents.recon = { ...startupConfig.agents.recon, model: "test/after", thinking: "high", offline: false };
-	const captured: { model: string; thinking: string; offline?: boolean }[] = [];
+	startupConfig.agents.recon = { ...startupConfig.agents.recon, model: "test/after", thinking: "high" };
+	const captured: { model: string; thinking: string }[] = [];
 	let release: (() => void) | undefined;
 	const service = new DelegateService({
 		workspace: temp, agentDir: join(temp, "agent"), config: startupConfig,
 		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused", args: [] },
 		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
 		childRunner: async input => {
-			captured.push({ model: input.model, thinking: input.thinking, offline: input.offline });
+			assert.equal("offline" in input, false);
+			captured.push({ model: input.model, thinking: input.thinking });
 			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; input.signal?.addEventListener("abort", resolve, { once: true }); });
 			return { text: "offline result", exitCode: 0, stopReason: "stop", stderrTail: "" };
 		},
@@ -345,14 +346,16 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.equal(before.sources.agents.recon.model, "user");
 		assert.equal(before.sources.agents.review.model, "default");
 		assert.deepEqual(Object.keys(before.values), ["agents"]);
-		assert.deepEqual(Object.keys(before.values.agents.recon).sort(), ["model", "offline", "thinking"]);
+		assert.deepEqual(Object.keys(before.values.agents.recon).sort(), ["model", "thinking"]);
+		assert.deepEqual(Object.keys(before.sources.agents.recon).sort(), ["model", "thinking"]);
+		assert.deepEqual(Object.keys(before.schema.properties.agents.properties.recon.properties).sort(), ["model", "thinking"]);
 		assert.ok(!JSON.stringify(before).includes(token));
 		const held = service.start({ kind: "recon", task: "hold", requestId: "old-running" }).job;
 		await service.status(held.jobId, 50);
 		assert.equal(captured.length, 1);
 		const queued = service.start({ kind: "recon", task: "queued", requestId: "old-queued" }).job;
 		assert.equal(queued.status, "queued");
-		const update = (patch: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch, confirmOfflineChange: true,
+		const update = (patch: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch,
 			_meta: { progressToken: "operator-update", "gateway/sessionId": "fixture-session" } });
 		const originalText = readFileSync(overlay, "utf8");
 		for (const patch of [
@@ -365,9 +368,6 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			assert.ok((await update(patch)).error, JSON.stringify(patch));
 			assert.equal(readFileSync(overlay, "utf8"), originalText, "failed multi-role updates cannot partially save");
 		}
-		assert.ok((await request(SETTINGS_UPDATE, { token, revision: before.revision,
-			patch: { agents: { recon: { model: "test/after", thinking: "high" } } } })).error, "offline startup changes need explicit acknowledgement");
-		assert.equal(readFileSync(overlay, "utf8"), originalText);
 		chmodSync(overlay, 0o660);
 		const mask = process.umask(0o022);
 		let after: any;
@@ -375,7 +375,8 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			after = (await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" } } })).result;
 			assert.equal(statSync(overlay).mode & 0o777, 0o660, "preserve actual permissions despite umask");
 		} finally { process.umask(mask); }
-		assert.equal(after.values.agents.recon.offline, false);
+		assert.ok(after, "hosted model changes save without an offline acknowledgement");
+		assert.equal("offline" in after.values.agents.recon, false);
 		assert.notEqual(after.revision, before.revision);
 		assert.equal((await update({ agents: { recon: { thinking: "off" } } })).error.code, -33002);
 		assert.equal(service.start({ kind: "recon", task: "hold", requestId: "old-running" }).job.jobId, held.jobId, "settings changes must not break accepted-job retries");
@@ -384,19 +385,19 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		const saved = JSON.parse(readFileSync(overlay, "utf8"));
 		assert.deepEqual(saved.custom, initial.custom);
 		assert.deepEqual(saved.snapshots, initial.snapshots);
-		assert.deepEqual(saved.agents.recon, { model: "test/after", thinking: "high", offline: false });
+		assert.deepEqual(saved.agents.recon, { model: "test/after", thinking: "high", offline: true }); // Legacy key stays inert.
 		release!();
 		await service.status(held.jobId, 10000);
 		await service.status(queued.jobId, 10000);
 		await service.status(fresh.jobId, 10000);
 		assert.deepEqual(captured, [
-			{ model: "ollama/before", thinking: "low", offline: true },
-			{ model: "ollama/before", thinking: "low", offline: true },
-			{ model: "test/after", thinking: "high", offline: false },
+			{ model: "ollama/before", thinking: "low" },
+			{ model: "ollama/before", thinking: "low" },
+			{ model: "test/after", thinking: "high" },
 		]);
 		chmodSync(overlay, 0o600); // A later chmod must never be undone using cached startup permissions.
 		const concurrent = await Promise.all([
-			update({ agents: { recon: { thinking: "off" } } }, after.revision),
+			request(SETTINGS_UPDATE, { token, revision: after.revision, patch: { agents: { recon: { thinking: "off" } } }, confirmOfflineChange: false }),
 			update({ agents: { recon: { thinking: "high" } } }, after.revision),
 		]);
 		assert.equal(concurrent.filter(reply => reply.result).length, 1);

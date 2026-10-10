@@ -63,9 +63,9 @@ export async function finalizationProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 	const lease = broker.tryAcquire(group); assert.ok(lease);
 	let result;
 	try { result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", hardTimeoutMs: 10000, maxOutputBytes: 65536,
-		promptSourcePath: prompt, env: buildChildEnv(process.env),
+		promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_OFFLINE: "1" }),
 		buildArgs: promptPath => buildChildArgs({ model, thinking: "off", tools: ["read", "bash"], promptPath,
-			sessionFile: join(ctx.cwd, "runtime-guard-session.jsonl"), offline: true }),
+			sessionFile: join(ctx.cwd, "runtime-guard-session.jsonl") }),
 		execution: { tools: ["read", "bash"], finalizeAfterMs: 0, finalizationGraceMs: 10000, startupTimeoutMs: 8000 },
 		resourceLease: lease.inherited,
 		onControl: ctl => { assert.equal(ctl.wrap(), true); },

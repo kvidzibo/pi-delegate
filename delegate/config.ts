@@ -15,7 +15,6 @@ export interface AgentConfig {
 	model: string;
 	tools: string[];
 	thinking: ThinkingLevel;
-	offline: boolean;
 }
 
 export interface SnapshotConfig {
@@ -95,7 +94,6 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
 	if (!isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
-	if (parsed.offline !== undefined && typeof parsed.offline !== "boolean") errors.push("offline (boolean)");
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
 	const model = (parsed.model as string).trim();
 	if (!model) throw new Error(`${label} (model (non-empty string))`);
@@ -103,7 +101,6 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		model,
 		tools: tools as string[],
 		thinking: parsed.thinking as ThinkingLevel,
-		offline: parsed.offline === true,
 	};
 }
 
@@ -249,12 +246,10 @@ function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConf
 		model: base.model,
 		tools: base.tools,
 		thinking: base.thinking,
-		offline: base.offline,
 	};
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;
-	if (parsed.offline !== undefined) next.offline = parsed.offline;
 	return parseAgent(next, label);
 }
 
@@ -318,15 +313,15 @@ export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 	return mergeDelegateConfig(shipped, JSON.parse(readFileSync(input.userPath, "utf8")), input.userPath);
 }
 
-/** Patch only this role's model/startup mode; never rewrite shipped defaults or other settings. */
-export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: AgentConfig, model: string): Pick<AgentConfig, "model" | "offline"> {
+/** Patch only this role's model; never rewrite shipped defaults or other settings. */
+export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: AgentConfig, model: string): Pick<AgentConfig, "model"> {
 	if (!/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Expected a provider/model ID.");
-	const patch = { model, offline: isLocalModel(model) ? current.offline : false };
+	const patch = { model };
 	saveDelegatePatch(paths, kind, current, patch);
 	return patch;
 }
 
-/** Persist reasoning independently; preserve model, startup mode and tools. */
+/** Persist reasoning independently; preserve model and tools. */
 export function saveDelegateThinking(paths: ConfigPaths, kind: Kind, current: AgentConfig, thinking: ThinkingLevel): Pick<AgentConfig, "thinking"> {
 	if (!isThinkingLevel(thinking)) throw new Error("Unsupported thinking level.");
 	const patch = { thinking };

@@ -12,7 +12,7 @@ export const SETTINGS_GET = "kvidzibo/settings/get";
 export const SETTINGS_UPDATE = "kvidzibo/settings/update";
 export const SETTINGS_TOKEN_ENV = "PI_DELEGATE_SETTINGS_TOKEN";
 
-type RoleValues = { model: string; thinking: ThinkingLevel; offline: boolean };
+type RoleValues = { model: string; thinking: ThinkingLevel };
 type RolePatch = { model?: string; thinking?: ThinkingLevel };
 type SettingsPatch = { agents: Partial<Record<Kind, RolePatch>> };
 type Overlay = Record<string, unknown> & { agents?: Partial<Record<Kind, Record<string, unknown>>> };
@@ -49,8 +49,8 @@ function diskState(paths: ConfigPaths) {
 
 function values(config: DelegateConfig): Record<Kind, RoleValues> {
 	return Object.fromEntries(KINDS.map(kind => {
-		const { model, thinking, offline } = config.agents[kind];
-		return [kind, { model, thinking, offline }];
+		const { model, thinking } = config.agents[kind];
+		return [kind, { model, thinking }];
 	})) as Record<Kind, RoleValues>;
 }
 
@@ -101,7 +101,7 @@ export class DelegateSettings {
 	private describe(catalogue: SettingsCatalogue) {
 		const current = values(this.state.config), defaults = values(this.state.defaults);
 		const conflict = this.currentDisk().revision !== this.state.revision;
-		const sources = Object.fromEntries(KINDS.map(kind => [kind, Object.fromEntries(["model", "thinking", "offline"].map(key =>
+		const sources = Object.fromEntries(KINDS.map(kind => [kind, Object.fromEntries(["model", "thinking"].map(key =>
 			[key, Object.hasOwn(this.state.overlay.agents?.[kind] ?? {}, key) ? "user" : "default"]))]));
 		const roles = Object.fromEntries(KINDS.map(kind => {
 			const choices = catalogue.models.map(model => ({ const: model.id, title: `${model.label}${model.available ? "" : " (unavailable)"}` }));
@@ -111,8 +111,7 @@ export class DelegateSettings {
 				properties: {
 					model: { type: "string", title: "Model", description: "Unavailable models cannot be selected. Use the server catalogue, not the parent session's models.", oneOf: choices, default: defaults[kind].model },
 					thinking: { type: "string", title: "Reasoning", description: "Supported levels depend on the selected model; see models[].thinking.", enum: [...THINKING_LEVELS], default: defaults[kind].thinking },
-					offline: { type: "boolean", title: "Offline startup", description: "Read-only. Selecting a hosted model turns this off; include that change in the confirmation.", readOnly: true, default: defaults[kind].offline },
-				}, required: ["model", "thinking", "offline"],
+				}, required: ["model", "thinking"],
 			}];
 		}));
 		return {
@@ -136,7 +135,7 @@ export class DelegateSettings {
 		return this.describe(catalogue);
 	}
 
-	async update(input: { token?: string; revision: string; patch: SettingsPatch; confirmOfflineChange?: boolean }, signal?: AbortSignal) {
+	async update(input: { token?: string; revision: string; patch: SettingsPatch }, signal?: AbortSignal) {
 		this.authorize(input.token);
 		this.assertOpen();
 		const parsed = patchSchema.safeParse(input.patch);
@@ -159,11 +158,7 @@ export class DelegateSettings {
 			const model = catalogue.models.find(model => model.id === modelId);
 			if (!model?.available) fault(-32602, `The ${kind} model is unavailable in this server's catalogue.`);
 			if (!model.thinking.includes(patch.thinking ?? before.thinking)) fault(-32602, `The ${kind} reasoning level is unsupported by the selected model.`);
-			if (patch.model !== undefined && before.offline && !isLocalModel(modelId) && !input.confirmOfflineChange) {
-				fault(-32602, `Selecting the ${kind} hosted model disables offline startup; confirm that change explicitly.`);
-			}
-			nextOverlay.agents[kind] = { ...nextOverlay.agents[kind], ...patch,
-				...(patch.model === undefined ? {} : { offline: isLocalModel(modelId) ? before.offline : false }) };
+			nextOverlay.agents[kind] = { ...nextOverlay.agents[kind], ...patch };
 		}
 		const next = mergeDelegateConfig(this.state.defaults, nextOverlay, "delegate overlay");
 		const target = this.state.target!;
@@ -207,6 +202,7 @@ export function registerSettings(server: McpServer, settings: DelegateSettings):
 	const meta = z.record(z.string(), z.unknown()).optional();
 	server.server.setRequestHandler(SETTINGS_GET, { params: z.object({ token, _meta: meta }).strict() },
 		(input, ctx) => settings.get(input.token, ctx.mcpReq.signal));
+	// Legacy v1 clients may send the obsolete acknowledgement; it has no effect.
 	server.server.setRequestHandler(SETTINGS_UPDATE, { params: z.object({ token, revision: z.string().regex(/^[a-f0-9]{64}$/), patch: patchSchema, confirmOfflineChange: z.boolean().optional(), _meta: meta }).strict() },
-		(input, ctx) => settings.update(input as { token?: string; revision: string; patch: SettingsPatch; confirmOfflineChange?: boolean }, ctx.mcpReq.signal));
+		(input, ctx) => settings.update(input as { token?: string; revision: string; patch: SettingsPatch }, ctx.mcpReq.signal));
 }

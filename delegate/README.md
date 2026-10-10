@@ -11,14 +11,14 @@ For manual configuration, override [shipped defaults](config.json) in that user 
 ```json
 {
   "agents": {
-    "recon": { "model": "provider/model", "offline": false }
+    "recon": { "model": "provider/model" }
   }
 }
 ```
 
-Each role accepts `model`, `tools`, `thinking` and `offline`. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Each role accepts `model`, `tools` and `thinking`. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
 
-Set `offline: false` when manually switching to a hosted model; the picker does this automatically. A per-call `model` override keeps the role's tools, thinking and offline setting. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
+Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 

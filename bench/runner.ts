@@ -99,9 +99,9 @@ export async function runCalibration(options: BenchOptions, execute: (input: Run
 					try { options.onProgress?.(`${task.id} r${repeat}: ${arm}`); } catch { /* UI observer only */ }
 					const result = await execute({ cwd: dir, model: model.id, task: taskPrompt(task), hardTimeoutMs: options.timeoutMs,
 						maxOutputBytes: 65536, promptSourcePath: promptPath, signal: runSignal,
-						env: buildChildEnv({ ...options.env, PI_DELEGATE_LOG: "0", PI_DELEGATE_BENCH_BUDGET: budgetPath }),
+						env: buildChildEnv({ ...options.env, ...(local ? { PI_OFFLINE: "1" } : {}), PI_DELEGATE_LOG: "0", PI_DELEGATE_BENCH_BUDGET: budgetPath }),
 						buildArgs: (p) => [...buildChildArgs({ model: model.id, thinking: local ? options.key.localThinking : options.key.alternativeThinking,
-							tools: options.key.tools, promptPath: p, sessionFile: join(options.out, `${prefix}.session.jsonl`), offline: local }), "-e", options.guardPath],
+							tools: options.key.tools, promptPath: p, sessionFile: join(options.out, `${prefix}.session.jsonl`) }), "-e", options.guardPath],
 						beforePrompt: async (signal) => {
 							const deadline = Date.now() + 15000;
 							while (true) {

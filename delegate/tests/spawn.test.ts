@@ -31,10 +31,13 @@ test("argv includes isolation flags", () => {
 	assert.equal(args.some((arg) => arg.startsWith("Task:")), false);
 });
 
-test("offline flag only when requested", () => {
-	const args = buildChildArgs({ ...base, offline: true });
-	assert.ok(args.includes("--offline"));
-	assert.equal(buildChildArgs({ ...base, offline: false }).includes("--offline"), false);
+test("child startup mode is controlled only by the supplied Pi environment", () => {
+	for (const model of [base.model, "hosted/model"]) {
+		assert.equal(buildChildArgs({ ...base, model }).includes("--offline"), false);
+	}
+	assert.equal(buildChildEnv({ PI_OFFLINE: "1" }).PI_OFFLINE, "1");
+	assert.equal(buildChildEnv({ PI_OFFLINE: "0" }).PI_OFFLINE, "0");
+	assert.equal(buildChildEnv({}).PI_OFFLINE, undefined);
 });
 
 test("argv never inherits or forks parent sessions, or loads extensions", () => {

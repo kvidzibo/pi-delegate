@@ -16,8 +16,7 @@
     "recon": {
       "model": "local-qwen38/qwen38-q4km",
       "tools": ["read", "grep", "find", "ls", "bash"],
-      "thinking": "off",
-      "offline": true
+      "thinking": "off"
     },
     "implement": {
       "model": "openai-codex/gpt-5.6-luna",

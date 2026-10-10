@@ -2,7 +2,6 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { KINDS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
-import { isLocalModel } from "./tg.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
 export class ModelCommand {
@@ -88,10 +87,8 @@ export class ModelCommand {
 			const selected = await pickDelegateModel(ctx, kind, current.model, models, signal, scoped);
 			if (signal.aborted || selected === undefined) return "cancelled";
 			if (selected === current.model) return "unchanged";
-			const offlineChange = current.offline && !isLocalModel(selected);
 			const confirmed = await ctx.ui.confirm(`Save ${kind} model?`, [
 				`${current.model} → ${selected}`,
-				...(offlineChange ? ["offline: true → false (hosted model startup)"] : []),
 				`Save to ${this.paths.userPath}`,
 				"Applies to new delegates here immediately. Other open Pi sessions need /reload.",
 				"Tools, parent model and existing jobs are unchanged. Reasoning is chosen next.",
@@ -142,7 +139,7 @@ export class ModelCommand {
 				`${latestCurrent.thinking} → ${thinking}`,
 				`Save to ${this.paths.userPath}`,
 				"Applies to new delegates here immediately. Other open Pi sessions need /reload.",
-				"Model, tools, offline setting, parent and existing jobs are unchanged.",
+				"Model, tools, parent and existing jobs are unchanged.",
 			].join("\n"), { signal });
 			if (signal.aborted) return "";
 			if (!confirmed) continue;

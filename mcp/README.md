@@ -46,7 +46,7 @@ Options:
 | `--pi-command EXECUTABLE` | Worker executable, default `pi`. One executable, not a shell command or script with arguments. |
 | `--agent-dir DIRECTORY` | Pi data and shared local capacity; default `PI_CODING_AGENT_DIR` or `~/.pi/agent`. Also passed to workers. |
 | `--config FILE` | Explicit delegate overlay; must exist. Default: `<agent-dir>/delegate.json`, if present. |
-| `--allow-model-override` | Permit optional per-job `provider/model` overrides. Disabled by default; role tools/reasoning/offline policy remain unchanged. |
+| `--allow-model-override` | Permit optional per-job `provider/model` overrides. Disabled by default; role tools/reasoning policy remains unchanged. |
 | `--pi-package-dir DIRECTORY` | Explicit Pi SDK installation for the settings catalogue when `--pi-command` is a wrapper/binary. Must be the `@earendil-works/pi-coding-agent` package directory. |
 
 Directory/config options resolve relative to the launch directory; use absolute paths in client configuration. Keep the same agent directory across participating clients to retain shared local-worker coordination. Changing it creates a separate capacity namespace and model/credential setup.
@@ -130,7 +130,7 @@ Call `kvidzibo/settings/get` with `{ "token": "<private operator token>" }`. The
 | `schemaVersion`, `title` | Contract version (1) and display name |
 | `revision` | Opaque configuration revision for optimistic updates |
 | `schema` | JSON Schema 2020-12 with titles, descriptions, defaults, model choices and read-only hints |
-| `values.agents` | Active per-role `model`, `thinking` and read-only `offline` values |
+| `values.agents` | Active per-role `model` and `thinking` values |
 | `sources.agents` | `user` or `default` for each returned value |
 | `models` | Sanitized model IDs, labels, availability, supported `thinking` levels and `local` classification |
 | `writable`, `conflict`, `warning` | Persistence/catalogue availability and external-edit conflicts |
@@ -152,12 +152,11 @@ After showing the exact changes and receiving human confirmation, call `kvidzibo
     "agents": {
       "review": { "model": "provider/model", "thinking": "high" }
     }
-  },
-  "confirmOfflineChange": true
+  }
 }
 ```
 
-Only nonempty role `model`/`thinking` patches are accepted. The resulting model must be available and its reasoning supported. A model change that makes existing reasoning invalid must include a supported reasoning value. Selecting a hosted model turns `offline` off: show this derived change in the confirmation and explicitly send `confirmOfflineChange: true` when needed. Selecting a local model preserves the previous `offline` value.
+Only nonempty role `model`/`thinking` patches are accepted. The resulting model must be available and its reasoning supported. A model change that makes existing reasoning invalid must include a supported reasoning value. Local and hosted selections follow the same save flow; no offline acknowledgement is required. Legacy `confirmOfflineChange` booleans are accepted but ignored. Clients must read the returned schema rather than assume a fixed role field list; the version-1 envelope and model/reasoning patch contract are unchanged.
 
 The server validates all roles before atomically replacing the configured user overlay, preserving unrelated keys and existing symlinks/modes. It applies the new role policy to future launches immediately; retries and already accepted jobs remain unchanged. The update returns the same description shape as `get`, with the new revision. An uncertain update can be resolved by reading current settings; do not blindly repeat a stale patch.
 
@@ -181,7 +180,7 @@ The baseline is pull-based: call status when needed, or use bounded waits. There
 
 - **No sandbox.** Workspace validation selects where work starts; shell commands can still access other paths, processes, credentials and network services available to the server's OS account.
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
-- Read-only roles are prompt policy; their shell access is not write protection. `offline` skips startup networking, not tool networking.
+- Read-only roles are prompt policy; their shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable extension discovery, context files, skills and prompt templates; local runs explicitly load only the private lease helper.
 - No tool can change role configuration, enable snapshots or authorize capture. The optional operator-only RPC extension changes only role models/reasoning; snapshots remain forcibly disabled.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.

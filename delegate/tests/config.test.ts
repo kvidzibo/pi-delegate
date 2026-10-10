@@ -36,8 +36,8 @@ test("shipped config parses four agents", () => {
 	assert.equal(config.maxQueued, 16);
 	assert.equal(config.checkIntervalMs, 60000);
 	assert.equal(config.hardTimeoutMs, 0);
-	assert.equal(config.agents.recon.offline, true);
-	assert.equal(config.agents.implement.offline, false);
+	assert.equal("offline" in config.agents.recon, false);
+	assert.equal("offline" in config.agents.implement, false);
 	assert.ok(config.agents.implement.tools.includes("edit"));
 	assert.equal(config.agents.review.thinking, "medium");
 	assert.equal(config.agents.oracle.thinking, "high");
@@ -70,8 +70,17 @@ test("user overlay overrides one model", () => {
 	assert.equal(merged.maxQueued, config.maxQueued);
 	assert.equal(merged.agents.recon.model, "ollama/qwen3");
 	assert.deepEqual(merged.agents.recon.tools, config.agents.recon.tools);
-	assert.equal(merged.agents.recon.offline, true);
+	assert.equal("offline" in merged.agents.recon, false);
 	assert.equal(merged.agents.implement.model, config.agents.implement.model);
+});
+
+test("legacy role offline keys are accepted but ignored in defaults and overlays", () => {
+	const base = shipped();
+	for (const offline of [true, false, "obsolete"]) {
+		const legacy = { ...base, agents: { ...base.agents, recon: { ...base.agents.recon, offline } } };
+		assert.deepEqual(parseDelegateConfig(legacy, "legacy.json"), base);
+		assert.deepEqual(mergeDelegateConfig(base, { agents: { recon: { offline } } }, "overlay.json"), base);
+	}
 });
 
 test("unknown overlay agent refused", () => {
@@ -105,15 +114,15 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 	try {
 		const current = shipped().agents.recon;
 		const patch = saveDelegateModel(paths, "recon", current, "hosted/first");
-		assert.deepEqual(patch, { model: "hosted/first", offline: false });
+		assert.deepEqual(patch, { model: "hosted/first" });
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
-			recon: { ...patch, thinking: "medium", tools: ["read"], note: "keep role" }, review: { model: "other/review" },
+			recon: { ...patch, thinking: "medium", tools: ["read"], note: "keep role", offline: true }, review: { model: "other/review" },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
 		const local = saveDelegateModel(paths, "recon", live, "ollama/team/model");
-		assert.deepEqual(local, { model: "ollama/team/model", offline: false });
+		assert.deepEqual(local, { model: "ollama/team/model" });
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
 			...overlay.agents, recon: { ...overlay.agents.recon, ...local },
 		} });
