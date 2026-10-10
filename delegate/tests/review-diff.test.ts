@@ -6,10 +6,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { loadDelegateConfig, mergeDelegateConfig } from "../config.ts";
-import { prepareReviewTask } from "../review-diff.ts";
+import { prepareGitDiffTask } from "../review-diff.ts";
 import { DelegateService, enqueueDelegate } from "../service.ts";
 import { Accounting } from "../accounting.ts";
 import { JobScheduler } from "../jobs.ts";
+import { savings } from "./calibration-fixtures.ts";
 
 const delegateDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -84,7 +85,7 @@ test("review dispatch supplies the complete private Git diff without bash and fa
 		assert.equal(launched.length, 2);
 		for (const flag of ["assume-unchanged", "skip-worktree"]) {
 			git("update-index", `--${flag}`, "tracked.txt");
-			await assert.rejects(prepareReviewTask("Hidden edits", repo, temp, new AbortController().signal), /index flags/);
+			await assert.rejects(prepareGitDiffTask("Hidden edits", repo, temp, new AbortController().signal), /index flags/);
 			git("update-index", `--no-${flag}`, "tracked.txt");
 		}
 
@@ -96,15 +97,15 @@ test("review dispatch supplies the complete private Git diff without bash and fa
 		assert.equal(launched.length, 2, "capture failure must never invoke the child");
 		assert.ok(!existsSync(join(dirname(refused.archive.sessionFile), "review.diff")));
 		const signal = new AbortController().signal;
-		assert.match(await prepareReviewTask("Outside Git", temp, temp, signal), /outside a Git checkout/);
+		assert.match(await prepareGitDiffTask("Outside Git", temp, temp, signal), /outside a Git checkout/);
 		git("branch", "main", base);
 		mkdirSync(join(repo, "archive"));
-		await assert.rejects(prepareReviewTask("Unsafe archive", repo, join(repo, "archive"), signal), /outside the checkout/);
+		await assert.rejects(prepareGitDiffTask("Unsafe archive", repo, join(repo, "archive"), signal), /outside the checkout/);
 		const cancelled = new AbortController(); cancelled.abort();
-		await assert.rejects(prepareReviewTask("Cancelled", repo, temp, cancelled.signal), /abort/i);
+		await assert.rejects(prepareGitDiffTask("Cancelled", repo, temp, cancelled.signal), /abort/i);
 		const broken = join(temp, "broken"); mkdirSync(broken);
 		writeFileSync(join(broken, ".git"), "gitdir: /missing/delegate-review-test\n");
-		await assert.rejects(prepareReviewTask("Broken checkout", broken, temp, signal), /not a git repository/);
+		await assert.rejects(prepareGitDiffTask("Broken checkout", broken, temp, signal), /not a git repository/);
 
 		// Reproduce no-index's ambiguous exit 1 by removing a file after lstat, just before Git sees it.
 		rmSync(join(repo, "archive"), { recursive: true });
@@ -116,7 +117,7 @@ if (args.includes("--no-index") && args.at(-1) === "late.txt") require("node:fs"
 try { process.stdout.write(execFileSync(${JSON.stringify(realGit)}, args)); }
 catch (error) { process.stdout.write(error.stdout || ""); process.stderr.write(error.stderr || ""); process.exit(error.status || 1); }
 `, { mode: 0o755 });
-		await assert.rejects(prepareReviewTask("File disappeared", repo, temp, signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /late\.txt/);
+		await assert.rejects(prepareGitDiffTask("File disappeared", repo, temp, signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /late\.txt/);
 		assert.ok(!existsSync(join(temp, "review.diff")), "access errors must not produce a partial patch");
 	} finally {
 		await service.shutdown();
@@ -141,7 +142,7 @@ test("Gitlink capture never runs submodule-local filters or status", async () =>
 		const next = git(sub, "rev-parse", "HEAD").trim();
 		git(sub, "config", "filter.probe.clean", `touch '${marker}'; cat`);
 		writeFileSync(join(sub, "source"), "dirty submodule\n");
-		await prepareReviewTask("Gitlink", repo, temp, new AbortController().signal);
+		await prepareGitDiffTask("Gitlink", repo, temp, new AbortController().signal);
 		assert.ok(!existsSync(marker), "submodule-local clean filters must not execute");
 		const diff = readFileSync(join(temp, "review.diff"), "utf8");
 		assert.ok(diff.includes(`-Subproject commit ${initial}`));
@@ -159,11 +160,13 @@ test("dispatch rechecks host authorization after asynchronous review preparation
 	try {
 		const job = enqueueDelegate({
 			scheduler, accounting, agent: config.agents.review, config,
-			identity: { parentSessionId: "policy", toolCallId: "policy", kind: "review", cwd: temp, requestedModel: "test/review", thinking: "off" },
+			identity: { parentSessionId: "policy", toolCallId: "policy", kind: "review", cwd: temp, requestedModel: "test/review", thinking: "off", savings: savings() },
 			task: "Review", promptPath: join(delegateDir, "prompts/review.md"), timeoutMs: 10000, background: true,
 			beforeRun: () => { assert.ok(authorized); queueMicrotask(() => { authorized = false; }); },
 			beforeDispatch: archive => {
 				checked = true;
+				assert.equal(archive.data.savings, undefined, "context providers invalidate legacy calibration");
+				assert.match(archive.data.savingsUnavailable ?? "", /configured context providers/);
 				assert.match(readFileSync(archive.paths.task, "utf8"), /outside a Git checkout/);
 				if (!authorized) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 			},
@@ -187,7 +190,7 @@ test("review refuses non-UTF-8 filenames in the index and deleted base-only path
 		git("init", "-qb", "main"); git("commit", "--allow-empty", "-qm", "base");
 		const invalid = Buffer.concat([Buffer.from(`${repo}/`), Buffer.from([0xff])]);
 		writeFileSync(invalid, "invalid path\n"); git("add", "--all");
-		const capture = () => prepareReviewTask("Invalid path", repo, temp, new AbortController().signal);
+		const capture = () => prepareGitDiffTask("Invalid path", repo, temp, new AbortController().signal);
 		await assert.rejects(capture(), /UTF-8 tracked and base filenames/);
 		git("commit", "-qm", "invalid base path");
 		rmSync(invalid); git("add", "-u");
@@ -213,7 +216,7 @@ test("missing partial-clone blobs cannot trigger transports, even without lazy-f
 		writeFileSync(transport, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "transport executed"); process.exit(1);`);
 		git(repo, "config", "remote.origin.url", `ext::${process.execPath} ${transport}`);
 		git(repo, "config", "protocol.ext.allow", "always");
-		await assert.rejects(prepareReviewTask("Partial clone", repo, temp, new AbortController().signal));
+		await assert.rejects(prepareGitDiffTask("Partial clone", repo, temp, new AbortController().signal));
 		assert.ok(!existsSync(marker));
 		// Emulate older Git ignoring GIT_NO_LAZY_FETCH; the transport denylist must still fail closed.
 		const bin = join(temp, "bin"); mkdirSync(bin);
@@ -223,7 +226,7 @@ delete process.env.GIT_NO_LAZY_FETCH;
 try { process.stdout.write(execFileSync(${JSON.stringify(realGit)}, process.argv.slice(2), { stdio: ["ignore", "pipe", "pipe"] })); }
 catch (error) { process.stdout.write(error.stdout || ""); process.stderr.write(error.stderr || ""); process.exit(error.status || 1); }
 `, { mode: 0o755 });
-		await assert.rejects(prepareReviewTask("Old Git partial clone", repo, temp, new AbortController().signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /transport.*not allowed/);
+		await assert.rejects(prepareGitDiffTask("Old Git partial clone", repo, temp, new AbortController().signal, { ...process.env, PATH: `${bin}:${process.env.PATH}` }), /transport.*not allowed/);
 		assert.ok(!existsSync(marker));
 		assert.ok(!existsSync(join(temp, "review.diff")));
 	} finally { rmSync(temp, { recursive: true, force: true }); }

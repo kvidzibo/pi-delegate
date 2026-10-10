@@ -133,7 +133,7 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		assert.deepEqual(patch, { model: "hosted/first" });
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
-			recon: { ...patch, thinking: "medium", tools: ["read"], note: "keep role", offline: true }, review: { model: "other/review" },
+			recon: { ...patch, thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
@@ -168,7 +168,7 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-thinking-"));
 	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
 	try {
-		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"] } } };
+		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"], context: ["git-diff"] } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).agents.recon;
 		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
