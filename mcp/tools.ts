@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { DelegateService } from '../delegate/service.ts';
 import { registerSettings, type DelegateSettings } from './settings.ts';
+import { registerJobResource } from './resources.ts';
 
 const uuid = z.string().uuid();
 const nonblank = (max: number) => z.string().max(max).refine((value) => value.trim().length > 0, 'Must not be blank');
@@ -96,6 +97,7 @@ export function createMcpServer(service: DelegateService, version: string, setti
     }
   });
 
+  registerJobResource(server, service);
   if (settings) registerSettings(server, settings);
   return server;
 }
