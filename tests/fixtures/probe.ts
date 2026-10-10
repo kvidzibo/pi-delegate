@@ -13,7 +13,7 @@ import { resultProbe } from "./results.ts";
 import { panelProbe } from "./panel.ts";
 import { backgroundProbe } from "./background.ts";
 import { uxProbe } from "./ux.ts";
-import { savingsProbe, guardStartupProbe } from "./savings.ts";
+import { savingsProbe } from "./savings.ts";
 import { finalizationProbe } from "./finalization.ts";
 import { headroomProbe } from "./headroom.ts";
 import { sharedCapacityProbe } from "./local.ts";
@@ -49,7 +49,6 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
 	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
 	register("delegate-shared-capacity-probe", ctx => sharedCapacityProbe(pi, ctx));
-	register("delegate-guard-startup-probe", guardStartupProbe);
 	register("delegate-finalization-probe", ctx => finalizationProbe(pi, ctx));
 	register("delegate-headroom-probe", headroomProbe);
 	register("delegate-savings-probe", ctx => savingsProbe(pi, ctx));

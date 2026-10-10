@@ -85,4 +85,4 @@ xvfb-run -a npm test    # includes offline CLI/UI checks; needs Pi and Xvfb
 
 Tests make no model calls. Delegation guidance ships with the extension; do not duplicate role/model policy in `AGENTS.md`.
 
-See [child-runtime](child-runtime/README.md), [opt-in benchmarks](bench/README.md) and the [implementation contract](delegate/SPEC.md) when working on those areas.
+See [child-runtime](child-runtime/README.md) and the [implementation contract](delegate/SPEC.md) when working on those areas.
