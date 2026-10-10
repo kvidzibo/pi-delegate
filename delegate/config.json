@@ -24,8 +24,9 @@
       "thinking": "low"
     },
     "review": {
+      "context": ["git-diff"],
       "model": "openai-codex/gpt-5.6-terra",
-      "tools": ["read", "grep", "find", "ls", "bash"],
+      "tools": ["read", "grep", "find", "ls"],
       "thinking": "medium"
     },
     "oracle": {

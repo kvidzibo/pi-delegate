@@ -77,7 +77,17 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		}
 		return result;
 	};
-	const launch = (options: object = {}, signal?: AbortSignal) => call({ kind: "review", model, task: "Mock result contract", background: true, ...options }, signal);
+	const untilRun = async (ready: () => boolean) => {
+		for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10));
+		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
+	};
+	const launch = async (options: object = {}, signal?: AbortSignal) => {
+		const result = await call({ kind: "review", model, task: "Mock result contract", background: true, ...options }, signal);
+		if (result.details.status === "running" && !result.details.cancellationRequested) {
+			await untilRun(() => runs.some(run => run.input.sessionFile === result.details.sessionFile));
+		}
+		return result;
+	};
 	const pending = (result: any, status: string, callType: string, operation?: string) => {
 		assert.equal(result.details.ok, true);
 		assert.equal(result.isError, false);
@@ -106,7 +116,9 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 			{ ...success, text: "界".repeat(24000) },
 		]) {
 			for (const background of [false, true]) {
+				const beforeRuns = runs.length;
 				const launched = launch({ background, timeoutMs: 2000 });
+				await untilRun(() => runs.length === beforeRuns + 1);
 				const run = runs.at(-1)!;
 				let result: any;
 				if (background) {
@@ -233,7 +245,10 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		await handlers.get("agent_start")?.({}, { ...testCtx, signal: parent.signal });
 		const queued = await launch(local, parent.signal);
 		pending(queued, "queued", "spawn");
-		const foreground = launch({ background: false }, parent.signal), foregroundRun = runs.at(-1)!;
+		const beforeForeground = runs.length;
+		const foreground = launch({ background: false }, parent.signal);
+		await untilRun(() => runs.length === beforeForeground + 1);
+		const foregroundRun = runs.at(-1)!;
 		const completed = await launch({}, parent.signal);
 		runs.at(-1)!.resolve(success);
 		for (let i = 0; i < 100 && !entries.some(e => e.data.runId === completed.details.runId); i++) {

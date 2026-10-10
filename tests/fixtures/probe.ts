@@ -91,7 +91,8 @@ export default function probe(pi: ExtensionAPI) {
 			assert.ok(metadata.repositorySnapshot, "capture link is durable before the child runner starts");
 			const manifest = JSON.parse(readFileSync(metadata.repositorySnapshot.manifestPath, "utf8"));
 			assert.equal(manifest.runId, metadata.runId);
-			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; });
+			assert.match(input.task, /Automatic review diff:/);
+			if (input.task.startsWith("hold\n\n")) await new Promise<void>(resolve => { release = resolve; });
 			return { text: "mock complete", exitCode: 0, stderrTail: "" };
 		});
 		const call = (params: object) => tool.execute(`snapshot-${++sequence}`, params, undefined, undefined, testCtx);
@@ -138,7 +139,7 @@ export default function probe(pi: ExtensionAPI) {
 				sendUserMessage: (message: string) => auditMessages.push(message),
 			} as unknown as ExtensionAPI, async input => {
 				launches++;
-				if (input.task === "audit-hold") await new Promise<void>(resolve => { auditRelease = resolve; });
+				if (input.task.startsWith("audit-hold\n\n")) await new Promise<void>(resolve => { auditRelease = resolve; });
 				return { text: "mock complete", exitCode: 0, stderrTail: "" };
 			});
 			const unknown = await call({ kind: "review", model: "hosted/mock", task: "unknown repository", timeoutMs: 2000 });

@@ -16,13 +16,40 @@ For manual configuration, override [shipped defaults](config.json) in that user 
 }
 ```
 
-Each role accepts `model`, `tools` and `thinking`. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Each role accepts `enabled` (default `true`), `model`, `tools`, `thinking` and `context`. Set `"agents": { "implement": { "enabled": false } }` to refuse new implementation jobs, including calls with model overrides. Other roles are unaffected; already accepted jobs keep their policy. Role names remain fixed. Enable/disable is a manual configuration setting, not a model-picker or operator-settings control. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool and context arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
 
-Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
+Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools, thinking and context providers. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients are not covered.
+
+## Context providers
+
+Roles can request parent-prepared context separately from their tools:
+
+```json
+{
+  "agents": {
+    "review": { "context": ["git-diff"] },
+    "recon": { "context": ["git-diff"] }
+  }
+}
+```
+
+`git-diff` is the only current provider. Shipped defaults enable it for `review`; other roles default to `[]`. Any role may opt in. Set `"context": []` on a role to disable all context preparation, including Git discovery. Omitted settings inherit the shipped role default; unknown names or invalid lists refuse configuration loading, and duplicate names execute once. This is manual configuration, not a model-picker/operator-settings control.
+
+Both hosts freeze the selected providers at acceptance and run them after queue waits, before child dispatch. Providers attach artifact paths/instructions to the archived task and use the parent’s permissions; they do not grant tools to the child. Include a file reader such as `read` in the role’s tools to inspect artifacts. Providers are built-in code, not arbitrary shell commands from configuration. Existing calibration profiles do not cover added context, so jobs with context providers do not use legacy savings estimates.
+
+## Automatic review diffs
+
+`review` defaults to `read`, `grep`, `find` and `ls`—no `bash`, `write` or `edit`. Existing user `tools` overrides still replace the defaults; remove `bash` there too if configured. Other roles keep their existing tools.
+
+For any role configured with `context: ["git-diff"]`, both hosts capture a whole-checkout Git diff before the child starts, even when `cwd` is a subdirectory. The base is the merge base of HEAD and the first existing ref in this order: local `main`, local `master`, `origin/main`, `origin/master`. Lazy fetch is disabled and all Git transports are denied, including on older Git; missing partial-clone objects fail capture instead of contacting a remote. The diff contains net committed, staged and unstaged changes plus Git-discovered non-ignored untracked files, including binary patches and symlink targets. Git-invisible filesystem entries (such as FIFOs and sockets) are not represented; this is a Git diff, not a filesystem snapshot. Submodules include Gitlink commit changes only; dirty/untracked submodule files are excluded without running submodule status. Clean main/master checkouts produce an empty diff; outside Git, the child receives only the task and a no-diff notice.
+
+The child task points to a private `review.diff` beside its archived `task.md`; the archive retains the exact dispatched task. Capture happens after queue waits, not at acceptance. It does not require child shell access or enable eval snapshots. The child reads the complete file using its configured tools, with offsets when needed. Git is required; missing main/master, unborn HEAD, conflicts, assume-unchanged/skip-worktree index flags (including sparse checkouts), non-UTF-8 filenames, capture errors, unsupported entries returned by Git’s untracked scan or a diff over 16 MiB block child launch rather than silently supplying a partial diff. Archives must be outside the checkout. Git operations time out after 30 seconds each and respect cancellation.
+
+**Privacy and limits:** exclude secrets before launching jobs with `git-diff` context. Diffs are retained indefinitely with the private run archive and may be sent to the configured child model. Capture is not atomic: avoid concurrent writers and report mismatches with current files. Git external diff/textconv drivers, clean/process filters, hooks and fsmonitor hooks are disabled during capture; filtered files are compared as raw working-tree bytes. Removing `bash` limits the reviewer’s tools, not its filesystem read access; this is not a sandbox.
 
 ## Eval repository snapshots
 

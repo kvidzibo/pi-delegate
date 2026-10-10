@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { assertNotNested, normalizeTask, resolveChildCwd } from "../child-runtime/policy.ts";
 import type { PiInvocation } from "../child-runtime/spawn.ts";
@@ -10,6 +10,7 @@ import { FileCapacityBroker } from "./capacity.ts";
 import { assertKind, resolveAgent, type AgentConfig, type DelegateConfig, type Kind } from "./config.ts";
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
+import { prepareContextTask } from "./context.ts";
 import { isLocalModel } from "./tg.ts";
 
 /** Shared acceptance/execution path. Hosts own consent, observers and lifecycle. */
@@ -30,12 +31,19 @@ export function enqueueDelegate(input: {
 	childRunner?: typeof runChild;
 	onAccepted?: (archive: ArchivedRun) => void;
 	beforeRun?: (archive: ArchivedRun, signal: AbortSignal) => Promise<void> | void;
+	/** Recheck host authorization after all asynchronous preparation, immediately before child dispatch. */
+	beforeDispatch?: (archive: ArchivedRun, signal: AbortSignal) => void;
 }): JobSnapshot {
-	const agent = { ...input.agent, tools: [...input.agent.tools] };
+	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
+	const agent = { ...input.agent, tools: [...input.agent.tools], context: [...(input.agent.context ?? [])] };
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
-	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, input.promptPath);
+	const archive = input.accounting.create({ ...input.identity, tools, capabilities,
+		...(agent.context.length && input.identity.savings ? {
+			savings: undefined, savingsUnavailable: "Legacy calibration does not cover configured context providers.",
+		} : {}),
+	}, input.task, input.promptPath);
 	try {
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
@@ -48,8 +56,17 @@ export function enqueueDelegate(input: {
 				const preparation = input.beforeRun?.(archive, childSignal);
 				if (preparation) await preparation;
 				childSignal.throwIfAborted();
+				const task = agent.context.length
+					? await prepareContextTask(agent.context, {
+						task: input.task, cwd: input.identity.cwd, archiveDir: archive.paths.dir, signal: childSignal, env: input.env,
+					})
+					: input.task;
+				childSignal.throwIfAborted();
+				if (task !== input.task) writeFileSync(archive.paths.task, task, { mode: 0o600 });
+				input.beforeDispatch?.(archive, childSignal);
+				childSignal.throwIfAborted();
 				return (input.childRunner ?? runChild)({
-					task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
+					task, cwd: input.identity.cwd, model: input.identity.requestedModel,
 					thinking: agent.thinking, tools: [...tools],
 					...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 					hardTimeoutMs: input.config.hardTimeoutMs, maxOutputBytes: input.config.maxOutputBytes,
@@ -252,7 +269,7 @@ export class DelegateService {
 	updateRoleSettings(agents: DelegateConfig["agents"]): void {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
 		this.config.agents = Object.fromEntries(Object.entries(agents).map(([kind, agent]) =>
-			[kind, { ...agent, tools: [...agent.tools] }])) as DelegateConfig["agents"];
+			[kind, { ...agent, tools: [...agent.tools], context: [...(agent.context ?? [])] }])) as DelegateConfig["agents"];
 	}
 
 	shutdown(): Promise<void> {

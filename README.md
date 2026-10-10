@@ -4,13 +4,13 @@
 
 Delegate focused coding tasks to separate [Pi](https://github.com/earendil-works/pi) workers through a **standalone MCP server** or the existing Pi extension. Supports local and hosted models, background jobs, and one shared local worker across participating processes.
 
-One child per call; no nested delegation.
+One child per call; no nested delegation. Roles can be disabled with `agents.<role>.enabled: false` in `~/.pi/agent/delegate.json`.
 
 | Kind | Purpose |
 |---|---|
 | `recon` | Find files, map code, gather facts |
 | `implement` | Make bounded edits and run tests |
-| `review` | Review without editing |
+| `review` | Review without shell/edit tools; automatic Git diff |
 | `oracle` | Last-resort analysis without editing |
 
 ## MCP setup
@@ -66,9 +66,9 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 ## Important constraints
 
 - Shared local capacity requires Linux and `/usr/bin/flock`. All local providers share one slot per agent directory; hosted jobs bypass it. Reload older sessions to participate.
-- **No sandbox.** Children have your system permissions; shipped roles include shell access. Read-only roles are prompt policy, not write protection. Delegation leaves Pi's `PI_OFFLINE` environment setting unchanged; legacy role `offline` keys are ignored. Without `PI_OFFLINE=1`, startup may perform automatic networking. It is not network isolation.
+- **No sandbox.** Children have your system permissions; shipped roles other than `review` include shell access. `review` defaults to `read`, `grep`, `find`, `ls`; other read-only roles rely on prompt policy, not write protection. Delegation leaves Pi's `PI_OFFLINE` environment setting unchanged; legacy role `offline` keys are ignored. Without `PI_OFFLINE=1`, startup may perform automatic networking. It is not network isolation.
 - Children do not inherit the parent conversation or project instructions. Provide a self-contained task and avoid overlapping edits to shared files.
-- A review covers the full requested diff unless the task asks for a small review.
+- A review covers the full requested diff unless the task asks for a small review. Review defaults to `context: ["git-diff"]`, providing a private whole-checkout diff against the main/master merge base, including non-ignored untracked files: exclude secrets first. Any role may opt in; `context: []` disables preparation. See [capture scope and limits](delegate/README.md#automatic-review-diffs).
 - Worker completion is not proof of task correctness. The parent must inspect and validate results.
 - Archives under `~/.pi/agent/delegate/` are retained indefinitely and can contain sensitive prompts, code, thinking and tool output.
 

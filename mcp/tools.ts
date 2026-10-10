@@ -30,7 +30,8 @@ export function createMcpServer(service: DelegateService, version: string, setti
       'Retry delegate_start with the same requestId and identical parameters to recover the same job only within this connection. Never replay uncertain implementation jobs after restart.',
       'Use delegate_status to observe or wait; cancelling an observation does not cancel its worker.',
       'Workers are unsandboxed and retain system permissions. Read-only roles are a prompt instruction, not a security boundary.',
-      'Snapshots and model-writable configuration/approval are disabled. Role models come from configuration; per-job model overrides require operator opt-in.',
+      'Eval repository snapshots and model-writable configuration/approval are disabled. Role models come from configuration; per-job model overrides require operator opt-in. Disabled roles cannot be launched, even with a model override.',
+      'Role context providers run automatically before dispatch; review defaults to context [git-diff]. git-diff supplies a private whole-checkout diff against the main/master merge base, including non-ignored untracked files; exclude secrets before calling. Capture failures block launch. Outside Git, supply your own context.',
       'Jobs belong to this server connection/process and are not adopted after restart.',
     ].join(' '),
   });

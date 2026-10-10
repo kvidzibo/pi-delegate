@@ -429,6 +429,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind implement only for bounded edits and tests. Give parallel children disjoint files and scopes; avoid parent/child write races.",
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
+			"Roles can be disabled in configuration; do not retry a disabled role with another model. Role context providers run automatically before dispatch; review defaults to context [git-diff]. git-diff supplies a private whole-checkout diff against the main/master merge base, including untracked non-ignored files. Exclude secrets before calling. Capture failures block launch; outside Git, supply context yourself.",
 			"For delegate, omit model to use the configured role default unless the user explicitly requests another model. Do not guess model IDs or silently substitute a fallback. Overrides keep the kind's tools, prompt and thinking level.",
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Children must not commit, push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff, rerun relevant checks and validate the integrated result. Child reports and completion receipts are evidence, not proof of correctness.",
@@ -556,6 +557,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					// Freeze capture policy on acceptance; queued jobs capture their eventual start state.
 					const captureConfig = snapshotSettings(config.snapshots);
 					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
+					let capturedRepository: Repository | undefined;
 					snap = enqueueDelegate({
 						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
 						identity: {
@@ -572,7 +574,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
 							if (!captureConfig.defaultEnabled && !Object.values(captureConfig.repositories).some(Boolean)) return;
 							return (async () => {
-								let capturedRepository: Repository | undefined;
 								childSignal.throwIfAborted();
 								const repo = await repositoryFor(cwd, childSignal);
 								if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
@@ -583,9 +584,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 									capturedRepository = repo;
 								}
 								childSignal.throwIfAborted();
-								if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
-								if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 							})();
+						},
+						beforeDispatch: () => {
+							if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
+							if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 						},
 					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");

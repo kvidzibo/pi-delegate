@@ -53,6 +53,22 @@ test("model override keeps agent tools and prompt kind", () => {
 	assert.equal(resolveAgent("review", undefined, config).model, config.agents.review.model);
 });
 
+test("disabled roles reject launches and overrides while other roles and explicit re-enabling work", () => {
+	const base = shipped();
+	assert.equal(base.agents.implement.enabled, true);
+	assert.deepEqual(base.agents.review.tools, ["read", "grep", "find", "ls"]);
+	const disabled = mergeDelegateConfig(base, { agents: { implement: { enabled: false } } }, "overlay.json");
+	for (const model of [undefined, "hosted/override"]) {
+		assert.throws(() => resolveAgent("implement", model, disabled), /implement is disabled/);
+	}
+	assert.equal(resolveAgent("review", undefined, disabled).model, base.agents.review.model);
+	const enabled = mergeDelegateConfig(disabled, { agents: { implement: { enabled: true } } }, "overlay.json");
+	assert.equal(resolveAgent("implement", undefined, enabled).agent.enabled, true);
+	for (const enabled of [null, "false", 0]) {
+		assert.throws(() => mergeDelegateConfig(base, { agents: { implement: { enabled } } }, "bad"), /enabled.*boolean/);
+	}
+});
+
 test("any model id is allowed", () => {
 	const config = shipped();
 	assert.equal(resolveAgent("oracle", "local-qwen38/qwen38-q4km", config).model, "local-qwen38/qwen38-q4km");
@@ -117,7 +133,7 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		assert.deepEqual(patch, { model: "hosted/first" });
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
-			recon: { ...patch, thinking: "medium", tools: ["read"], note: "keep role", offline: true }, review: { model: "other/review" },
+			recon: { ...patch, thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
@@ -152,7 +168,7 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-thinking-"));
 	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
 	try {
-		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"] } } };
+		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"], context: ["git-diff"] } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).agents.recon;
 		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
