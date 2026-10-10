@@ -1,6 +1,6 @@
 # MCP server
 
-`pi-delegate-mcp` runs Pi workers directly through a local stdio MCP connection. It does not start a parent Pi agent or require loading the delegate extension. The extension remains available separately; its panels are not part of the MCP server.
+`pi-delegate-mcp` runs Pi workers directly through a local stdio MCP connection. It does not start a parent Pi agent or require loading the delegate extension. The extension remains available separately. MCP clients can render a live panel from the job resource below; no parent delegate extension is needed.
 
 ## Setup
 
@@ -99,6 +99,38 @@ Tools return structured data and equivalent text so clients without structured-r
 
 `done` means the worker finished—not that its changes or tests are correct. The caller owns integration and validation. Answers are bounded by `maxOutputBytes` (default 64 KiB); inspect the private native archive for more recorded history. Completed `durationMs` excludes queue wait. Completed results remain collectible repeatedly during the connection.
 
+## Live job resource
+
+Version 0.20.0 adds a standard MCP resource:
+
+- URI: `delegate://jobs`
+- MIME type: `application/vnd.pi-delegate.jobs+json`
+- Envelope: `{ schemaVersion: 1, instanceId, jobs: [...] }`
+
+`resources/list` discovers it; `resources/read` returns JSON text. Subscribe with
+`resources/subscribe` and read again on `notifications/resources/updated`.
+Subscribe **before** the initial read to avoid missing a change. Unsubscribe with
+`resources/unsubscribe`; subscriptions end on disconnect. Notifications are
+coalesced to at most one per 100 ms and only sent when display data changes.
+Clocks advance locally in the UI, not through repeated notifications.
+
+The feed includes all active jobs and the three most recently completed jobs.
+Each job contains `jobId`, `kind`, `model`, optional `reasoning`, a 240-character
+`task` preview, `status`, timestamps (`queuedAt`, `startedAt`, `finishedAt` when
+available), terminal `durationMs`, optional `queueReason`, `cancellationRequested`,
+`wrapped`, `phase`, `stopReason`, `current`, and up to three `activity` entries.
+Activity contains bounded tool names/arguments, not raw thinking or tool results.
+There are no answers, stderr, archive contents or usage counters. Timestamps are
+Unix milliseconds. `instanceId` identifies this server run, not a Pi conversation.
+Status and cancellation describe execution only; completion is not verified success.
+Use `delegate_status` to collect reports. The existing 256-job connection limit applies.
+
+The [gateway Pi adapter](https://github.com/kvidzibo/mcp-session-gateway#live-delegate-panel)
+subscribes through its existing MCP connection and displays active jobs above the
+editor. It shows completion briefly and marks lost connections as stale. Do not
+start a second server to observe these jobs: each process owns a different job set.
+The resource is not private, but UI reads need not enter model context.
+
 ## Operator settings extension
 
 This is a **custom, versioned MCP extension**, not a standard settings API or a set of tools. It is disabled by default. A supporting gateway/UI must implement the contract below; merely connecting this server does not create `/pi-delegate` or a settings panel. No gateway or live client configuration is modified by this package.
@@ -174,7 +206,7 @@ At most 256 jobs are accepted over one connection's lifetime, including complete
 
 Local workers use the existing Linux `/usr/bin/flock` broker and share one slot across participating processes using the same agent directory. The private compiled worker lease helper verifies inherited capacity ownership; it is not the parent extension and is required for local execution. Hosted work does not require Linux/flock and can bypass local resource waits.
 
-The baseline is pull-based: call status when needed, or use bounded waits. There is no universal completion-triggered model turn, native MCP task integration, dashboard or additional socket in this version. A future UI can poll summaries programmatically without model calls.
+Model-facing observation remains pull-based: call status when needed, or use bounded waits. UI clients can subscribe to the job resource without model calls. Notifications do not trigger model turns. There is no native MCP task integration or additional socket.
 
 ## Safety
 

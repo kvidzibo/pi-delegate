@@ -101,6 +101,7 @@ export class DelegateService {
 	private readonly jobs = new Map<string, { internalId: string; cwd: string; finishedAt?: number }>();
 	private closing?: Promise<void>;
 	private closed = false;
+	private readonly observers = new Set<() => void>();
 	private readonly options: ServiceOptions;
 
 	constructor(options: ServiceOptions) {
@@ -113,6 +114,7 @@ export class DelegateService {
 		this.scheduler = new JobScheduler({
 			maxConcurrent: this.config.maxConcurrent, maxLocalConcurrent: this.config.maxLocalConcurrent,
 			maxQueued: this.config.maxQueued,
+			onChange: () => this.changed(),
 			capacity: { tryAcquire: group => new FileCapacityBroker(join(options.agentDir, "delegate-capacity")).tryAcquire(group) },
 			onSettled: snap => {
 				const owned = snap.archive && this.jobs.get(snap.archive.runId);
@@ -158,6 +160,7 @@ export class DelegateService {
 		const jobId = snap.archive!.runId;
 		this.jobs.set(jobId, { internalId: snap.id, cwd });
 		this.requests.set(input.requestId, { fingerprint, jobId });
+		this.changed();
 		return { job: this.receipt(jobId), reused: false };
 	}
 
@@ -208,6 +211,40 @@ export class DelegateService {
 		};
 	}
 
+	/** UI projection: stable timestamps, bounded previews, no answers or raw thought text. */
+	jobBoard() {
+		const jobs = [...this.jobs.entries()].map(([jobId, owned]) => {
+			const snap = this.scheduler.get(owned.internalId);
+			const activity = (item: JobSnapshot["current"]) => item && item.name !== "thinking"
+				? { name: item.name.slice(0, 80), args: item.args?.slice(0, 240), mark: item.mark } : undefined;
+			return {
+				jobId, kind: snap.kind, model: snap.model, reasoning: snap.reasoning,
+				task: snap.task.slice(0, 240), status: snap.status, queuedAt: snap.queuedAt,
+				startedAt: snap.startedAt, finishedAt: owned.finishedAt,
+				...(snap.status === "done" || snap.status === "failed" ? { durationMs: this.accounting.durationMs(jobId) } : {}),
+				queueReason: snap.reason, cancellationRequested: snap.cancellationRequested, wrapped: snap.wrapped,
+				phase: snap.thinking ? "thinking" : undefined, stopReason: snap.stopReason,
+				current: activity(snap.current), activity: snap.activity.map(activity).filter(Boolean).slice(-3),
+			};
+		});
+		return { schemaVersion: 1 as const, instanceId: this.ownerId, jobs: [
+			...jobs.filter(job => job.status === "queued" || job.status === "running"),
+			...jobs.filter(job => job.status === "done" || job.status === "failed")
+				.sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, 3),
+		] };
+	}
+
+	onJobsChanged(listener: () => void): () => void {
+		this.observers.add(listener);
+		return () => { this.observers.delete(listener); };
+	}
+
+	private changed(): void {
+		for (const listener of this.observers) {
+			try { listener(); } catch { /* Display observers cannot affect workers. */ }
+		}
+	}
+
 	/** Trusted host settings only; queued/running workers retain their acceptance-time configuration. */
 	updateRoleSettings(agents: DelegateConfig["agents"]): void {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
@@ -217,6 +254,6 @@ export class DelegateService {
 
 	shutdown(): Promise<void> {
 		this.closed = true;
-		return this.closing ??= this.scheduler.shutdown().finally(() => this.accounting.close());
+		return this.closing ??= this.scheduler.shutdown().finally(() => { this.observers.clear(); this.accounting.close(); });
 	}
 }
