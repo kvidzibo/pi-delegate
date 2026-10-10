@@ -161,7 +161,7 @@ Only nonempty role `model`/`thinking` patches are accepted. The resulting model 
 
 The server validates all roles before atomically replacing the configured user overlay, preserving unrelated keys and existing symlinks/modes. It applies the new role policy to future launches immediately; retries and already accepted jobs remain unchanged. The update returns the same description shape as `get`, with the new revision. An uncertain update can be resolved by reading current settings; do not blindly repeat a stale patch.
 
-Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown fields, snapshots and direct `offline`/tool/permission writes are rejected. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
+Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown application fields, snapshots and direct `offline`/tool/permission writes are rejected. Standard request `_meta` (progress/tracing metadata) is accepted but cannot grant settings authorization. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
 
 External file edits are detected but not silently adopted. A conflict requires collecting/cancelling work before restarting. Concurrent settings writers sharing the canonical overlay use a short-lived `.settings-lock` directory; a leftover lock after a crash fails closed. Remove it only after confirming no settings writer is active. Legacy manual/extension writers do not participate in that lock: avoid simultaneous writes.
 

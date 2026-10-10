@@ -202,10 +202,11 @@ export function registerSettings(server: McpServer, settings: DelegateSettings):
 		extensions: { [SETTINGS_EXTENSION]: capability },
 		experimental: { [SETTINGS_EXTENSION]: capability }, // v1 clients / 2025-era initialize
 	});
-	// Unknown fields are rejected; credentials never appear in discovery or settings results.
+	// Accept standard protocol metadata, but reject unknown application fields. Metadata never authorizes writes.
 	const token = z.string().max(256).optional();
-	server.server.setRequestHandler(SETTINGS_GET, { params: z.object({ token }).strict() },
+	const meta = z.record(z.string(), z.unknown()).optional();
+	server.server.setRequestHandler(SETTINGS_GET, { params: z.object({ token, _meta: meta }).strict() },
 		(input, ctx) => settings.get(input.token, ctx.mcpReq.signal));
-	server.server.setRequestHandler(SETTINGS_UPDATE, { params: z.object({ token, revision: z.string().regex(/^[a-f0-9]{64}$/), patch: patchSchema, confirmOfflineChange: z.boolean().optional() }).strict() },
+	server.server.setRequestHandler(SETTINGS_UPDATE, { params: z.object({ token, revision: z.string().regex(/^[a-f0-9]{64}$/), patch: patchSchema, confirmOfflineChange: z.boolean().optional(), _meta: meta }).strict() },
 		(input, ctx) => settings.update(input as { token?: string; revision: string; patch: SettingsPatch; confirmOfflineChange?: boolean }, ctx.mcpReq.signal));
 }

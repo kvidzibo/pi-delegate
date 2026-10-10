@@ -340,7 +340,7 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.ok((await request("tools/call", { name: SETTINGS_UPDATE, arguments: { token } })).error, "custom methods are not callable as tools");
 		assert.equal((await request(SETTINGS_GET, { token: "wrong" })).error.code, -33001);
 		assert.equal(catalogueCalls, 0, "unauthorized requests cannot load credentials/catalogues");
-		const before = (await request(SETTINGS_GET, { token })).result;
+		const before = (await request(SETTINGS_GET, { token, _meta: { progressToken: "operator-read", "gateway/sessionId": "fixture-session" } })).result;
 		assert.equal(before.writable, true);
 		assert.equal(before.sources.agents.recon.model, "user");
 		assert.equal(before.sources.agents.review.model, "default");
@@ -352,7 +352,8 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.equal(captured.length, 1);
 		const queued = service.start({ kind: "recon", task: "queued", requestId: "old-queued" }).job;
 		assert.equal(queued.status, "queued");
-		const update = (patch: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch, confirmOfflineChange: true });
+		const update = (patch: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch, confirmOfflineChange: true,
+			_meta: { progressToken: "operator-update", "gateway/sessionId": "fixture-session" } });
 		const originalText = readFileSync(overlay, "utf8");
 		for (const patch of [
 			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: ["bash"] } } },
