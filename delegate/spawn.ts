@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runPiChild, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
+import { runPiChild, type ChildControl, type ChildResult, type PiInvocation } from "../child-runtime/spawn.ts";
 import type { GuardedExecution } from "../child-runtime/guard-protocol.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
 
@@ -33,6 +33,8 @@ export interface RunChildInput {
 	execution?: Omit<GuardedExecution, "tools">;
 	resourceLease?: InheritedLease;
 	leaseStartupMs?: number;
+	invocation?: PiInvocation;
+	leaseGuardPath?: string;
 }
 
 export function buildChildArgs(input: ChildArgsInput): string[] {
@@ -128,6 +130,8 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		execution: input.execution ? { ...input.execution, tools: input.tools } : undefined,
 		resourceLease: input.resourceLease,
 		leaseStartupMs: input.leaseStartupMs,
+		invocation: input.invocation,
+		leaseGuardPath: input.leaseGuardPath,
 	});
 	logChildResult(input, result);
 	return result;

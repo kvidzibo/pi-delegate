@@ -18,6 +18,7 @@ import {
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
+import { enqueueDelegate } from "./service.ts";
 import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
@@ -555,51 +556,38 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					// Freeze capture policy on acceptance; queued jobs capture their eventual start state.
 					const captureConfig = snapshotSettings(config.snapshots);
 					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
-					const archive = accounting.create({
-						parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
-						toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking, tools, capabilities,
-						savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
-					}, parsed.task, promptPath);
-					origins.set(archive.data.runId, toolCallId);
-					cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
-					try {
-						snap = scheduler.enqueue({
-							archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
-							kind, model: resolved.model, reasoning: resolved.agent.thinking, local, task: parsed.task, timeoutMs: parsed.timeoutMs,
-							...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
-							background: parsed.background, cancelOnAbort: parsed.background ? undefined : signal,
-							run: (handle, childSignal, onEvent, onControl) => accounting.run(archive, handle.id, async (onUsage) => {
+					snap = enqueueDelegate({
+						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
+						identity: {
+							parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
+							toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking,
+							savings: savingsInfo.snapshot, savingsUnavailable: savingsInfo.reason,
+						},
+						timeoutMs: parsed.timeoutMs, background: parsed.background, signal, config, childRunner,
+						onAccepted: archive => {
+							origins.set(archive.data.runId, toolCallId);
+							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
+						},
+						beforeRun: (archive, childSignal) => {
+							if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
+							if (!captureConfig.defaultEnabled && !Object.values(captureConfig.repositories).some(Boolean)) return;
+							return (async () => {
 								let capturedRepository: Repository | undefined;
-								if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
-								if (captureConfig.defaultEnabled || Object.values(captureConfig.repositories).some(Boolean)) {
-									childSignal.throwIfAborted();
-									const repo = await repositoryFor(cwd, childSignal);
-									if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
-									if (snapshotEnabled(repo, captureConfig)) {
-										if (audits.active || !snapshotEnabled(repo, config.snapshots)) throw new Error("Snapshot capture permission was revoked; retry after the safety audit or settings change.");
-										const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
-										archive.attachSnapshot(snapshot);
-										capturedRepository = repo;
-									}
+								childSignal.throwIfAborted();
+								const repo = await repositoryFor(cwd, childSignal);
+								if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
+								if (snapshotEnabled(repo, captureConfig)) {
+									if (audits.active || !snapshotEnabled(repo, config.snapshots)) throw new Error("Snapshot capture permission was revoked; retry after the safety audit or settings change.");
+									const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
+									archive.attachSnapshot(snapshot);
+									capturedRepository = repo;
 								}
 								childSignal.throwIfAborted();
 								if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
 								if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
-								return childRunner({
-								task: parsed.task, cwd, model: resolved.model, thinking: resolved.agent.thinking,
-								tools: [...tools], offline: resolved.agent.offline,
-								...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
-								hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
-								promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
-								signal: childSignal, env: process.env,
-								onEvent: (event) => { onUsage(event); onEvent(event); }, onControl,
-								});
-							}, childSignal),
-						});
-					} catch (error) {
-						accounting.terminal(archive.data.runId, "refused", { status: "failed", stopReason: "error", exitCode: 1 });
-						throw error;
-					}
+							})();
+						},
+					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
 					if (!parsed.background) {
 						snap = await scheduler.wait(snap.id, {

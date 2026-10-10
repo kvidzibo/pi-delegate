@@ -2,7 +2,7 @@
 
 [npm](https://www.npmjs.com/package/@kvidzibo/pi-delegate) · [Pi package directory](https://pi.dev/packages/@kvidzibo/pi-delegate)
 
-Run focused coding tasks in separate [Pi](https://github.com/earendil-works/pi) agents while the parent keeps working. Supports local and hosted models, background jobs, and one shared local worker across participating Pi sessions.
+Delegate focused coding tasks to separate [Pi](https://github.com/earendil-works/pi) workers through a **standalone MCP server** or the existing Pi extension. Supports local and hosted models, background jobs, and one shared local worker across participating processes.
 
 One child per call; no nested delegation.
 
@@ -13,7 +13,20 @@ One child per call; no nested delegation.
 | `review` | Review without editing |
 | `oracle` | Last-resort analysis without editing |
 
-## Setup
+## MCP setup
+
+Requires Node.js 22.19+, `pi` on PATH and configured model access. No parent Pi extension or interactive Pi session is needed.
+
+```bash
+npm install -g @kvidzibo/pi-delegate
+pi-delegate-mcp --help
+```
+
+Configure your MCP client to launch `pi-delegate-mcp --workspace /absolute/path/to/project`. The server exposes `delegate_start`, `delegate_status` and `delegate_control`; starts return immediately, observation waits are capped at 20 seconds, and launch request IDs prevent duplicate retries within the connection. Snapshot capture is forcibly disabled. Closing the connection cancels its outstanding jobs; restart adoption is not supported.
+
+MCP is available in 0.16.0+; published releases may lag behind this checkout. See [MCP configuration, client examples, lifecycle and validation](mcp/README.md), including running an unreleased checkout. The server does not render Pi panels or modify client settings.
+
+## Pi extension setup
 
 Requires `pi` on PATH and configured model access. Choose one installation source:
 
@@ -64,7 +77,9 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 Run from the repository root:
 
 ```bash
+npm ci
 npm run test:unit       # no Pi required; also runs in CI
+npm run test:mcp        # builds and exercises stdio without model calls
 xvfb-run -a npm test    # includes offline CLI/UI checks; needs Pi and Xvfb
 ```
 

@@ -1,6 +1,6 @@
 # delegate — implementation contract
 
-One routing tool. Four named agents. Child model is config. No nesting. Do not add a second parent tool.
+The Pi extension has one routing tool. Four named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
 
 ## Goal
 
@@ -19,7 +19,7 @@ delegate/
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
 
-Repo root has `package.json` (`pi.extensions: ["./delegate"]`). This directory has no package.json.
+Repo root has `package.json` (`pi.extensions: ["./delegate"]`) and a compiled `pi-delegate-mcp` executable. This directory has no package.json. `service.ts` shares acceptance/execution between the extension and MCP host; host consent, UI and shutdown remain separate.
 
 User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine.
 
@@ -108,7 +108,7 @@ Detach outcome evidence and limit arrays at scheduler, receipt, archive and card
 
 ## Configured capabilities
 
-Capture the resolved kind's requested tools before launch; a model override must not grant or remove tools. Interpret selection exactly like Pi CLI (comma split, trim, ignore empty, case-sensitive names), not with wildcard/alias assumptions. This is `source: configured`, never a tool-readiness acknowledgement or command/test-availability claim. Expose listed shell and write/edit tools, unknown-name count and `filesystemSandbox: false`; read-only prompt intent is not write protection.
+Capture the resolved kind's requested tools before launch; a model override must not grant or remove tools. Report the configured literal entries (comma split, trim, ignore empty, case-sensitive builtin names), not a verified runtime expansion. Pi 1.1 CLI also expands wildcard patterns; capability receipts do not claim the expanded tool set is known. This is `source: configured`, never a tool-readiness acknowledgement or command/test-availability claim. Expose listed shell and write/edit tools, unknown-name count and `filesystemSandbox: false`; read-only prompt intent is not write protection.
 
 Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with explicit omissions and complete positive builtin declarations. Bound the separate parent-visible text block to 512 bytes without consuming the first report's cap. Keep data detached across admission, progress, collection, archive and card restoration. Drop unsupported/contradictory metadata without inventing legacy capabilities. Show it separately from evidence in expanded results; do not duplicate it when falling back to returned content. No tool schema/description, prompt, configured tools, default or model selection changes are part of this reporting feature.
 
@@ -145,7 +145,7 @@ Expose requested versus enforced `draining`/`answering` states, including acknow
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
-Child is `pi` (or `node <pi-script>`) plus those flags. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
+Child is `pi` (or `node <pi-script>`) plus those flags. Non-Pi hosts supply an explicit executable/prefix invocation; never re-execute the MCP entry point as a worker. The compiled MCP adapter supplies its packaged lease-helper path. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
 ## Opt-in eval snapshots
 
