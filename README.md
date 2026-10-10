@@ -24,7 +24,7 @@ pi-delegate-mcp --help
 
 Configure your MCP client to launch `pi-delegate-mcp --workspace /absolute/path/to/project`. The server exposes `delegate_start`, `delegate_status` and `delegate_control`; starts return immediately, observation waits are capped at 20 seconds, and launch request IDs prevent duplicate retries within the connection. Snapshot capture is forcibly disabled. Closing the connection cancels its outstanding jobs; restart adoption is not supported.
 
-MCP is available in 0.16.0+; published releases may lag behind this checkout. See [MCP configuration, client examples, lifecycle and validation](mcp/README.md), including running an unreleased checkout. The server does not render Pi panels or modify client settings.
+MCP is available in 0.16.0+; published releases may lag behind this checkout. See [MCP configuration, client examples, lifecycle and validation](mcp/README.md), including running an unreleased checkout. The server does not render Pi panels or modify client settings. An opt-in [operator settings API](mcp/README.md#operator-settings-extension) exposes model/reasoning settings to a trusted UI without adding agent tools; UI/gateway integration is separate.
 
 ## Pi extension setup
 

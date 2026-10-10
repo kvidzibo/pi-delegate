@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { DelegateService } from '../delegate/service.ts';
+import { registerSettings, type DelegateSettings } from './settings.ts';
 
 const uuid = z.string().uuid();
 const nonblank = (max: number) => z.string().max(max).refine((value) => value.trim().length > 0, 'Must not be blank');
@@ -20,7 +21,7 @@ function failure(error: unknown) {
 }
 
 /** Create the narrow MCP surface for submitting and observing delegate jobs. */
-export function createMcpServer(service: DelegateService, version: string): McpServer {
+export function createMcpServer(service: DelegateService, version: string, settings?: DelegateSettings): McpServer {
   const server = new McpServer({ name: 'pi-delegate', version }, {
     instructions: [
       'Delegate self-contained tasks to one worker; do not ask workers to create nested delegates.',
@@ -95,5 +96,6 @@ export function createMcpServer(service: DelegateService, version: string): McpS
     }
   });
 
+  if (settings) registerSettings(server, settings);
   return server;
 }

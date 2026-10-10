@@ -135,13 +135,14 @@ export class DelegateService {
 		const cwd = realpathSync(resolveChildCwd(input.cwd, this.workspace));
 		const subpath = relative(this.workspace, cwd);
 		if (isAbsolute(subpath) || subpath === ".." || subpath.startsWith("../") || subpath.startsWith("..\\")) throw new Error("cwd must be inside the configured workspace (not a filesystem sandbox).");
-		const resolved = resolveAgent(kind, input.model, this.config);
-		const fingerprint = JSON.stringify([kind, task, cwd, resolved.model]);
+		// Retries belong to their original acceptance, even after an operator changes role defaults.
+		const fingerprint = JSON.stringify([kind, task, cwd, input.model ?? null]);
 		const previous = this.requests.get(input.requestId);
 		if (previous) {
 			if (previous.fingerprint !== fingerprint) throw new Error("requestId was already used with different arguments.");
 			return { job: this.receipt(previous.jobId), reused: true };
 		}
+		const resolved = resolveAgent(kind, input.model, this.config);
 		// Scheduler retains collectible snapshots. Bound process-lifetime admission rather than evicting retry identities.
 		if (this.jobs.size >= 256) throw new Error("This connection has accepted 256 jobs; collect results and restart the server before starting more.");
 		const snap = enqueueDelegate({
@@ -205,6 +206,13 @@ export class DelegateService {
 			...(startedAt && !terminal ? { elapsedMs: Math.max(0, now - startedAt) } : {}),
 			...(terminal ? { durationMs: this.accounting.durationMs(jobId) } : {}),
 		};
+	}
+
+	/** Trusted host settings only; queued/running workers retain their acceptance-time configuration. */
+	updateRoleSettings(agents: DelegateConfig["agents"]): void {
+		if (this.closed) throw new Error("Delegate server is shutting down.");
+		this.config.agents = Object.fromEntries(Object.entries(agents).map(([kind, agent]) =>
+			[kind, { ...agent, tools: [...agent.tools] }])) as DelegateConfig["agents"];
 	}
 
 	shutdown(): Promise<void> {

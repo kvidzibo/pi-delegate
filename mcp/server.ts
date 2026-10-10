@@ -8,6 +8,8 @@ import { serveStdio, StdioServerTransport, type StdioServerHandle } from "@model
 import { loadDelegateConfig } from "../delegate/config.ts";
 import { DelegateService } from "../delegate/service.ts";
 import { createMcpServer } from "./tools.ts";
+import { createCatalogueLoader } from "./models.ts";
+import { DelegateSettings, SETTINGS_TOKEN_ENV } from "./settings.ts";
 
 declare const PACKAGE_VERSION: string;
 
@@ -19,6 +21,10 @@ Standalone stdio MCP server. Requires Pi on PATH; no parent Pi extension.
   --agent-dir <directory>    Pi data and shared capacity (default: ~/.pi/agent)
   --config <file>            Delegate overlay (default: <agent-dir>/delegate.json)
   --allow-model-override     Allow per-job provider/model overrides
+  --pi-package-dir DIRECTORY Pi SDK installation for settings (wrapper/binary fallback)
+
+Operator settings are enabled only with PI_DELEGATE_SETTINGS_TOKEN (random base64url,
+32–256 characters). The token is never forwarded to workers. No settings tools.
   --help                    Show this help
   --version                 Show package version
 
@@ -42,7 +48,7 @@ async function main(): Promise<void> {
 	const { values } = parseArgs({ options: {
 		workspace: { type: "string" }, "pi-command": { type: "string" },
 		"agent-dir": { type: "string" }, config: { type: "string" },
-		"allow-model-override": { type: "boolean" }, help: { type: "boolean" }, version: { type: "boolean" },
+		"allow-model-override": { type: "boolean" }, "pi-package-dir": { type: "string" }, help: { type: "boolean" }, version: { type: "boolean" },
 	}, strict: true, allowPositionals: false });
 	if (values.help) { process.stdout.write(help); return; }
 	if (values.version) { process.stdout.write(`${PACKAGE_VERSION}\n`); return; }
@@ -52,10 +58,13 @@ async function main(): Promise<void> {
 	const agentDir = resolvePath(values["agent-dir"] ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"));
 	const configPath = values.config ? resolvePath(values.config) : join(agentDir, "delegate.json");
 	if (values.config && !existsSync(configPath)) throw new Error(`Config file does not exist: ${configPath}`);
-	const config = loadDelegateConfig({
+	const configPaths = {
 		shippedPath: fileURLToPath(new URL("./config.json", import.meta.url)),
 		userPath: !values.config && process.env.PI_DELEGATE_SKIP_USER_CONFIG === "1" ? undefined : configPath,
-	});
+	};
+	const config = loadDelegateConfig(configPaths);
+	const settingsToken = process.env[SETTINGS_TOKEN_ENV];
+	delete process.env[SETTINGS_TOKEN_ENV]; // Operator credentials must not reach workers or catalogue helpers.
 	const service = new DelegateService({
 		workspace: resolvePath(values.workspace), agentDir, config,
 		promptDir: fileURLToPath(new URL("./prompts", import.meta.url)),
@@ -64,9 +73,17 @@ async function main(): Promise<void> {
 		allowModelOverride: values["allow-model-override"],
 		env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
 	});
+	const settings = settingsToken === undefined ? undefined : new DelegateSettings({
+		token: settingsToken, paths: configPaths,
+		catalogue: createCatalogueLoader({ command, agentDir, packageDir: values["pi-package-dir"] ? resolvePath(values["pi-package-dir"]) : undefined }),
+		apply: agents => service.updateRoleSettings(agents),
+	});
 	let handle: StdioServerHandle | undefined;
 	let closing: Promise<void> | undefined;
-	const close = (): Promise<void> => closing ??= service.shutdown().finally(() => handle?.close());
+	const close = (): Promise<void> => {
+		settings?.stop();
+		return closing ??= service.shutdown().finally(() => handle?.close());
+	};
 	const report = (error: unknown): void => {
 		process.exitCode = 1;
 		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
@@ -74,7 +91,7 @@ async function main(): Promise<void> {
 	const shutdown = (): void => { void close().catch(report); };
 	const transport = new OwnedStdioTransport();
 	transport.onDisconnect = shutdown;
-	handle = serveStdio(() => createMcpServer(service, PACKAGE_VERSION), {
+	handle = serveStdio(() => createMcpServer(service, PACKAGE_VERSION, settings), {
 		transport, onerror: error => process.stderr.write(`MCP: ${error.message}\n`),
 	});
 	process.stdin.once("end", shutdown);
