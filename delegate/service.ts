@@ -101,8 +101,10 @@ export class DelegateService {
 	private readonly jobs = new Map<string, { internalId: string; cwd: string; finishedAt?: number }>();
 	private closing?: Promise<void>;
 	private closed = false;
+	private readonly options: ServiceOptions;
 
-	constructor(private readonly options: ServiceOptions) {
+	constructor(options: ServiceOptions) {
+		this.options = options;
 		assertNotNested(options.env ?? process.env);
 		this.workspace = realpathSync(resolveChildCwd(options.workspace, process.cwd()));
 		// Ignore even explicit inherited repository approvals: MCP has no consent UI.

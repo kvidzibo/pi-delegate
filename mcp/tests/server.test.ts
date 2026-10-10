@@ -6,6 +6,12 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { test } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { InMemoryTransport } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { createMcpServer } from "../tools.ts";
+import { DelegateService } from "../../delegate/service.ts";
+import { loadDelegateConfig } from "../../delegate/config.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -108,6 +114,7 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		return { child, request, call, lines, lastRequestId: () => seq, stderr: () => stderr };
 	};
 	try {
+		await cancelledStartProbe(temp, workspace, config);
 		const client = await connect();
 		const listed = await client.request("tools/list");
 		assert.deepEqual(listed.result.tools.map((tool: any) => tool.name).sort(), ["delegate_control", "delegate_start", "delegate_status"]);
@@ -198,6 +205,60 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		rmSync(temp, { recursive: true, force: true });
 	}
 });
+
+async function cancelledStartProbe(temp: string, workspace: string, configPath: string): Promise<void> {
+	const [client, wire] = InMemoryTransport.createLinkedPair();
+	const messages: any[] = [];
+	const replies = new Map<number, (value: any) => void>();
+	client.onmessage = (message: any) => { messages.push(message); replies.get(message.id)?.(message); };
+	let launches = 0;
+	const service = new DelegateService({
+		workspace, agentDir: join(temp, "cancellation-agent"),
+		config: loadDelegateConfig({ shippedPath: join(root, "delegate/config.json"), userPath: configPath }),
+		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused-offline-worker", args: [] },
+		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
+		childRunner: input => {
+			launches++;
+			// Cancel synchronously after acceptance started, before the SDK returns its receipt.
+			void client.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 3 } });
+			return new Promise(resolve => input.signal!.addEventListener("abort", () => {
+				resolve({ text: "cancelled offline worker", exitCode: 1, stopReason: "aborted", stderrTail: "" });
+			}, { once: true }));
+		},
+	});
+	const handle = serveStdio(() => createMcpServer(service, "test"), { transport: wire });
+	try {
+		await client.start();
+		const initialized = new Promise<any>(resolve => replies.set(1, resolve));
+		await client.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+			protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "cancel-race", version: "1" },
+		} });
+		await initialized;
+		await client.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+		const params = { name: "delegate_start", arguments: { kind: "implement", task: "offline", requestId: "before-acceptance" } };
+		await client.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params });
+		await client.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 2 } });
+		await setImmediate();
+		assert.equal(launches, 0, "cancelled validation must not launch a worker");
+		assert.equal(service.list().jobs.length, 0);
+		assert.ok(!messages.some(message => message.id === 2));
+		const acceptedParams = { name: "delegate_start", arguments: { ...params.arguments, requestId: "after-acceptance" } };
+		await client.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: acceptedParams });
+		await setImmediate();
+		assert.equal(launches, 1);
+		assert.ok(!messages.some(message => message.id === 3));
+		const retry = new Promise<any>(resolve => replies.set(4, resolve));
+		await client.send({ jsonrpc: "2.0", id: 4, method: "tools/call", params: acceptedParams });
+		const recovered = (await retry).result.structuredContent;
+		assert.equal(recovered.reused, true);
+		assert.equal(recovered.job.terminal, false);
+		assert.equal(launches, 1, "a lost post-acceptance receipt must not duplicate work");
+	} finally {
+		await service.shutdown();
+		await handle.close();
+		await client.close();
+	}
+}
 
 function childNotify(child: ChildProcessWithoutNullStreams, message: Record<string, unknown>): void {
 	child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);

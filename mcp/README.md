@@ -68,7 +68,7 @@ Start one job and return immediately:
 
 Kinds: `recon`, `implement`, `review`, `oracle`. Provide a self-contained task, scope, acceptance checks and stop rules: workers do not inherit your conversation or project instructions. Tasks are capped at 20,000 characters (a smaller configured limit also applies).
 
-`requestId` is a caller-generated, nonblank string of at most 128 characters. Retry the same key with the same effective task/kind/workspace/model **within this server process** to retrieve the existing job without launching another. Conflicting reuse fails. This is not restart-safe deduplication: after a lost connection, do not replay uncertain implementation tasks automatically.
+`requestId` is a caller-generated, nonblank string of at most 128 characters. Retry the same key with the same effective task/kind/workspace/model **within this server process** to retrieve the existing job without launching another. Conflicting reuse fails. A start cancelled before acceptance launches nothing; cancellation after acceptance can suppress the receipt but leaves the job and retry identity intact. This is not restart-safe deduplication: after a lost connection, do not replay uncertain implementation tasks automatically.
 
 Optional `cwd` resolves relative to the fixed workspace. Canonical paths must remain below that root; symlink escapes are refused. Optional `model` requires operator opt-in.
 

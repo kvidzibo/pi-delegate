@@ -45,8 +45,9 @@ export function createMcpServer(service: DelegateService, version: string): McpS
     }).strict(),
     outputSchema: z.object({ job: jobValue, reused: z.boolean() }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, async ({ kind, task, requestId, cwd, model }) => {
+  }, async ({ kind, task, requestId, cwd, model }, ctx) => {
     try {
+      if (ctx.mcpReq.signal.aborted) throw new Error('Start request cancelled before acceptance; no job was launched.');
       const result = service.start({ kind, task, requestId, cwd, model });
       return success({ job: result.job, reused: result.reused }, `${result.reused ? 'Reused' : 'Started'} job ${result.job.jobId} (${result.job.status}).`);
     } catch (error) {
