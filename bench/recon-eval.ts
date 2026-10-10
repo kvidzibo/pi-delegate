@@ -90,8 +90,8 @@ export async function runReconEval(options: ReconEvalOptions, execute: (input: R
 				const started = Date.now();
 				const result = await execute({ cwd: dir, model: options.model, task: task.question, hardTimeoutMs: timeoutMs, maxOutputBytes: 65536,
 					promptSourcePath: join(options.out, `${arm}-system-prompt.md`), signal,
-					env: buildChildEnv({ ...options.env, PI_DELEGATE_LOG: "0", PI_DELEGATE_BENCH_BUDGET: budgetPath }),
-					buildArgs: promptPath => [...buildChildArgs({ model: options.model, thinking: "off", tools, promptPath, sessionFile, offline: true }),
+					env: buildChildEnv({ ...options.env, PI_OFFLINE: "1", PI_DELEGATE_LOG: "0", PI_DELEGATE_BENCH_BUDGET: budgetPath }),
+					buildArgs: promptPath => [...buildChildArgs({ model: options.model, thinking: "off", tools, promptPath, sessionFile }),
 						"--extension", fileURLToPath(new URL("./guard.ts", import.meta.url))],
 					beforePrompt: async startupSignal => {
 						const deadline = Date.now() + 15000;

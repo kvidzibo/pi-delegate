@@ -49,9 +49,9 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 	try {
 		const model = "openai-codex/gpt-5.6-luna";
 		const result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", promptSourcePath: prompt,
-			hardTimeoutMs: 10000, maxOutputBytes: 4096, env: buildChildEnv(process.env), resourceLease: lease.inherited, leaseStartupMs: 8000,
+			hardTimeoutMs: 10000, maxOutputBytes: 4096, env: buildChildEnv({ ...process.env, PI_OFFLINE: "1" }), resourceLease: lease.inherited, leaseStartupMs: 8000,
 			buildArgs: promptPath => buildChildArgs({ model, thinking: "off", tools: ["read", "bash"], promptPath,
-				sessionFile: join(ctx.cwd, "lease-only-session.jsonl"), offline: true }),
+				sessionFile: join(ctx.cwd, "lease-only-session.jsonl") }),
 			onEvent: (event: any) => { if (event.type === "extension_ui_request" && event.method === "notify") {
 				try { acknowledged ||= JSON.parse(event.message).type === LEASE_NOTICE; } catch { /* unrelated notice */ }
 			} },

@@ -18,9 +18,9 @@ export async function guardStartupProbe(ctx: ExtensionCommandContext) {
 	const prompt = join(ctx.cwd, "guard-prompt.md"); writeFileSync(prompt, "No prompt may be dispatched by this offline test.");
 	let acknowledged = false;
 	const result = await runPiChild({ cwd: ctx.cwd, model, task: "MUST NOT BE SENT", hardTimeoutMs: 10000, maxOutputBytes: 65536,
-		promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_DELEGATE_BENCH_BUDGET: file }),
+		promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_OFFLINE: "1", PI_DELEGATE_BENCH_BUDGET: file }),
 		buildArgs: p => [...buildChildArgs({ model, thinking: "low", tools: ["read"], promptPath: p,
-			sessionFile: join(ctx.cwd, "guard-session.jsonl"), offline: true }), "-e", fileURLToPath(new URL("../../bench/guard.ts", import.meta.url))],
+			sessionFile: join(ctx.cwd, "guard-session.jsonl") }), "-e", fileURLToPath(new URL("../../bench/guard.ts", import.meta.url))],
 		beforePrompt: async signal => {
 			for (let i = 0; i < 200; i++) {
 				signal.throwIfAborted();

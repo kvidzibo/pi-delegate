@@ -35,7 +35,7 @@ Description must say: named agents, model from config, no nesting.
 | `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` |
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
-| `model` | no | any Pi model id. Kind keeps tools/prompt/thinking/offline. |
+| `model` | no | any Pi model id. Kind keeps tools/prompt/thinking. |
 | `background` | no | `true` = return `jobId` now; child keeps running until completion or cancellation, including parent-run interruption. Interactive mode may later inject a short completion notice |
 | `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with `background`. Terminal collect suppresses the notice |
 | `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
@@ -123,7 +123,7 @@ Always:
 --no-context-files --model --thinking --tools --system-prompt
 ```
 
-`--offline` only when the agent config has `offline: true`.
+No role-level startup mode or delegate-added `--offline`. Legacy role `offline` keys are ignored. Pi's inherited `PI_OFFLINE` environment setting is preserved; test/benchmark harnesses may set it explicitly.
 
 Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Local delegation explicitly loads `child-runtime/lease-guard.ts` for lease-only startup. Hosted delegation has no explicit `--extension`; the opt-in runtime guard and benchmark guard below are further exceptions. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
 

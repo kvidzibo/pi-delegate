@@ -379,7 +379,8 @@ export default function probe(pi: ExtensionAPI) {
 				confirm: async (_title: string, text: string) => {
 					confirms++;
 					assert.ok(text.includes(userPath));
-					assert.match(text, confirms < 3 ? /offline: true → false/ : /medium → max/);
+					assert.match(text, confirms < 3 ? /→ picker-cloud\/team\/new/ : /medium → max/);
+					assert.doesNotMatch(text, /offline/);
 					if (confirms === 1) return false;
 					return true;
 				},
@@ -427,7 +428,7 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(modelPicks, 3, notices.join("\n"));
 			assert.ok(!notices.some(text => text.includes("Saved")), "save feedback stays in the dialog");
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
-				recon: { ...overlay.agents.recon, model: selected, offline: false, thinking: "max" },
+				recon: { ...overlay.agents.recon, model: selected, thinking: "max" },
 				implement: overlay.agents.implement,
 			} });
 			const fresh = await call({ kind: "recon", task: "fresh" });
@@ -435,7 +436,8 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(fresh.details.ok, true);
 			finish!();
 			await call({ jobId: running.details.jobId }); await call({ jobId: queued.details.jobId });
-			assert.deepEqual(launches.map(input => [input.model, input.offline]), [[oldModel, true], [selected, false], [oldModel, true]]);
+			assert.deepEqual(launches.map(input => input.model), [oldModel, selected, oldModel]);
+			assert.ok(launches.every(input => !("offline" in input)));
 			assert.deepEqual(launches.map(input => input.thinking), ["medium", "max", "medium"]);
 			assert.ok(launches.every(input => input.tools.join(",") === "read,bash"));
 			await handlers.get("session_shutdown")?.();

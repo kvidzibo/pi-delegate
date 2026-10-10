@@ -27,8 +27,8 @@ export async function headroomProbe(ctx: ExtensionCommandContext) {
 					assert.ok(handle.resourceLease, "scheduler must forward its borrowed lease");
 					result = await runPiChild({ cwd: ctx.cwd, model, task: "Offline fixture", hardTimeoutMs: 15000, maxOutputBytes: 65536,
 						resourceLease: handle.resourceLease, signal, onEvent, onControl,
-						promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_HEADROOM_TEST_MODE: mode, PI_HEADROOM_TEST_LOG: log, PI_HEADROOM_TEST_FILE: file }),
-						buildArgs: promptPath => [...buildChildArgs({ model, thinking: "off", tools: ["read"], promptPath, sessionFile, offline: true }), "--extension", fixture],
+						promptSourcePath: prompt, env: buildChildEnv({ ...process.env, PI_OFFLINE: "1", PI_HEADROOM_TEST_MODE: mode, PI_HEADROOM_TEST_LOG: log, PI_HEADROOM_TEST_FILE: file }),
+						buildArgs: promptPath => [...buildChildArgs({ model, thinking: "off", tools: ["read"], promptPath, sessionFile }), "--extension", fixture],
 						execution: { tools: ["read"], finalizeAfterMs: 0, finalizationGraceMs: 12000, startupTimeoutMs: 12000, headroom: policy },
 						// Test cleanup signals only this owned live process; no delayed PID/group signals.
 						killTree: proc => { if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM"); },

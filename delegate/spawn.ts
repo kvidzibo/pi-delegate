@@ -11,7 +11,6 @@ export interface ChildArgsInput {
 	tools: string[];
 	promptPath: string;
 	sessionFile: string;
-	offline?: boolean;
 }
 
 export interface RunChildInput {
@@ -20,7 +19,6 @@ export interface RunChildInput {
 	model: string;
 	thinking: string;
 	tools: string[];
-	offline?: boolean;
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
@@ -48,7 +46,6 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		"--no-prompt-templates",
 		"--no-context-files",
 	];
-	if (input.offline) args.push("--offline");
 	args.push(
 		"--model",
 		input.model,
@@ -122,7 +119,6 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 				tools: input.tools,
 				promptPath,
 				sessionFile: input.sessionFile,
-				offline: input.offline,
 			}),
 		signal: input.signal,
 		onEvent: input.onEvent,
