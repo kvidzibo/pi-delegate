@@ -237,6 +237,17 @@ input.on('close',()=>{if(timer)clearTimeout(timer);process.exit(0)});
 		const localClosed = [once(localA.child, "close"), once(localB.child, "close")];
 		localA.child.stdin.end(); localB.child.stdin.end();
 		for (const close of localClosed) assert.equal((await close)[0], 0);
+		// A synchronous capacity refusal must still have a terminal UI timestamp.
+		rmSync(join(temp, "agent", "delegate-capacity"), { recursive: true, force: true });
+		writeFileSync(join(temp, "agent", "delegate-capacity"), "not a directory");
+		const refusedClient = await connect();
+		const refused = (await refusedClient.call("delegate_start", { kind: "recon", task: "report", requestId: "resource-refusal" })).structuredContent.job;
+		assert.equal(refused.status, "failed");
+		const refusedBoard = JSON.parse((await refusedClient.request("resources/read", { uri: "delegate://jobs" })).result.contents[0].text);
+		assert.equal(refusedBoard.jobs[0].jobId, refused.jobId);
+		assert.ok(refusedBoard.jobs[0].finishedAt >= refusedBoard.jobs[0].queuedAt);
+		assert.equal(refusedBoard.jobs[0].durationMs, 0);
+		const refusalClosed = once(refusedClient.child, "close"); refusedClient.child.stdin.end(); await refusalClosed;
 		const nested = launch([], { PI_DELEGATE_CHILD: "1" }); children.push(nested);
 		let nestingError = ""; nested.stderr.on("data", chunk => { nestingError += chunk; });
 		assert.equal((await once(nested, "close"))[0], 1);

@@ -158,7 +158,10 @@ export class DelegateService {
 			childRunner: this.options.childRunner,
 		});
 		const jobId = snap.archive!.runId;
-		this.jobs.set(jobId, { internalId: snap.id, cwd });
+		this.jobs.set(jobId, { internalId: snap.id, cwd,
+			// Capacity errors may settle synchronously before enqueue returns ownership.
+			...(snap.status === "done" || snap.status === "failed" ? { finishedAt: Date.now() } : {}),
+		});
 		this.requests.set(input.requestId, { fingerprint, jobId });
 		this.changed();
 		return { job: this.receipt(jobId), reused: false };
