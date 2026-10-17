@@ -3,13 +3,14 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
-import { isNonEmptyStringArray, MAX_TIMER_MS } from "../child-runtime/policy.ts";
+import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
+import type { FullFilesSpec } from "./full-files.ts";
 
-export const KINDS = ["recon", "implement", "review", "oracle"] as const;
+export const KINDS = ["recon", "implement", "review", "oracle", "docs"] as const;
 export type Kind = (typeof KINDS)[number];
 
 export const CONTEXT_PROVIDERS = ["git-diff"] as const;
-export type ContextProvider = (typeof CONTEXT_PROVIDERS)[number];
+export type ContextProvider = (typeof CONTEXT_PROVIDERS)[number] | FullFilesSpec;
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -68,8 +69,8 @@ function isThinkingLevel(value: unknown): value is ThinkingLevel {
 }
 
 function parseTools(value: unknown, label: string): string[] {
-	if (!isNonEmptyStringArray(value)) {
-		throw new Error(`${label} (non-empty string array)`);
+	if (!Array.isArray(value) || !value.every(item => typeof item === "string")) {
+		throw new Error(`${label} (array of non-empty strings; [] disables tools)`);
 	}
 	const seen = new Set<string>();
 	const tools: string[] = [];
@@ -80,16 +81,27 @@ function parseTools(value: unknown, label: string): string[] {
 		seen.add(name);
 		tools.push(name);
 	}
-	if (tools.length === 0) throw new Error(`${label} (non-empty string array)`);
 	return tools;
 }
 
 function parseContext(value: unknown): ContextProvider[] {
 	if (value === undefined) return [];
-	if (!Array.isArray(value) || !value.every(name => CONTEXT_PROVIDERS.includes(name))) {
-		throw new Error(`context (array of ${CONTEXT_PROVIDERS.join("|")})`);
+	const invalid = () => new Error("context (array of git-diff or full-file provider objects)");
+	if (!Array.isArray(value)) throw invalid();
+	const result: ContextProvider[] = [];
+	for (const item of value) {
+		if (item === "git-diff") { if (!result.includes(item)) result.push(item); continue; }
+		if (!item || typeof item !== "object" || Array.isArray(item)
+			|| item.source !== "git-changed-files" || item.content !== "full" || item.delivery !== "inline"
+			|| Object.keys(item).some(key => !["source", "include", "exclude", "content", "delivery", "maxBytes"].includes(key))) throw invalid();
+		const patterns = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 64
+			&& v.every(p => typeof p === "string" && p.length > 0 && p.length <= 512 && !p.startsWith("/") && !p.split("/").includes("..") && !p.includes("\0"));
+		if (!patterns(item.include) || !item.include.length || (item.exclude !== undefined && !patterns(item.exclude))
+			|| (item.maxBytes !== undefined && (!Number.isSafeInteger(item.maxBytes) || item.maxBytes < 1 || item.maxBytes > 1048576))) throw invalid();
+		if (result.some(provider => typeof provider !== "string")) throw new Error("Only one full-file provider is allowed per role.");
+		result.push(structuredClone(item) as FullFilesSpec);
 	}
-	return [...new Set(value)] as ContextProvider[];
+	return result;
 }
 
 function parseAgent(value: unknown, label: string): AgentConfig {
@@ -112,6 +124,9 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	catch (error) { errors.push(error instanceof Error ? error.message : "context"); }
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (!isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
+	if (label === "agents.docs" && (tools?.length !== 0 || context.length !== 1 || typeof context[0] === "string")) {
+		errors.push("docs requires tools: [] and exactly one full-file context provider (no Git diff)");
+	}
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
 	const model = (parsed.model as string).trim();
 	if (!model) throw new Error(`${label} (model (non-empty string))`);

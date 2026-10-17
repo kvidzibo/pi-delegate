@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFi
 import { readdir, readFile, lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { emptyUsage, record, sessionUsage, totalTokens, UsageMeter, validUsage, type UsageSummary } from "./usage.ts";
-import type { Kind } from "./config.ts";
+import { KINDS, type Kind } from "./config.ts";
 import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
 import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
@@ -217,7 +217,7 @@ function validRecord(value: unknown, id: string): value is RunRecord {
 	const r = record(value);
 	return r.version === 1 && Number.isSafeInteger(r.revision) && r.revision >= 0 && r.runId === id && UUID.test(id)
 		&& ["parentSessionId", "toolCallId", "cwd", "requestedModel", "thinking", "createdAt"].every((k) => typeof r[k] === "string")
-		&& ["recon", "implement", "review", "oracle"].includes(r.kind)
+		&& (KINDS as readonly string[]).includes(r.kind)
 		&& ["queued", "running", "done", "failed"].includes(r.status)
 		&& Array.isArray(r.tools) && r.tools.every((t: unknown) => typeof t === "string")
 		&& Number.isFinite(Date.parse(r.createdAt)) && Number.isFinite(r.durationMs) && r.durationMs >= 0;

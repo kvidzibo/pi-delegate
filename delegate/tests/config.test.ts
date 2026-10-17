@@ -28,7 +28,7 @@ test("kind validation", () => {
 	assert.throws(() => assertKind("worker"), /kind must be/);
 });
 
-test("shipped config parses four agents", () => {
+test("shipped config parses five agents", () => {
 	const config = shipped();
 	assert.equal(config.maxTaskChars, 20000);
 	assert.equal(config.maxConcurrent, 8);

@@ -51,8 +51,7 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		input.model,
 		"--thinking",
 		input.thinking,
-		"--tools",
-		input.tools.join(","),
+		...(input.tools.length ? ["--tools", input.tools.join(",")] : ["--no-tools", "--no-mcp"]),
 		"--system-prompt",
 		input.promptPath,
 	);

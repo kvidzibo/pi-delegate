@@ -69,9 +69,15 @@ Start one job and return immediately:
 }
 ```
 
-Kinds: `recon`, `implement`, `review`, `oracle`. Provide a self-contained task, scope, acceptance checks and stop rules: workers do not inherit your conversation or project instructions. Tasks are capped at 20,000 characters (a smaller configured limit also applies).
+Kinds: `recon`, `implement`, `review`, `oracle`, `docs`. Provide a self-contained task, scope, acceptance checks and stop rules: workers do not inherit your conversation or project instructions. Tasks are capped at 20,000 characters (a smaller configured limit also applies).
 
 `requestId` is a caller-generated, nonblank string of at most 128 characters. Retry the same key with the same normalized task/kind/workspace and explicit model parameter **within this server process** to retrieve the existing job without launching another. Conflicting reuse fails. Changing role defaults does not break retries of already accepted requests. A start cancelled before acceptance launches nothing; cancellation after acceptance can suppress the receipt but leaves the job and retry identity intact. This is not restart-safe deduplication: after a lost connection, do not replay uncertain implementation tasks automatically.
+
+Full-file context requires `base` as a full commit SHA; optional `head` pins
+contents to that commit. Omitting `head` captures the current worktree, including
+local edits and non-ignored untracked files. These fields participate in retry
+identity and are rejected for roles without a full-file provider. See
+[documentation editing and proposal handling](../docs/documentation-editor.md).
 
 Optional `cwd` resolves relative to the fixed workspace. Canonical paths must remain below that root; symlink escapes are refused. Optional `model` requires operator opt-in.
 
@@ -214,7 +220,7 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 
 - **No sandbox.** Workspace validation selects where work starts; shell commands can still access other paths, processes, credentials and network services available to the server's OS account.
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
-- Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. Other read-only roles rely on prompt policy; their shell access is not write protection. The `git-diff` context provider includes non-ignored untracked files across the checkout; exclude secrets before starting an opted-in job. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
+- Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. `docs` disables all tools and receives selected complete documents inline; it never applies its proposals. Other read-only roles rely on prompt policy; their shell access is not write protection. The `git-diff` context provider includes non-ignored untracked files across the checkout; exclude secrets before starting an opted-in job. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable extension discovery, context files, skills and prompt templates; local runs explicitly load only the private lease helper.
 - No tool can change role configuration, enable snapshots or authorize capture. The optional operator-only RPC extension changes only role models/reasoning; snapshots remain forcibly disabled.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.
