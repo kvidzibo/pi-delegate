@@ -34,7 +34,7 @@ export function createMcpServer(service: DelegateService, version: string, setti
       'Workers are unsandboxed and retain system permissions. Read-only roles are a prompt instruction, not a security boundary.',
       'Eval repository snapshots and model-writable configuration/approval are disabled. Role models come from configuration; per-job model overrides require operator opt-in. Disabled roles cannot be launched, even with a model override.',
       'Role context providers run automatically before dispatch; review defaults to context [git-diff]. git-diff supplies a private whole-checkout diff against the main/master merge base, including non-ignored untracked files; exclude secrets before calling. Capture failures block launch. Outside Git, supply your own context.',
-      'docs is a tool-free editor: injects all selected full files inline, no diff; requires base SHA, optional head SHA (otherwise current worktree). Returns validated JSON replacements, never applies them. Docs rejects wrap; wait or cancel instead. Before applying, inspect docs-proposal.json and files-context.json beside the archived session, recheck original source hashes, review the proposed diff, and obtain required approvals.',
+      'docs is a tool-free editor: injects all selected full files inline, no diff; requires base SHA, optional head SHA (otherwise current worktree). Optional files selects exact repository-root-relative paths, including unchanged documents, instead of changed files; include/exclude rules still apply. Returns validated JSON replacements, never applies them. Docs rejects wrap; wait or cancel instead. Before applying, inspect docs-proposal.json and files-context.json beside the archived session, recheck original source hashes, review the proposed diff, and obtain required approvals.',
       'Jobs belong to this server connection/process and are not adopted after restart.',
     ].join(' '),
   });
@@ -49,14 +49,15 @@ export function createMcpServer(service: DelegateService, version: string, setti
       cwd: z.string().optional(),
       base: z.string().regex(COMMIT_SHA).optional(),
       head: z.string().regex(COMMIT_SHA).optional(),
+      files: z.array(z.string().min(1).max(4096)).min(1).max(128).optional().describe('Exact repository-root-relative paths, including unchanged files; replaces changed-file selection and respects include/exclude rules.'),
       model: z.string().max(256).refine((value) => value.trim().length > 0 && /^[^/\s]+\/[^\s]+$/.test(value), 'Expected provider/model').optional(),
     }).strict(),
     outputSchema: z.object({ job: jobValue, reused: z.boolean() }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, async ({ kind, task, requestId, cwd, model, base, head }, ctx) => {
+  }, async ({ kind, task, requestId, cwd, model, base, head, files }, ctx) => {
     try {
       if (ctx.mcpReq.signal.aborted) throw new Error('Start request cancelled before acceptance; no job was launched.');
-      const result = service.start({ kind, task, requestId, cwd, model, base, head });
+      const result = service.start({ kind, task, requestId, cwd, model, base, head, files });
       return success({ job: result.job, reused: result.reused }, `${result.reused ? 'Reused' : 'Started'} job ${result.job.jobId} (${result.job.status}).`);
     } catch (error) {
       return failure(error);

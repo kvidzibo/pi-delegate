@@ -34,6 +34,7 @@ Description must say: named agents, model from config, no nesting.
 | `task` | spawn | non-empty, max `maxTaskChars` |
 | `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` \| `docs` |
 | `base`, `head` | full-file context | Full commit SHAs; base required, omitted head selects dispatch-time worktree |
+| `files` | no | 1–128 unique exact repository-root-relative paths; replaces changed-file discovery for full-file context, including unchanged files; include/exclude rules still apply |
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking. |
@@ -171,7 +172,11 @@ Capture tracked/nonignored-untracked source, executable modes, symlink targets, 
 
 `docs` receives a bounded, complete full-file bundle inline and no tools or diff.
 The generic provider uses caller-pinned revisions and configurable path globs;
-worktree selection includes local edits/untracked files. Preserve captured hashes
+worktree selection includes local edits/untracked files. Optional per-job `files`
+selects exact paths, including unchanged documents, rather than a changed-file
+set. Copy selection at acceptance and include it in retry identity; reject paths
+outside configured patterns, ignored untracked files and missing explicit files.
+Preserve captured hashes
 and archive context privately. Reject unsupported/unstable sources and size
 limits rather than truncate. No model call for an empty file set. Refuse `docs`
 wrap requests before steering: generic wrapped-report formatting is not JSON.

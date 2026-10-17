@@ -61,8 +61,9 @@ The parent can wait, peek, request wrap-up or cancel using the returned job ID. 
 Completed results expose `durationMs` and readable `Duration` (for example, `4m 36s`). Timing matches the run's archived `metadata.json`, excludes queue wait, and is zero if cancelled before starting. Use archived timing when a result is unavailable; use “Unknown” only when timing cannot be recovered.
 
 For documentation cleanup, use `docs` with the exact base commit SHA and an
-optional head SHA. It receives complete changed Markdown files, not a diff, and
-proposes replacements without writing them. See [documentation editing](docs/documentation-editor.md).
+optional head SHA. It receives complete changed Markdown files, not a diff;
+pass `files` with exact repository-relative paths to review unchanged documents
+instead. It proposes replacements without writing them. See [documentation editing](docs/documentation-editor.md).
 
 Check receipts freeze elapsed runtime (or queue time) and the interval since the previous returned check; the first check omits the interval.
 

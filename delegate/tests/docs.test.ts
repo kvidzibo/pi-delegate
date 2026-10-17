@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { loadDelegateConfig, mergeDelegateConfig } from "../config.ts";
 import { DelegateService } from "../service.ts";
+import { parseDelegateCall } from "../jobs.ts";
 import { buildChildArgs } from "../spawn.ts";
 import { prepareFullFiles, assertFilesUnchanged, type FileBundle, type FullFilesSpec } from "../full-files.ts";
 import { parseDocsProposal } from "../docs-result.ts";
@@ -114,5 +115,68 @@ test("docs injects complete selected files with no tools/diff, validates proposa
 		git("replace", head, base);
 		const immutable = await prepareFullFiles({ cwd: repo, archiveDir: mkdtempSync(join(temp, "immutable-")), signal: new AbortController().signal, base, head, spec });
 		assert.deepEqual(immutable.bundle.files.map(f => f.path), ["README.md", "guide with spaces.md"], "pinned Git contents ignore replacement refs");
+	} finally { await service.shutdown(); rmSync(temp, { recursive: true, force: true }); }
+});
+
+test("explicit files reviews unchanged documents without widening capture or retry scope", { timeout: 20000 }, async () => {
+	const temp = mkdtempSync(join(tmpdir(), "delegate-docs-explicit-")), repo = join(temp, "repo");
+	mkdirSync(repo);
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, encoding: "utf8" }).trim();
+	git("init", "-qb", "main");
+	writeFileSync(join(repo, "stable.md"), "# Existing guide\n");
+	writeFileSync(join(repo, "other.md"), "Do not inject this document\n");
+	writeFileSync(join(repo, ".gitignore"), "secret.md\n");
+	git("add", "."); git("commit", "-qm", "base");
+	const base = git("rev-parse", "HEAD");
+	const config = loadDelegateConfig({ shippedPath: join(delegateDir, "config.json") });
+	config.agents.docs.model = "test/docs";
+	let calls = 0;
+	const service = new DelegateService({
+		workspace: repo, agentDir: join(temp, "agent"), config, promptDir: join(delegateDir, "prompts"),
+		invocation: { command: "unused-offline-worker", args: [] }, leaseGuardPath: "unused",
+		env: { ...process.env, PI_DELEGATE_ARCHIVE_DIR: join(temp, "archive"), PI_DELEGATE_LOG: "0" },
+		childRunner: async input => {
+			calls++;
+			const bundle = JSON.parse(readFileSync(join(dirname(input.sessionFile!), "files-context.json"), "utf8")) as FileBundle;
+			assert.deepEqual(bundle.files.map(file => file.path), ["stable.md"]);
+			assert.equal(bundle.files[0].content, "# Existing guide\n");
+			assert.ok(input.task.includes(JSON.stringify("# Existing guide\n")));
+			assert.ok(!input.task.includes("Do not inject"));
+			assert.deepEqual(input.tools, []);
+			return { text: JSON.stringify({ files: [{ path: "stable.md", content: "# Clear guide\n" }], summary: [], concerns: [] }), exitCode: 0, stderrTail: "" };
+		},
+	});
+	const start = (requestId: string, files: string[], head?: string) => service.start({ kind: "docs", task: "Review existing guides", requestId, base, head, files }).job;
+	try {
+		const files = ["stable.md"];
+		const local = start("local", files);
+		files[0] = "other.md";
+		assert.equal((await service.status(local.jobId, 10000)).job.status, "done");
+		assert.equal(start("local", ["stable.md"]).jobId, local.jobId, "retries retain the captured selection");
+		assert.throws(() => start("local", ["other.md"]), /different arguments/);
+		const committed = start("committed", ["stable.md"], base);
+		assert.equal((await service.status(committed.jobId, 10000)).job.status, "done", "base=head still reviews explicit unchanged files");
+		assert.equal(calls, 2);
+		assert.equal(readFileSync(join(repo, "stable.md"), "utf8"), "# Existing guide\n", "proposals do not apply themselves");
+		const parsed = parseDelegateCall({ kind: "docs", task: "Review", base, files: ["stable.md"] }, config);
+		assert.equal(parsed.mode, "spawn");
+		if (parsed.mode === "spawn") assert.deepEqual(parsed.files, ["stable.md"]);
+		assert.throws(() => parseDelegateCall({ jobId: "d1", files: ["stable.md"] }, config), /spawn fields/);
+		for (const invalid of [[], ["stable.md", "stable.md"], ["../escape.md"], [".git/config"], ["bad\0.md"], Array(129).fill("stable.md")]) {
+			assert.throws(() => start("bad", invalid), /files|Unsafe/);
+		}
+		assert.throws(() => service.start({ kind: "recon", task: "Review", requestId: "no-provider", files: ["stable.md"] }), /full-file context provider/);
+		writeFileSync(join(repo, "secret.md"), "PRIVATE");
+		mkdirSync(join(repo, "generated")); writeFileSync(join(repo, "generated/copy.md"), "GENERATED");
+		writeFileSync(join(temp, "outside.md"), "OUTSIDE");
+		symlinkSync(join(temp, "outside.md"), join(repo, "link.md"));
+		writeFileSync(join(repo, "binary.md"), Buffer.from([0, 1]));
+		for (const [i, path] of ["secret.md", "generated/copy.md", "missing.md", "link.md", "binary.md", "*.md"].entries()) {
+			const job = start(`unsafe-${i}`, [path]);
+			assert.equal((await service.status(job.jobId, 10000)).job.status, "failed", path);
+		}
+		const missing = start("missing-committed", ["missing.md"], base);
+		assert.equal((await service.status(missing.jobId, 10000)).job.status, "failed");
+		assert.equal(calls, 2, "invalid selections never dispatch a worker");
 	} finally { await service.shutdown(); rmSync(temp, { recursive: true, force: true }); }
 });

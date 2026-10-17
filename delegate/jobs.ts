@@ -2,6 +2,7 @@ import { isFailedChildResult, MAX_TIMER_MS, normalizeTask, normalizeTimeoutMs } 
 import { DEFAULT_WRAP_MESSAGE, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { assertKind, type Kind } from "./config.ts";
+import { parseContextFiles } from "./full-files.ts";
 import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
@@ -116,6 +117,7 @@ export type ParsedCall =
 			cwd?: string;
 			base?: string;
 			head?: string;
+			files?: string[];
 	  }
 	| {
 			mode: "collect";
@@ -203,7 +205,7 @@ export function parseDelegateCall(
 		if (rec.wrap === true && rec.cancel === true) {
 			throw new Error("delegate refused: wrap cannot combine with cancel.");
 		}
-		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined || rec.base !== undefined || rec.head !== undefined) {
+		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined || rec.base !== undefined || rec.head !== undefined || rec.files !== undefined) {
 			throw new Error("delegate refused: jobId cannot combine with spawn fields.");
 		}
 		const raw = rec.timeoutMs;
@@ -228,6 +230,8 @@ export function parseDelegateCall(
 		task,
 		timeoutMs,
 	};
+	const files = parseContextFiles(rec.files);
+	if (files) parsed.files = files;
 	const modelOverride = optionalString(rec.model);
 	if (modelOverride) parsed.modelOverride = modelOverride;
 	const cwd = typeof rec.cwd === "string" ? rec.cwd : undefined;

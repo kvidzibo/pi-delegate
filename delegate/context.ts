@@ -10,6 +10,7 @@ type ContextInput = {
 	env?: NodeJS.Dict<string>;
 	base?: string;
 	head?: string;
+	files?: string[];
 };
 
 /** Built-in, parent-owned providers; configuration never supplies executable commands. */

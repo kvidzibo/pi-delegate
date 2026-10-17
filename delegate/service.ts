@@ -11,7 +11,7 @@ import { assertKind, resolveAgent, type AgentConfig, type DelegateConfig, type K
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
 import { prepareContextTask } from "./context.ts";
-import { COMMIT_SHA } from "./full-files.ts";
+import { COMMIT_SHA, parseContextFiles } from "./full-files.ts";
 import { archiveDocsProposal } from "./docs-result.ts";
 import { isLocalModel } from "./tg.ts";
 
@@ -24,6 +24,7 @@ export function enqueueDelegate(input: {
 	task: string;
 	base?: string;
 	head?: string;
+	files?: string[];
 	promptPath: string;
 	timeoutMs: number;
 	background: boolean;
@@ -40,12 +41,12 @@ export function enqueueDelegate(input: {
 }): JobSnapshot {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = { ...input.agent, tools: [...input.agent.tools], context: structuredClone(input.agent.context ?? []) };
-	const revision = { base: input.base, head: input.head };
+	const revision = { base: input.base, head: input.head, files: parseContextFiles(input.files) };
 	const fullFiles = agent.context.some(provider => typeof provider !== "string");
 	if (fullFiles && (!revision.base || !COMMIT_SHA.test(revision.base) || (revision.head !== undefined && !COMMIT_SHA.test(revision.head)))) {
 		throw new Error("Full-file context requires a full base commit SHA and an optional full head commit SHA.");
 	}
-	if (!fullFiles && (revision.base !== undefined || revision.head !== undefined)) throw new Error("base/head require a full-file context provider.");
+	if (!fullFiles && (revision.base !== undefined || revision.head !== undefined || revision.files !== undefined)) throw new Error("base/head/files require a full-file context provider.");
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
@@ -166,7 +167,7 @@ export class DelegateService {
 		});
 	}
 
-	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string; base?: string; head?: string }): { job: JobReceipt; reused: boolean } {
+	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string; base?: string; head?: string; files?: string[] }): { job: JobReceipt; reused: boolean } {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
 		assertNotNested(this.options.env ?? process.env);
 		const kind = assertKind(input.kind);
@@ -177,7 +178,8 @@ export class DelegateService {
 		const subpath = relative(this.workspace, cwd);
 		if (isAbsolute(subpath) || subpath === ".." || subpath.startsWith("../") || subpath.startsWith("..\\")) throw new Error("cwd must be inside the configured workspace (not a filesystem sandbox).");
 		// Retries belong to their original acceptance, even after an operator changes role defaults.
-		const fingerprint = JSON.stringify([kind, task, cwd, input.model ?? null, input.base ?? null, input.head ?? null]);
+		const files = parseContextFiles(input.files);
+		const fingerprint = JSON.stringify([kind, task, cwd, input.model ?? null, input.base ?? null, input.head ?? null, files ?? null]);
 		const previous = this.requests.get(input.requestId);
 		if (previous) {
 			if (previous.fingerprint !== fingerprint) throw new Error("requestId was already used with different arguments.");
@@ -191,7 +193,7 @@ export class DelegateService {
 			identity: { parentSessionId: this.ownerId, toolCallId: randomUUID(), kind, cwd,
 				requestedModel: resolved.model, thinking: resolved.agent.thinking,
 				savingsUnavailable: "MCP does not load the parent pricing registry/calibration estimates." },
-			agent: resolved.agent, task, base: input.base, head: input.head, promptPath: join(this.options.promptDir, `${kind}.md`),
+			agent: resolved.agent, task, base: input.base, head: input.head, files, promptPath: join(this.options.promptDir, `${kind}.md`),
 			timeoutMs: this.config.defaultTimeoutMs, background: true, config: this.config,
 			env: this.options.env, invocation: this.options.invocation, leaseGuardPath: this.options.leaseGuardPath,
 			childRunner: this.options.childRunner,

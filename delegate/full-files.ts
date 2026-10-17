@@ -27,9 +27,19 @@ const dirFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLL
 const fdPath = (fd: FileHandle) => `/proc/self/fd/${fd.fd}`;
 
 function safePath(path: string): void {
-	if (!path || isAbsolute(path) || path.split("/").some(p => !p || p === "." || p === ".." || p === ".git")) {
+	if (!path || path.length > 4096 || path.includes("\0") || Buffer.from(path).toString("utf8") !== path || isAbsolute(path) || path.split("/").some(p => !p || p === "." || p === ".." || p === ".git")) {
 		throw new Error("Unsafe full-file context path.");
 	}
+}
+/** Exact repository-relative paths, not globs; copy before queueing. */
+export function parseContextFiles(value: unknown): string[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value) || value.length < 1 || value.length > 128 || !value.every(path => typeof path === "string")) {
+		throw new Error("files must contain 1–128 exact repository-relative paths.");
+	}
+	value.forEach(safePath);
+	if (new Set(value).size !== value.length) throw new Error("files must not contain duplicate paths.");
+	return [...value];
 }
 function utf8(data: Buffer): string {
 	if (!isUtf8(data) || data.includes(0)) throw new Error("Full-file context requires UTF-8 text, not binary data.");
@@ -86,9 +96,10 @@ export async function assertFilesUnchanged(bundle: FileBundle): Promise<void> {
 /** Generic full contents, not a patch. Revisions come from the caller, never guessed PR refs. */
 export async function prepareFullFiles(input: {
 	cwd: string; archiveDir: string; signal: AbortSignal; env?: NodeJS.Dict<string>;
-	base?: string; head?: string; spec: FullFilesSpec;
+	base?: string; head?: string; files?: string[]; spec: FullFilesSpec;
 }): Promise<{ context: string; bundle: FileBundle }> {
 	const { signal, spec } = input;
+	const explicit = parseContextFiles(input.files);
 	if (!input.base || !COMMIT_SHA.test(input.base) || (input.head !== undefined && !COMMIT_SHA.test(input.head))) {
 		throw new Error("Full-file context requires a full base commit SHA; head must be a full commit SHA when supplied.");
 	}
@@ -110,7 +121,15 @@ export async function prepareFullFiles(input: {
 		for (const key of paths(filters.stdout)) overrides.push("-c", `${key}=${key.endsWith(".required") ? "false" : ""}`);
 	}
 	const selected = (path: string) => spec.include.some(pattern => matchesGlob(path, pattern)) && !spec.exclude?.some(pattern => matchesGlob(path, pattern));
+	if (explicit?.some(path => !selected(path))) throw new Error("Explicit files must match full-file include/exclude patterns.");
 	const list = async () => {
+		if (explicit) {
+			if (!input.head) {
+				const available = new Set(paths((await run(root, ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ...explicit])).stdout));
+				if (explicit.some(path => !available.has(path))) throw new Error("Explicit files must be tracked or non-ignored untracked files, not submodule contents.");
+			}
+			return [...explicit].sort();
+		}
 		const changed = paths((await run(root, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--ignore-submodules=dirty", "--name-only", "-z", input.base!, ...(input.head ? [input.head] : []), "--"])).stdout);
 		if (!input.head) changed.push(...paths((await run(root, ["ls-files", "--others", "--exclude-standard", "-z"])).stdout));
 		const result = [...new Set(changed.filter(selected))].sort();
@@ -134,7 +153,10 @@ export async function prepareFullFiles(input: {
 				data = (await run(root, ["cat-file", "blob", entry[2]])).stdout;
 			}
 		} else data = await readSource(root, path, maxBytes - total);
-		if (!data) { bundle.deleted.push(path); continue; }
+		if (!data) {
+			if (explicit) throw new Error(`Explicit file does not exist: ${JSON.stringify(path)}.`);
+			bundle.deleted.push(path); continue;
+		}
 		total += data.length;
 		if (total > maxBytes) throw new Error("Full-file context byte limit exceeded.");
 		bundle.files.push({ path, content: utf8(data), sha256: hash(data) });

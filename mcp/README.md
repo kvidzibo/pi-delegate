@@ -75,7 +75,9 @@ Kinds: `recon`, `implement`, `review`, `oracle`, `docs`. Provide a self-containe
 
 Full-file context requires `base` as a full commit SHA; optional `head` pins
 contents to that commit. Omitting `head` captures the current worktree, including
-local edits and non-ignored untracked files. These fields participate in retry
+local edits and non-ignored untracked files. Optional `files` replaces changed-file
+selection with exact repository-root-relative paths, including unchanged documents;
+include/exclude rules still apply. `base`, `head` and `files` participate in retry
 identity and are rejected for roles without a full-file provider. See
 [documentation editing and proposal handling](../docs/documentation-editor.md).
 
