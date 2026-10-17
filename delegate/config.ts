@@ -5,8 +5,8 @@ import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
 
-export const KINDS = ["recon", "implement", "review", "oracle"] as const;
-export type Kind = (typeof KINDS)[number];
+export type Kind = string;
+export const ROLE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -14,6 +14,8 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export interface AgentConfig {
 	enabled?: boolean;
 	model: string;
+	prompt: string;
+	extensions: boolean;
 	tools: string[];
 	thinking: ThinkingLevel;
 }
@@ -34,10 +36,10 @@ export interface DelegateConfig {
 }
 
 export function assertKind(value: unknown): Kind {
-	if (typeof value !== "string" || !(KINDS as readonly string[]).includes(value)) {
-		throw new Error(`delegate refused: kind must be one of ${KINDS.join("|")}.`);
+	if (typeof value !== "string" || !ROLE_NAME.test(value)) {
+		throw new Error("delegate refused: kind must match [a-z][a-z0-9_-]{0,63}.");
 	}
-	return value as Kind;
+	return value;
 }
 
 export function resolveAgent(
@@ -45,6 +47,8 @@ export function resolveAgent(
 	override: string | undefined,
 	config: DelegateConfig,
 ): { kind: Kind; model: string; agent: AgentConfig } {
+	assertKind(kind);
+	if (!Object.hasOwn(config.agents, kind)) throw new Error(`delegate refused: unknown role ${kind}.`);
 	const agent = config.agents[kind];
 	if (agent.enabled === false) throw new Error(`delegate refused: ${kind} is disabled in configuration.`);
 	const model = override?.trim() ? override.trim() : agent.model;
@@ -73,7 +77,7 @@ function parseTools(value: unknown, label: string): string[] {
 }
 
 function parseAgent(value: unknown, label: string): AgentConfig {
-	if (!value || typeof value !== "object") {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error(`${label} (object)`);
 	}
 	const parsed = value as Record<string, unknown>;
@@ -81,22 +85,26 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	if (typeof parsed.model !== "string" || parsed.model.trim().length === 0) {
 		errors.push("model (non-empty string)");
 	}
+	if (typeof parsed.prompt !== "string" || !parsed.prompt.trim()) errors.push("prompt (non-empty string)");
 	let tools: string[] | undefined;
 	try {
-		tools = parseTools(parsed.tools, "tools");
+		tools = parsed.tools === undefined ? ["*"] : parseTools(parsed.tools, "tools");
 	} catch (error) {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
-	if (!isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
+	if (parsed.extensions !== undefined && typeof parsed.extensions !== "boolean") errors.push("extensions (boolean)");
+	if (parsed.thinking !== undefined && !isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
 	const model = (parsed.model as string).trim();
 	if (!model) throw new Error(`${label} (model (non-empty string))`);
 	return {
 		enabled: parsed.enabled === undefined ? true : parsed.enabled as boolean,
 		model,
+		prompt: parsed.prompt as string,
+		extensions: parsed.extensions === true,
 		tools: tools as string[],
-		thinking: parsed.thinking as ThinkingLevel,
+		thinking: (parsed.thinking ?? "off") as ThinkingLevel,
 	};
 }
 
@@ -138,7 +146,7 @@ function collectConfigErrors(parsed: Record<string, unknown>): string[] {
 			errors.push("hardTimeoutMs (0 or >= 1000)");
 		}
 	}
-	if (!parsed.agents || typeof parsed.agents !== "object") {
+	if (!parsed.agents || typeof parsed.agents !== "object" || Array.isArray(parsed.agents) || !Object.keys(parsed.agents).length) {
 		errors.push("agents (object)");
 	}
 	return errors;
@@ -170,18 +178,15 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 	if (!Array.isArray(profiles) || profiles.length > 100 || !profiles.every(p => typeof p === "string" && isAbsolute(p))) {
 		errors.push("calibrationProfiles (up to 100 absolute file paths)");
 	}
-	const agents = {} as Record<Kind, AgentConfig>;
-	if (parsed.agents && typeof parsed.agents === "object") {
-		const rawAgents = parsed.agents as Record<string, unknown>;
-		for (const kind of KINDS) {
+	const agents: Record<Kind, AgentConfig> = {};
+	if (parsed.agents && typeof parsed.agents === "object" && !Array.isArray(parsed.agents)) {
+		for (const [kind, value] of Object.entries(parsed.agents)) {
 			try {
-				agents[kind] = parseAgent(rawAgents[kind], `agents.${kind}`);
+				assertKind(kind);
+				agents[kind] = parseAgent(value, `agents.${kind}`);
 			} catch (error) {
 				errors.push(error instanceof Error ? error.message : `agents.${kind}`);
 			}
-		}
-		for (const key of Object.keys(rawAgents)) {
-			if (key !== "docs" && !(KINDS as readonly string[]).includes(key)) errors.push(`agents.${key} (unknown agent)`);
 		}
 	}
 	if (errors.length > 0) {
@@ -203,7 +208,8 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 	};
 }
 
-function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConfig {
+function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string): AgentConfig {
+	if (!base) return parseAgent(extra, label);
 	if (extra === undefined) return base;
 	if (!extra || typeof extra !== "object" || Array.isArray(extra)) {
 		throw new Error(`${label} (object)`);
@@ -212,11 +218,15 @@ function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConf
 	const next: Record<string, unknown> = {
 		enabled: base.enabled,
 		model: base.model,
+		prompt: base.prompt,
+		extensions: base.extensions,
 		tools: base.tools,
 		thinking: base.thinking,
 	};
 	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
 	if (parsed.model !== undefined) next.model = parsed.model;
+	if (parsed.prompt !== undefined) next.prompt = parsed.prompt;
+	if (parsed.extensions !== undefined) next.extensions = parsed.extensions;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;
 	return parseAgent(next, label);
@@ -247,13 +257,9 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 		}
 		const rawAgents = extra.agents as Record<string, unknown>;
 		const agents: Record<string, AgentConfig> = { ...base.agents };
-		for (const key of Object.keys(rawAgents)) {
-			if (key === "docs") continue; // Retired role: preserve saved overlays without activating it.
-			if (!(KINDS as readonly string[]).includes(key)) {
-				throw new Error(`Invalid delegate config: ${path} (agents.${key} (unknown agent))`);
-			}
-			const kind = key as Kind;
-			agents[kind] = mergeAgent(base.agents[kind], rawAgents[kind], `agents.${kind}`);
+		for (const kind of Object.keys(rawAgents)) {
+			assertKind(kind);
+			agents[kind] = mergeAgent(Object.hasOwn(base.agents, kind) ? base.agents[kind] : undefined, rawAgents[kind], `agents.${kind}`);
 		}
 		merged.agents = agents;
 	}
@@ -301,7 +307,9 @@ function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig,
 	}
 	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
 	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
-	const saved = mergeDelegateConfig(shipped, overlay, path).agents[kind];
+	const config = mergeDelegateConfig(shipped, overlay, path);
+	if (!Object.hasOwn(config.agents, kind)) throw new Error(`delegate refused: unknown role ${kind}.`);
+	const saved = config.agents[kind];
 	if (saved.model !== current.model || (Object.keys(patch) as (keyof AgentConfig)[]).some(key => saved[key] !== current[key])) {
 		throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
 	}

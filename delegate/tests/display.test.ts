@@ -37,7 +37,8 @@ test("aliases known child models", () => {
 
 test("header shows kind and model", () => {
 	assert.equal(formatDelegateTarget(undefined, undefined), "…");
-	assert.equal(formatDelegateTarget("nope", undefined), "…");
+	assert.equal(formatDelegateTarget("nope", undefined), "nope → …");
+	assert.equal(formatDelegateTarget("../bad", undefined), "…");
 	assert.equal(formatDelegateTarget("recon", undefined), "recon → …");
 	assert.equal(formatDelegateTarget("recon", models.recon), "recon → Qwen (local-qwen38/qwen38-q4km)");
 	assert.equal(

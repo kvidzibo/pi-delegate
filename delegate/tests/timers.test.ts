@@ -25,7 +25,7 @@ test("timer bounds reject overflow before config, waits or unguarded spawning ca
 			await assert.rejects(scheduler.wait("d0001", { [field]: value }), /wait timers/);
 		}
 		await assert.rejects(runPiChild({ cwd: process.cwd(), model: "test/model", task: "probe", hardTimeoutMs: value,
-			maxOutputBytes: 100, promptSourcePath: fileURLToPath(new URL("../prompts/recon.md", import.meta.url)), env: {},
+			maxOutputBytes: 100, promptSourcePath: fileURLToPath(new URL("../config.json", import.meta.url)), env: {},
 			buildArgs: () => [], spawnFn: () => { throw new Error("must not spawn"); },
 		}), /Invalid hardTimeoutMs/);
 	}

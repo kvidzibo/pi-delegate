@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { readFileSync } from "node:fs";
 import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +6,6 @@ import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-codi
 import { Type, type TSchema } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
-import { promptSourceFromDir } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { loadDelegateConfig, resolveAgent, type Kind } from "./config.ts";
 import {
@@ -367,7 +365,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		label: "Delegate",
 		renderShell: "self",
 		description:
-			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
+			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; use it for isolated child work only when expected speed or quality gain exceeds coordination and validation cost.",
@@ -377,7 +375,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind implement only for bounded edits and tests. Give parallel children disjoint files and scopes; avoid parent/child write races.",
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
-			"Roles can be disabled in configuration; do not retry a disabled role with another model. No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review has no shell by default.",
+			"Roles can be disabled in configuration; do not retry a disabled role with another model. No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review remains read-only by prompt policy.",
 			"For delegate, omit model to use the configured role default unless the user explicitly requests another model. Do not guess model IDs or silently substitute a fallback. Overrides keep the kind's tools, prompt and thinking level.",
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Children must not commit, push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff, rerun relevant checks and validate the integrated result. Child reports and completion receipts are evidence, not proof of correctness.",
@@ -395,7 +393,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
-			kind: optionalArgument(Type.String({ description: "recon, implement, review, or oracle. Required to spawn." })),
+			kind: optionalArgument(Type.String({ description: `Configured role: ${Object.keys(config.agents).join(", ")}. Required to spawn.` })),
 			cwd: optionalArgument(
 				Type.String({ description: "Child working directory. Relative paths resolve against parent cwd." }),
 			),
@@ -469,7 +467,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
 					});
 
-					const promptPath = promptSourceFromDir(EXTENSION_DIR, `${kind}.md`);
 					let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
 					if (local) {
 						const alternative = config.localAlternatives[resolved.model];
@@ -478,13 +475,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
 							savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
 								key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
-									alternativeThinking: alternative.thinking, tools, promptHash: fingerprint(readFileSync(promptPath, "utf8")) },
+									alternativeThinking: alternative.thinking, tools, promptHash: fingerprint(resolved.agent.prompt) },
 								files: config.calibrationProfiles, pricing: pricedModel?.cost,
 							}) : { reason: "No hosted alternative configured for this local model" };
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
 					}
 					snap = enqueueDelegate({
-						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
+						scheduler, accounting, agent: resolved.agent, task: parsed.task,
 						identity: {
 							parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 							toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking,

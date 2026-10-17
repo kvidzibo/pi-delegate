@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MAX_TIMER_MS, truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
@@ -336,7 +336,6 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 	if (leaseConfig) {
-		if (!args.includes("--no-extensions")) args.push("--no-extensions");
 		args.push("--extension", input.leaseGuardPath ?? fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
 		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
 	}
@@ -595,8 +594,4 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		diag,
 		evidence: answers.evidence(taskDispatched, openResponse, settled),
 	};
-}
-
-export function promptSourceFromDir(dir: string, name = "child.md"): string {
-	return join(dir, "prompts", name);
 }

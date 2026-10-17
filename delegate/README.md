@@ -4,35 +4,54 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
-Shipped models use `openai-codex`: `recon` and `implement` use `gpt-6-luna`,
-`oracle` uses `gpt-6-astra`, and `review` uses `gpt-6.1-sol`.
+Shipped models use `openai-codex`:
+
+| Role | Model | Reasoning |
+|---|---|---|
+| `recon` | `gpt-6-luna` | `off` |
+| `implement` | `gpt-6.1-sol` | `medium` |
+| `review` | `gpt-6.1-sol` | `high` |
+| `oracle` | `gpt-6-astra` | `high` |
+
 All role defaults are hosted; local models remain available through overrides.
 Existing user model overrides take precedence over these defaults.
 
 Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role. Its model picker opens immediately; selecting a model continues to reasoning. Enter on the current model skips a model save. If no selectable model is available, reasoning still opens for the current model. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Reasoning choices come from Pi's supported levels for that model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saves go to `~/.pi/agent/delegate.json` and apply to new jobs in this session; running and queued jobs keep their settings. Other sessions need `/reload`. Esc returns to the role list. Declining a save stays on that picker; successful saves are confirmed in the next dialog.
 
-For manual configuration, override [shipped defaults](config.json) in that user file, not in the installed package. Replace `provider/model` with an available Pi model ID:
+Add or override roles in `~/.pi/agent/delegate.json`, not in the installed package. [Shipped defaults](config.json) include the four starter roles and their full prompts. Replace `provider/model` with an available Pi model ID:
 
 ```json
 {
   "agents": {
-    "recon": { "model": "provider/model" }
+    "recon": { "prompt": "Inspect the requested paths without editing.\nCite file:line evidence." },
+    "writer": {
+      "model": "provider/model",
+      "prompt": "Write only the requested documentation. Report changed files."
+    }
   }
 }
 ```
 
-Each role accepts `enabled` (default `true`), `model`, `tools` and `thinking`. An empty `tools: []` disables all tools. Set `"agents": { "implement": { "enabled": false } }` to refuse new implementation jobs, including calls with model overrides. Other roles are unaffected; already accepted jobs keep their policy. Role names remain fixed. Enable/disable is a manual configuration setting, not a model-picker or operator-settings control. Legacy role `offline` and `context` keys are ignored and preserved on saves. Omitted fields inherit defaults; tool arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and `prompt` strings; prompts replace the entire role system prompt, not append to it. JSON `\n` represents a newline.
 
-The retired `docs` role is no longer available. Legacy `agents.docs` settings are
-ignored and preserved on saves; historical runs remain readable. Automatic diff
-and full-file context preparation, and `base`/`head` job arguments, are no longer
-supported. Supply context in the task instead. Existing private archives are not deleted.
+| Field | Default for a new role |
+|---|---|
+| `enabled` | `true`; `false` refuses new jobs, including model overrides |
+| `tools` | All Pi tools (`["*"]`); `[]` disables tools |
+| `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
+| `thinking` | `off` |
+
+Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
+
+Roles appear in the launch schema, model picker, operator settings and history. Only model/reasoning are editable through the picker/operator API; other role fields require manual configuration. Accepted jobs retain their original prompt and policy. Legacy role `offline` and `context` keys are ignored and preserved on saves. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+
+`docs` can now be defined like any other custom role. Old `agents.docs` entries need a `prompt` or must be removed; they are no longer ignored. Historical runs remain readable. Automatic diff/full-file context preparation and `base`/`head` job arguments remain unsupported. Supply context in the task instead.
 
 Repository snapshot capture and safety audits have been removed. Legacy `snapshots`
 configuration is ignored and preserved on settings saves. Existing stored snapshots
 are not deleted; remove them manually if no longer needed.
 
-Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
+Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions need separate child configuration or explicit role `extensions: true`; extensions are disabled by default.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
@@ -42,7 +61,7 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 
 Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
 
-`review` defaults to `read`, `grep`, `find` and `ls`—no `bash`, `write` or `edit`. Existing user `tools` overrides still replace the defaults. Removing shell/edit tools is not a filesystem sandbox.
+`review` defaults to `read`, `grep`, `find`, `ls` and `bash`—no `write` or `edit` tools. Read-only behavior relies on its prompt, not shell write protection. Existing user `tools` overrides still replace the defaults.
 
 ## Cross-extension busy query
 
@@ -93,7 +112,7 @@ Diagnostics default to `~/.pi/agent/delegate.log`. `PI_DELEGATE_LOG` changes the
 
 ## Development
 
-Parent guidance lives in [index.ts](index.ts), child instructions in [prompts/](prompts/), and model assignments in configuration. Keep role/model policy out of `AGENTS.md`.
+Parent guidance lives in [index.ts](index.ts); role prompts, models and tool policy live in [config.json](config.json). Keep role/model policy out of `AGENTS.md`.
 
 Run from the repository root:
 

@@ -31,16 +31,16 @@ export function createMcpServer(service: DelegateService, version: string, setti
       'Use delegate_status to observe or wait; cancelling an observation does not cancel its worker.',
       'Workers are unsandboxed and retain system permissions. Read-only roles are a prompt instruction, not a security boundary.',
       'Model-writable configuration is disabled. Role models come from configuration; per-job model overrides require operator opt-in. Disabled roles cannot be launched, even with a model override.',
-      'No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review has no shell by default.',
+      'No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review remains read-only by prompt policy.',
       'Jobs belong to this server connection/process and are not adopted after restart.',
     ].join(' '),
   });
 
   server.registerTool('delegate_start', {
     title: 'Start a delegate job',
-    description: 'Start one recon, implement, review, or oracle job. Returns its receipt immediately.',
+    description: 'Start one configured role. Returns its receipt immediately.',
     inputSchema: z.object({
-      kind: z.enum(['recon', 'implement', 'review', 'oracle']),
+      kind: z.enum(service.roleNames()),
       task: nonblank(20_000),
       requestId: nonblank(128),
       cwd: z.string().optional(),

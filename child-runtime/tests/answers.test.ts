@@ -6,7 +6,7 @@ import { AnswerHistory } from "../answers.ts";
 import { DEFAULT_WRAP_MESSAGE, encodeRpc, type ChildControl, type RunPiChildInput } from "../spawn.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
 
-const PROMPT = fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url));
+const PROMPT = fileURLToPath(new URL("../../delegate/config.json", import.meta.url));
 
 function start(t: TestContext, overrides: Partial<RunPiChildInput> = {}) {
 	const proc = mockChild();

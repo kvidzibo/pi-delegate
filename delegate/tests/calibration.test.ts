@@ -81,7 +81,7 @@ test("missing final usage keeps observed partial estimate but cannot earn comple
 });
 
 test("native reconstruction and archive reload/rebuild preserve captured prices, never backfill legacy runs", async t => {
-	const dir = temp(t), prompt = join(dir, "prompt.md"); writeFileSync(prompt, "prompt");
+	const dir = temp(t), prompt = "prompt";
 	const archive = new ArchivedRun(dir, { parentSessionId: "p", toolCallId: "t", kind: "recon", cwd: dir,
 		requestedModel: key.localModel, thinking: "off", tools: ["read"], savings: savings() }, "task", prompt);
 	archive.start("d1"); const m = message();
@@ -110,7 +110,7 @@ test("native reconstruction and archive reload/rebuild preserve captured prices,
 
 for (const delivery of ["progress", "result"] as const) {
 	test(`guarded execution invalidates legacy calibration via ${delivery}, including archive rebuild`, async t => {
-		const dir = temp(t), prompt = join(dir, "prompt.md"); writeFileSync(prompt, "prompt");
+		const dir = temp(t), prompt = "prompt";
 		const archive = new ArchivedRun(dir, { parentSessionId: "p", toolCallId: "t", kind: "recon", cwd: dir,
 			requestedModel: key.localModel, thinking: "off", tools: ["read"], savings: savings() }, "task", prompt);
 		archive.start("d1"); const m = message();

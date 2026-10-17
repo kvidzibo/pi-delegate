@@ -277,7 +277,7 @@ async function cancelledStartProbe(temp: string, workspace: string, configPath: 
 	const service = new DelegateService({
 		workspace, agentDir: join(temp, "cancellation-agent"),
 		config: loadDelegateConfig({ shippedPath: join(root, "delegate/config.json"), userPath: configPath }),
-		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused-offline-worker", args: [] },
+		invocation: { command: "unused-offline-worker", args: [] },
 		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
 		childRunner: input => {
 			launches++;
@@ -328,7 +328,8 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 	const paths = { shippedPath: join(root, "delegate/config.json"), userPath: overlay };
 	const token = "operator_test_" + "x".repeat(32);
 	const initial = { maxConcurrent: 1, custom: { retained: true }, snapshots: { repositories: {} },
-		agents: { recon: { model: "ollama/before", thinking: "low", offline: true } } };
+		agents: { recon: { model: "ollama/before", thinking: "low", offline: true },
+			writer: { model: "test/after", prompt: "Write the requested document." } } };
 	writeFileSync(overlay, JSON.stringify(initial));
 	// Simulate a service snapshot loaded before a concurrent startup role edit.
 	const startupConfig = loadDelegateConfig(paths);
@@ -337,7 +338,7 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 	let release: (() => void) | undefined;
 	const service = new DelegateService({
 		workspace: temp, agentDir: join(temp, "agent"), config: startupConfig,
-		promptDir: join(root, "delegate/prompts"), invocation: { command: "unused", args: [] },
+		invocation: { command: "unused", args: [] },
 		leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
 		childRunner: async input => {
 			assert.equal("offline" in input, false);
@@ -379,6 +380,10 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.equal(catalogueCalls, 0, "unauthorized requests cannot load credentials/catalogues");
 		const before = (await request(SETTINGS_GET, { token, _meta: { progressToken: "operator-read", "gateway/sessionId": "fixture-session" } })).result;
 		assert.equal(before.writable, true);
+		assert.ok(tools.find((tool: any) => tool.name === "delegate_start").inputSchema.properties.kind.enum.includes("writer"));
+		assert.equal(before.values.agents.writer.thinking, "off");
+		assert.ok(before.schema.properties.agents.properties.writer);
+		assert.ok(!JSON.stringify(before).includes(initial.agents.writer.prompt));
 		assert.equal(before.sources.agents.recon.model, "user");
 		assert.equal(before.sources.agents.review.model, "default");
 		assert.deepEqual(Object.keys(before.values), ["agents"]);
@@ -395,7 +400,7 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			_meta: { progressToken: "operator-update", "gateway/sessionId": "fixture-session" } });
 		const originalText = readFileSync(overlay, "utf8");
 		for (const patch of [
-			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: ["bash"] } } },
+			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: ["bash"] } } }, { agents: { missing: { model: "test/after" } } },
 			{ agents: { recon: { offline: false } } }, { agents: { recon: {} } },
 			{ agents: { recon: { model: "test/unavailable" } } },
 			{ agents: { recon: { model: "test/after" } } }, // old reasoning is unsupported; don't silently clamp
@@ -408,7 +413,9 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		const mask = process.umask(0o022);
 		let after: any;
 		try {
-			after = (await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" } } })).result;
+			const response = await update({ agents: { recon: { model: "test/after", thinking: "high" }, review: { model: "test/after", thinking: "off" }, writer: { thinking: "high" } } });
+			assert.equal(response.error, undefined, JSON.stringify(response));
+			after = response.result;
 			assert.equal(statSync(overlay).mode & 0o777, 0o660, "preserve actual permissions despite umask");
 		} finally { process.umask(mask); }
 		assert.ok(after, "hosted model changes save without an offline acknowledgement");
@@ -431,6 +438,12 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			{ model: "ollama/before", thinking: "low" },
 			{ model: "test/after", thinking: "high" },
 		]);
+		const custom = (await request("tools/call", { name: "delegate_start", arguments: {
+			kind: "writer", task: "Write a note", requestId: "custom-role",
+		} })).result.structuredContent.job;
+		assert.equal((await service.status(custom.jobId, 10000)).job.status, "done");
+		assert.equal(captured.at(-1)?.thinking, "high");
+		assert.equal(readFileSync(join(dirname(custom.archive.sessionFile), "system-prompt.md"), "utf8"), initial.agents.writer.prompt);
 		chmodSync(overlay, 0o600); // A later chmod must never be undone using cached startup permissions.
 		const concurrent = await Promise.all([
 			request(SETTINGS_UPDATE, { token, revision: after.revision, patch: { agents: { recon: { thinking: "off" } } }, confirmOfflineChange: false }),

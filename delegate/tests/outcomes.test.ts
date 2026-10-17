@@ -94,7 +94,7 @@ test("restored cards retain detached outcome data but never a claimed task asses
 
 test("archive outcomes coexist with capabilities/headroom, survive rebuild, and do not backfill legacy proof", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-outcomes-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-	const prompt = join(root, "source.md"); writeFileSync(prompt, "Owned offline fixture");
+	const prompt = "Owned offline fixture";
 	const capabilities = describeCapabilities(["read", "bash"]);
 	const run = new ArchivedRun(root, { parentSessionId: "parent", toolCallId: "call", kind: "recon", cwd: root,
 		requestedModel: "mock/model", thinking: "off", tools: ["read", "bash"], capabilities }, "Task", prompt);

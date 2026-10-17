@@ -12,7 +12,7 @@ import type { FinalizationProgress } from "../../child-runtime/guard-protocol.ts
 
 test("capability snapshots coexist with headroom history and guarded-calibration invalidation on rebuild", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-combined-metadata-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-	const prompt = join(root, "source.md"); writeFileSync(prompt, "Owned offline fixture");
+	const prompt = "Owned offline fixture";
 	const capabilities = describeCapabilities(["read", "bash"]);
 	const finalization: FinalizationProgress = { phase: "answering", reason: "context_budget", activeTools: 0,
 		headroom: { policyId: "a".repeat(64), phase: "limited", limited: true, clippedToolResults: 1 } };

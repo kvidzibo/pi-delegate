@@ -36,7 +36,7 @@ For a checkout, set `command` to your Node executable and prepend `/absolute/pat
 
 ### Configuration
 
-Role enablement (`agents.<role>.enabled`, default `true`), models, tools, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI change role models and reasoning without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
+Role definitions, prompts, enablement (`agents.<role>.enabled`, default `true`), models, tools, extensions, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI change role models and reasoning without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
 
 Options:
 
@@ -51,7 +51,7 @@ Options:
 
 Directory/config options resolve relative to the launch directory; use absolute paths in client configuration. Keep the same agent directory across participating clients to retain shared local-worker coordination. Changing it creates a separate capacity namespace and model/credential setup.
 
-Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review has no shell by default. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role enablement/tools are manual configuration settings, not writable through the operator API.
+Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review remains read-only by prompt policy. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role definitions, prompts, enablement, tools and extension policy are manual configuration settings, not writable through the operator API.
 
 ## Tools
 
@@ -67,7 +67,7 @@ Start one job and return immediately:
 }
 ```
 
-Kinds: `recon`, `implement`, `review`, `oracle`. Provide a self-contained task, scope, acceptance checks and stop rules: workers do not inherit your conversation or project instructions. Tasks are capped at 20,000 characters (a smaller configured limit also applies).
+`kind` names any configured role; starter roles are `recon`, `implement`, `review`, `oracle`. The launch schema lists the configured names. Provide a self-contained task, scope, acceptance checks and stop rules: workers do not inherit your conversation or project instructions. Tasks are capped at 20,000 characters (a smaller configured limit also applies).
 
 `requestId` is a caller-generated, nonblank string of at most 128 characters. Retry the same key with the same normalized task/kind/workspace and explicit model parameter **within this server process** to retrieve the existing job without launching another. Conflicting reuse fails. Changing role defaults does not break retries of already accepted requests. A start cancelled before acceptance launches nothing; cancellation after acceptance can suppress the receipt but leaves the job and retry identity intact. This is not restart-safe deduplication: after a lost connection, do not replay uncertain implementation tasks automatically.
 
@@ -212,8 +212,8 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 
 - **No sandbox.** Workspace validation selects where work starts; shell commands can still access other paths, processes, credentials and network services available to the server's OS account.
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
-- Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. Other read-only roles rely on prompt policy; their shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
-- Nesting is refused when the delegate-child marker is present. Workers disable extension discovery, context files, skills and prompt templates; local runs explicitly load only the private lease helper.
+- Review defaults to `read`, `grep`, `find`, `ls` and `bash`, without `write`/`edit` tools. Read-only roles rely on prompt policy; shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
+- Nesting is refused when the delegate-child marker is present. Workers disable context files, skills and prompt templates. Extension discovery is disabled unless the role sets `extensions: true`; local runs also load the private lease helper.
 - No tool can change role configuration. The optional operator-only RPC extension changes only role models/reasoning.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.
 

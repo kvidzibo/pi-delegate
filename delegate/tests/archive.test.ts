@@ -12,7 +12,7 @@ const identity: RunIdentity = { parentSessionId: "parent", parentSessionFile: "/
 const used = { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 };
 function setup(t: TestContext) {
 	const root = mkdtempSync(join(tmpdir(), "delegate-archive-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-	const prompt = join(root, "source.md"); writeFileSync(prompt, "custom system prompt");
+	const prompt = "custom system prompt";
 	return { root, prompt, run: new ArchivedRun(root, identity, "sensitive task", prompt) };
 }
 function assistant(run: ArchivedRun, id = "a") {
