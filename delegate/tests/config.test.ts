@@ -92,11 +92,16 @@ test("user overlay overrides one model", () => {
 	assert.equal(merged.agents.implement.model, config.agents.implement.model);
 });
 
-test("legacy role settings are accepted but ignored in defaults and overlays", () => {
+test("legacy role and context settings are accepted but ignored in defaults and overlays", () => {
 	const base = shipped();
 	const docs = { model: "old/docs", context: [{ source: "git-changed-files" }] };
 	assert.deepEqual(parseDelegateConfig({ ...base, agents: { ...base.agents, docs } }, "legacy.json"), base);
 	assert.deepEqual(mergeDelegateConfig(base, { agents: { docs } }, "overlay.json"), base);
+	for (const context of [[], ["git-diff"], [{ source: "git-changed-files" }], "obsolete", null]) {
+		const legacy = { ...base, agents: { ...base.agents, review: { ...base.agents.review, context } } };
+		assert.deepEqual(parseDelegateConfig(legacy, "legacy.json"), base);
+		assert.deepEqual(mergeDelegateConfig(base, { agents: { review: { context } } }, "overlay.json"), base);
+	}
 	for (const offline of [true, false, "obsolete"]) {
 		const legacy = { ...base, agents: { ...base.agents, recon: { ...base.agents.recon, offline } } };
 		assert.deepEqual(parseDelegateConfig(legacy, "legacy.json"), base);

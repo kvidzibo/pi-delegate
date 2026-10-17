@@ -8,15 +8,11 @@ import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
 export const KINDS = ["recon", "implement", "review", "oracle"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export const CONTEXT_PROVIDERS = ["git-diff"] as const;
-export type ContextProvider = (typeof CONTEXT_PROVIDERS)[number];
-
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface AgentConfig {
 	enabled?: boolean;
-	context?: ContextProvider[];
 	model: string;
 	tools: string[];
 	thinking: ThinkingLevel;
@@ -83,14 +79,6 @@ function parseTools(value: unknown, label: string): string[] {
 	return tools;
 }
 
-function parseContext(value: unknown): ContextProvider[] {
-	if (value === undefined) return [];
-	if (!Array.isArray(value) || !value.every(name => CONTEXT_PROVIDERS.includes(name))) {
-		throw new Error(`context (array of ${CONTEXT_PROVIDERS.join("|")})`);
-	}
-	return [...new Set(value)] as ContextProvider[];
-}
-
 function parseAgent(value: unknown, label: string): AgentConfig {
 	if (!value || typeof value !== "object") {
 		throw new Error(`${label} (object)`);
@@ -106,9 +94,6 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	} catch (error) {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
-	let context: ContextProvider[] = [];
-	try { context = parseContext(parsed.context); }
-	catch (error) { errors.push(error instanceof Error ? error.message : "context"); }
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (!isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
@@ -116,7 +101,6 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	if (!model) throw new Error(`${label} (model (non-empty string))`);
 	return {
 		enabled: parsed.enabled === undefined ? true : parsed.enabled as boolean,
-		context,
 		model,
 		tools: tools as string[],
 		thinking: parsed.thinking as ThinkingLevel,
@@ -263,13 +247,11 @@ function mergeAgent(base: AgentConfig, extra: unknown, label: string): AgentConf
 	const parsed = extra as Record<string, unknown>;
 	const next: Record<string, unknown> = {
 		enabled: base.enabled,
-		context: base.context,
 		model: base.model,
 		tools: base.tools,
 		thinking: base.thinking,
 	};
 	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
-	if (parsed.context !== undefined) next.context = parsed.context;
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;
