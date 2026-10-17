@@ -14,7 +14,7 @@
   "calibrationProfiles": [],
   "agents": {
     "recon": {
-      "model": "openai-codex/gpt-6-astra",
+      "model": "openai-codex/gpt-6-luna",
       "tools": ["read", "grep", "find", "ls", "bash"],
       "thinking": "off"
     },
@@ -30,7 +30,7 @@
       "thinking": "medium"
     },
     "oracle": {
-      "model": "openai-codex/gpt-6.1-sol",
+      "model": "openai-codex/gpt-6-astra",
       "tools": ["read", "grep", "find", "ls", "bash"],
       "thinking": "high"
     },

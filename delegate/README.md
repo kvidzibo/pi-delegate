@@ -4,8 +4,8 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
-Shipped models use `openai-codex`: `recon` uses `gpt-6-astra`, `implement`
-uses `gpt-6-luna`, and `review`, `oracle` and `docs` use `gpt-6.1-sol`.
+Shipped models use `openai-codex`: `recon` and `implement` use `gpt-6-luna`,
+`oracle` uses `gpt-6-astra`, and `review` and `docs` use `gpt-6.1-sol`.
 All role defaults are hosted; local models remain available through overrides.
 Existing user model overrides take precedence over these defaults.
 
