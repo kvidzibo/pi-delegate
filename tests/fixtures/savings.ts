@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import delegate from "../../delegate/index.ts";
+import { loadDelegateConfig } from "../../delegate/config.ts";
 import { fingerprint } from "../../delegate/calibration.ts";
 import { savings, pricing } from "../../delegate/tests/calibration-fixtures.ts";
 
@@ -11,7 +12,7 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	const handlers = new Map<string, Function>(), commands = new Map<string, any>(); let tool: any;
 	const s = savings();
 	s.profile.key.tools = ["read", "grep", "find", "ls", "bash"];
-	s.profile.key.promptHash = fingerprint(readFileSync(fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url)), "utf8"));
+	s.profile.key.promptHash = fingerprint(loadDelegateConfig({ shippedPath: fileURLToPath(new URL("../../delegate/config.json", import.meta.url)) }).agents.recon.prompt);
 	const { keyId } = await import("../../delegate/calibration.ts"); s.profile.id = keyId(s.profile.key);
 	const file = join(ctx.cwd, "profile.json"); writeFileSync(file, JSON.stringify(s.profile));
 	const configPath = join(getAgentDir(), "delegate.json"); writeFileSync(configPath, JSON.stringify({

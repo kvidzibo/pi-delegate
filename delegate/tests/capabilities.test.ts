@@ -101,7 +101,7 @@ test("card history detaches capability arrays and drops unsupported claims", () 
 
 test("archives and rebuild retain configured capabilities, not inferred legacy or malformed claims", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-capabilities-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-	const prompt = join(root, "source.md"); writeFileSync(prompt, "Offline fixture");
+	const prompt = "Offline fixture";
 	const caps = describeCapabilities(["read,bash"]);
 	const identity: RunIdentity = { parentSessionId: "parent", toolCallId: "call", kind: "recon", cwd: root,
 		requestedModel: "mock/model", thinking: "off", tools: ["read,bash"], capabilities: caps };

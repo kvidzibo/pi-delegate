@@ -67,7 +67,6 @@ async function main(): Promise<void> {
 	delete process.env[SETTINGS_TOKEN_ENV]; // Operator credentials must not reach workers or catalogue helpers.
 	const service = new DelegateService({
 		workspace: resolvePath(values.workspace), agentDir, config,
-		promptDir: fileURLToPath(new URL("./prompts", import.meta.url)),
 		invocation: { command: isAbsolute(command) || command.includes("/") ? resolvePath(command) : command, args: [] },
 		leaseGuardPath: fileURLToPath(new URL("./lease-guard.js", import.meta.url)),
 		allowModelOverride: values["allow-model-override"],

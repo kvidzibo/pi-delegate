@@ -50,8 +50,8 @@ export class Accounting {
 		this.paint();
 	};
 
-	create(identity: RunIdentity, task: string, promptPath: string): ArchivedRun {
-		const archive: ArchivedRun = new ArchivedRun(this.root, identity, task, promptPath, (message) => this.warn({ message, parentSessionId: identity.parentSessionId, createdAt: archive.data.createdAt }));
+	create(identity: RunIdentity, task: string, prompt: string): ArchivedRun {
+		const archive: ArchivedRun = new ArchivedRun(this.root, identity, task, prompt, (message) => this.warn({ message, parentSessionId: identity.parentSessionId, createdAt: archive.data.createdAt }));
 		this.active.set(archive.data.runId, archive);
 		this.records.set(archive.data.runId, archive.data);
 		this.paint();

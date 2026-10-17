@@ -8,6 +8,7 @@ export interface ChildArgsInput {
 	model: string;
 	thinking: string;
 	tools: string[];
+	extensions?: boolean;
 	promptPath: string;
 	sessionFile: string;
 }
@@ -18,6 +19,7 @@ export interface RunChildInput {
 	model: string;
 	thinking: string;
 	tools: string[];
+	extensions?: boolean;
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
@@ -38,7 +40,7 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		"rpc",
 		"--session",
 		input.sessionFile,
-		"--no-extensions",
+		...(input.extensions ? [] : ["--no-extensions"]),
 		"--no-skills",
 		"--no-prompt-templates",
 		"--no-context-files",
@@ -114,6 +116,7 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 				model: input.model,
 				thinking: input.thinking,
 				tools: input.tools,
+				extensions: input.extensions,
 				promptPath,
 				sessionFile: input.sessionFile,
 			}),

@@ -23,9 +23,9 @@ function shipped(): DelegateConfig {
 
 test("kind validation", () => {
 	assert.equal(assertKind("recon"), "recon");
-	assert.throws(() => assertKind("scout"), /kind must be/);
-	assert.throws(() => assertKind("worker"), /kind must be/);
-	assert.throws(() => assertKind("docs"), /kind must be/);
+	assert.equal(assertKind("scout"), "scout");
+	assert.equal(assertKind("docs"), "docs");
+	for (const kind of ["", "../role", "__proto__", "a".repeat(65), 1]) assert.throws(() => assertKind(kind), /kind must/);
 });
 
 test("shipped config parses four agents", () => {
@@ -49,6 +49,7 @@ test("model override keeps agent tools and prompt kind", () => {
 	const resolved = resolveAgent("implement", "ollama/qwen3", config);
 	assert.equal(resolved.model, "ollama/qwen3");
 	assert.deepEqual(resolved.agent.tools, config.agents.implement.tools);
+	assert.equal(resolved.agent.prompt, config.agents.implement.prompt);
 	assert.equal(resolved.agent.thinking, "low");
 	assert.equal(resolveAgent("recon", "  ", config).model, config.agents.recon.model);
 	assert.equal(resolveAgent("review", undefined, config).model, config.agents.review.model);
@@ -91,11 +92,8 @@ test("user overlay overrides one model", () => {
 	assert.equal(merged.agents.implement.model, config.agents.implement.model);
 });
 
-test("legacy role and context settings are accepted but ignored in defaults and overlays", () => {
+test("legacy context settings are accepted but ignored in defaults and overlays", () => {
 	const base = shipped();
-	const docs = { model: "old/docs", context: [{ source: "git-changed-files" }] };
-	assert.deepEqual(parseDelegateConfig({ ...base, agents: { ...base.agents, docs } }, "legacy.json"), base);
-	assert.deepEqual(mergeDelegateConfig(base, { agents: { docs } }, "overlay.json"), base);
 	for (const context of [[], ["git-diff"], [{ source: "git-changed-files" }], "obsolete", null]) {
 		const legacy = { ...base, agents: { ...base.agents, review: { ...base.agents.review, context } } };
 		assert.deepEqual(parseDelegateConfig(legacy, "legacy.json"), base);
@@ -108,11 +106,13 @@ test("legacy role and context settings are accepted but ignored in defaults and 
 	}
 });
 
-test("unknown overlay agent refused", () => {
+test("new overlay agents require a model and prompt", () => {
 	assert.throws(
 		() => mergeDelegateConfig(shipped(), { agents: { scout: { model: "x" } } }, "overlay.json"),
-		/unknown agent/,
+		/prompt/,
 	);
+	assert.throws(() => resolveAgent("missing", undefined, shipped()), /unknown role/);
+	assert.throws(() => resolveAgent("constructor", undefined, shipped()), /unknown role/);
 });
 
 test("load uses shipped when user file missing", () => {
@@ -142,8 +142,8 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		assert.deepEqual(patch, { model: "hosted/first" });
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
-			recon: { ...patch, thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
-			docs: { model: "old/docs", context: [{ source: "git-changed-files" }] },
+			recon: { ...patch, prompt: "Custom recon prompt\nPreserve this text.", thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
+			docs: { model: "hosted/docs", prompt: "Write documentation.", context: [{ source: "git-changed-files" }] },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
@@ -178,7 +178,7 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-thinking-"));
 	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
 	try {
-		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", offline: false, tools: ["read"], context: ["git-diff"] } } };
+		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", prompt: "Custom prompt", offline: false, tools: ["read"], context: ["git-diff"] } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).agents.recon;
 		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
@@ -198,7 +198,16 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 });
 
 test("broken shipped invariants refused", () => {
-	const valid = shipped() as unknown as Record<string, unknown>;
+	const config = shipped();
+	for (const prompt of [null, "", " \n\t", 42, [], {}]) {
+		assert.throws(() => mergeDelegateConfig(config, { agents: { recon: { prompt } } }, "bad"), /prompt.*non-empty string/);
+	}
+	for (const extensions of [null, "true", 1, []]) {
+		assert.throws(() => mergeDelegateConfig(config, { agents: { recon: { extensions } } }, "bad"), /extensions.*boolean/);
+	}
+	const { prompt: _prompt, ...withoutPrompt } = config.agents.recon;
+	assert.throws(() => parseDelegateConfig({ ...config, agents: { ...config.agents, recon: withoutPrompt } }, "bad"), /prompt.*non-empty string/);
+	const valid = config as unknown as Record<string, unknown>;
 	assert.throws(
 		() => parseDelegateConfig({ ...valid, maxTaskChars: 0 }, "x"),
 		/maxTaskChars/,

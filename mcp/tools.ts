@@ -38,9 +38,9 @@ export function createMcpServer(service: DelegateService, version: string, setti
 
   server.registerTool('delegate_start', {
     title: 'Start a delegate job',
-    description: 'Start one recon, implement, review, or oracle job. Returns its receipt immediately.',
+    description: 'Start one configured role. Returns its receipt immediately.',
     inputSchema: z.object({
-      kind: z.enum(['recon', 'implement', 'review', 'oracle']),
+      kind: z.enum(service.roleNames()),
       task: nonblank(20_000),
       requestId: nonblank(128),
       cwd: z.string().optional(),

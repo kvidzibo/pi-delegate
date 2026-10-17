@@ -6,7 +6,7 @@ import { runChild } from "../../delegate/spawn.ts";
 import { DEFAULT_WRAP_MESSAGE, encodeRpc, runPiChild, type ChildControl, type RunPiChildInput } from "../spawn.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
 
-const PROMPT = fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url));
+const PROMPT = fileURLToPath(new URL("../../delegate/config.json", import.meta.url));
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 function start(t: TestContext, overrides: Partial<RunPiChildInput> = {}) {

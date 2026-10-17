@@ -6,7 +6,7 @@ import { isFailedChildResult } from "../policy.ts";
 import { encodeRpc, extractAssistantText, type RunPiChildInput } from "../spawn.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
 
-const PROMPT = fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url));
+const PROMPT = fileURLToPath(new URL("../../delegate/config.json", import.meta.url));
 const MiB = 1024 * 1024;
 
 function childInput(overrides: Partial<RunPiChildInput> = {}): RunPiChildInput {

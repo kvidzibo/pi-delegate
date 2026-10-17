@@ -16,7 +16,7 @@ function fixture(t: TestContext) {
 	const proc = mockChild(); let options: any;
 	const input: RunPiChildInput = { cwd: root, model: "test/model", task: "must wait for lease acknowledgement", hardTimeoutMs: 0,
 		maxOutputBytes: 1000, env: {}, buildArgs: () => [], resourceLease: lease.inherited,
-		promptSourcePath: fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url)),
+		promptSourcePath: fileURLToPath(new URL("../../delegate/config.json", import.meta.url)),
 		leaseStartupMs: 1000,
 		spawnFn: (_command, _args, value) => { options = value; return proc; },
 	};

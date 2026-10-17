@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { KINDS, saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { saveDelegateModel, saveDelegateThinking, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
@@ -37,7 +37,8 @@ export class ModelCommand {
 				const models = selectableDelegateModels(availableModels, ctx.scopedModels);
 				const available = new Set(availableModels.map(modelId));
 				const selectable = new Set(models.map(modelId));
-				const options = KINDS.map(kind => {
+				const kinds = Object.keys(this.config.agents);
+				const options = kinds.map(kind => {
 					const id = this.config.agents[kind].model;
 					const mark = selectable.has(id) ? "" : scoped && available.has(id) ? " (not in scope)" : " (unavailable)";
 					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}`;
@@ -52,7 +53,7 @@ export class ModelCommand {
 				if (signal.aborted || choice === undefined) return;
 				const index = options.indexOf(choice);
 				if (index < 0) throw new Error("Invalid delegate role selection.");
-				const kind = KINDS[index];
+				const kind = kinds[index];
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 				notice = await this.configureRole(ctx, kind, models, scoped, signal);
 			}

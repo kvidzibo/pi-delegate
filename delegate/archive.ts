@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFi
 import { readdir, readFile, lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { emptyUsage, record, sessionUsage, totalTokens, UsageMeter, validUsage, type UsageSummary } from "./usage.ts";
-import { KINDS, type Kind } from "./config.ts";
+import { ROLE_NAME, type Kind } from "./config.ts";
 import { validSnapshot, type SavingsSnapshot } from "./calibration.ts";
 import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
@@ -102,7 +102,7 @@ export class ArchivedRun {
 	private onError: (message: string) => void;
 	private root: string;
 
-	constructor(root: string, identity: RunIdentity, task: string, promptPath: string, onError: (message: string) => void = () => {}) {
+	constructor(root: string, identity: RunIdentity, task: string, prompt: string, onError: (message: string) => void = () => {}) {
 		this.root = root;
 		this.onError = onError;
 		privateDirectory(root);
@@ -120,7 +120,7 @@ export class ArchivedRun {
 		// A valid pre-created header persists even when Pi never accepts its first prompt.
 		writeFileSync(this.paths.session, `${JSON.stringify({ type: "session", version: 3, id: runId, timestamp: this.data.createdAt, cwd: identity.cwd, parentSession: identity.parentSessionFile })}\n`, { flag: "wx", mode: 0o600 });
 		writeFileSync(this.paths.task, task, { flag: "wx", mode: 0o600 });
-		writeFileSync(this.paths.prompt, readFileSync(promptPath), { flag: "wx", mode: 0o600 });
+		writeFileSync(this.paths.prompt, prompt, { flag: "wx", mode: 0o600 });
 		atomicJson(this.paths.metadata, this.data);
 	}
 
@@ -208,7 +208,7 @@ function validRecord(value: unknown, id: string): value is RunRecord {
 	const r = record(value);
 	return r.version === 1 && Number.isSafeInteger(r.revision) && r.revision >= 0 && r.runId === id && UUID.test(id)
 		&& ["parentSessionId", "toolCallId", "cwd", "requestedModel", "thinking", "createdAt"].every((k) => typeof r[k] === "string")
-		&& (r.kind === "docs" || (KINDS as readonly string[]).includes(r.kind))
+		&& typeof r.kind === "string" && ROLE_NAME.test(r.kind)
 		&& ["queued", "running", "done", "failed"].includes(r.status)
 		&& Array.isArray(r.tools) && r.tools.every((t: unknown) => typeof t === "string")
 		&& Number.isFinite(Date.parse(r.createdAt)) && Number.isFinite(r.durationMs) && r.durationMs >= 0;

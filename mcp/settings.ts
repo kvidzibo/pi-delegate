@@ -3,7 +3,7 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync
 import { basename, dirname, join } from "node:path";
 import { McpServer, ProtocolError } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { KINDS, THINKING_LEVELS, parseDelegateConfig, mergeDelegateConfig, type ConfigPaths, type DelegateConfig, type Kind, type ThinkingLevel } from "../delegate/config.ts";
+import { ROLE_NAME, THINKING_LEVELS, parseDelegateConfig, mergeDelegateConfig, type ConfigPaths, type DelegateConfig, type Kind, type ThinkingLevel } from "../delegate/config.ts";
 import { isLocalModel } from "../delegate/tg.ts";
 import type { CatalogueLoader, SettingsCatalogue } from "./models.ts";
 
@@ -48,7 +48,7 @@ function diskState(paths: ConfigPaths) {
 }
 
 function values(config: DelegateConfig): Record<Kind, RoleValues> {
-	return Object.fromEntries(KINDS.map(kind => {
+	return Object.fromEntries(Object.keys(config.agents).map(kind => {
 		const { model, thinking } = config.agents[kind];
 		return [kind, { model, thinking }];
 	})) as Record<Kind, RoleValues>;
@@ -59,7 +59,7 @@ const rolePatchSchema = z.object({
 	thinking: z.enum(THINKING_LEVELS).optional(),
 }).strict().refine(patch => Object.keys(patch).length > 0, "Role patch must not be empty");
 const patchSchema = z.object({
-	agents: z.object(Object.fromEntries(KINDS.map(kind => [kind, rolePatchSchema.optional()]))).strict()
+	agents: z.record(z.string().regex(ROLE_NAME), rolePatchSchema)
 		.refine(agents => Object.keys(agents).length > 0, "Select at least one role"),
 }).strict();
 
@@ -100,17 +100,18 @@ export class DelegateSettings {
 
 	private describe(catalogue: SettingsCatalogue) {
 		const current = values(this.state.config), defaults = values(this.state.defaults);
+		const kinds = Object.keys(current);
 		const conflict = this.currentDisk().revision !== this.state.revision;
-		const sources = Object.fromEntries(KINDS.map(kind => [kind, Object.fromEntries(["model", "thinking"].map(key =>
+		const sources = Object.fromEntries(kinds.map(kind => [kind, Object.fromEntries(["model", "thinking"].map(key =>
 			[key, Object.hasOwn(this.state.overlay.agents?.[kind] ?? {}, key) ? "user" : "default"]))]));
-		const roles = Object.fromEntries(KINDS.map(kind => {
+		const roles = Object.fromEntries(kinds.map(kind => {
 			const choices = catalogue.models.map(model => ({ const: model.id, title: `${model.label}${model.available ? "" : " (unavailable)"}` }));
 			if (!choices.some(choice => choice.const === current[kind].model)) choices.push({ const: current[kind].model, title: `${current[kind].model} (unavailable)` });
 			return [kind, {
 				type: "object", title: kind, additionalProperties: false,
 				properties: {
-					model: { type: "string", title: "Model", description: "Unavailable models cannot be selected. Use the server catalogue, not the parent session's models.", oneOf: choices, default: defaults[kind].model },
-					thinking: { type: "string", title: "Reasoning", description: "Supported levels depend on the selected model; see models[].thinking.", enum: [...THINKING_LEVELS], default: defaults[kind].thinking },
+					model: { type: "string", title: "Model", description: "Unavailable models cannot be selected. Use the server catalogue, not the parent session's models.", oneOf: choices, default: defaults[kind]?.model ?? current[kind].model },
+					thinking: { type: "string", title: "Reasoning", description: "Supported levels depend on the selected model; see models[].thinking.", enum: [...THINKING_LEVELS], default: defaults[kind]?.thinking ?? "off" },
 				}, required: ["model", "thinking"],
 			}];
 		}));
@@ -119,7 +120,7 @@ export class DelegateSettings {
 			writable: Boolean(this.paths.userPath) && !conflict && !catalogue.warning, conflict,
 			applyTo: "future-jobs", values: { agents: current }, sources: { agents: sources },
 			schema: { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", additionalProperties: false,
-				properties: { agents: { type: "object", title: "Roles", additionalProperties: false, properties: roles, required: [...KINDS] } }, required: ["agents"] },
+				properties: { agents: { type: "object", title: "Roles", additionalProperties: false, properties: roles, required: kinds } }, required: ["agents"] },
 			models: catalogue.models.map(model => ({ ...model, local: isLocalModel(model.id) })),
 			...(conflict ? { warning: "Configuration changed outside this server; restart after collecting or cancelling outstanding jobs." }
 				: catalogue.warning ? { warning: catalogue.warning } : {}),
@@ -140,6 +141,7 @@ export class DelegateSettings {
 		this.assertOpen();
 		const parsed = patchSchema.safeParse(input.patch);
 		if (!parsed.success) fault(-32602, "Only nonempty role model/reasoning patches are accepted.");
+		if (Object.keys(parsed.data.agents).some(kind => !Object.hasOwn(this.state.config.agents, kind))) fault(-32602, "Unknown role in settings patch.");
 		if (!this.paths.userPath) fault(-33003, "Settings persistence is disabled for this server.");
 		if (input.revision !== this.state.revision) fault(-33002, "Settings revision changed; fetch settings before saving again.");
 		const catalogue = await this.catalogue(signal);
@@ -150,7 +152,7 @@ export class DelegateSettings {
 		if (input.revision !== this.state.revision || this.currentDisk().revision !== this.state.revision) fault(-33002, "Settings changed; fetch settings or restart before saving again.");
 		const nextOverlay = structuredClone(this.state.overlay);
 		nextOverlay.agents ??= {};
-		for (const kind of KINDS) {
+		for (const kind of Object.keys(parsed.data.agents)) {
 			const patch = parsed.data.agents[kind] as RolePatch | undefined;
 			if (!patch) continue;
 			const before = this.state.config.agents[kind];

@@ -40,12 +40,17 @@ test("child startup mode is controlled only by the supplied Pi environment", () 
 	assert.equal(buildChildEnv({}).PI_OFFLINE, undefined);
 });
 
-test("argv never inherits or forks parent sessions, or loads extensions", () => {
+test("argv never inherits or forks parent sessions and extensions require opt-in", () => {
 	const args = buildChildArgs(base);
 	assert.equal(args.includes("--continue"), false);
 	assert.equal(args.includes("--fork"), false);
 	assert.equal(args.includes("--extension"), false);
 	assert.equal(args.includes("-e"), false);
+	assert.equal(buildChildArgs({ ...base, extensions: true }).includes("--no-extensions"), false);
+	assert.equal(buildChildArgs({ ...base, tools: ["*"] })[args.indexOf("--tools") + 1], "*");
+	const noTools = buildChildArgs({ ...base, tools: [] });
+	assert.ok(noTools.includes("--no-tools"));
+	assert.ok(noTools.includes("--no-mcp"));
 });
 
 test("child env marks nest", () => {

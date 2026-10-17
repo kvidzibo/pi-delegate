@@ -1,4 +1,4 @@
-import { KINDS, type Kind } from "./config.ts";
+import { ROLE_NAME, type Kind } from "./config.ts";
 
 export type ActivityMark = "→" | "✓" | "✗" | "…";
 
@@ -27,7 +27,7 @@ export function aliasForModel(model: string | undefined): string {
 }
 
 export function knownKind(value: unknown): Kind | undefined {
-	if (typeof value === "string" && (KINDS as readonly string[]).includes(value)) return value as Kind;
+	if (typeof value === "string" && ROLE_NAME.test(value)) return value;
 	return undefined;
 }
 

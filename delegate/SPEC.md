@@ -1,10 +1,10 @@
 # delegate — implementation contract
 
-The Pi extension has one routing tool. Four named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
+The Pi extension has one routing tool. Config-defined named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
 
 ## Goal
 
-One routing tool. Four named agents. Child model is config (any Pi model id). No nesting.
+One routing tool. Config-defined named agents with four shipped starters. Child model is config (any Pi model id). No nesting.
 
 Background spawn returns `jobId` immediately. Local/GPU children share `maxLocalConcurrent` (queue, do not overlap). Hosted children use `maxConcurrent` only. Do not start/stop GPU servers.
 
@@ -15,13 +15,12 @@ delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts dock.ts panel.ts tg.ts jobs.ts notify.ts
   archive.ts usage.ts accounting.ts stats.ts calibration.ts capacity.ts capabilities.ts outcomes.ts
-  prompts/{recon,implement,review,oracle}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
 
 Repo root has `package.json` (`pi.extensions: ["./delegate"]`) and a compiled `pi-delegate-mcp` executable. This directory has no package.json. `service.ts` shares acceptance/execution between the extension and MCP host; host consent, UI and shutdown remain separate.
 
-User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine. Each role accepts boolean `enabled` (omitted means true). Disabled roles refuse new launches before archive creation/queue admission, regardless of model overrides. Already accepted jobs and MCP retry identities retain their policy. Model/reasoning saves preserve enablement, tools and context; enablement/context are manual-config-only.
+User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine. Role names match `[a-z][a-z0-9_-]{0,63}`. Each new role requires a nonempty `model` and `prompt`; `thinking` defaults to `off`, `tools` to `["*"]`, and `extensions` to `false`. Prompts live in config, replace the full custom system prompt, and are archived verbatim at admission. Omitted overlay fields inherit the existing role; tool arrays replace. Each role accepts boolean `enabled` (omitted means true). Disabled roles refuse new launches before archive creation/queue admission, regardless of model overrides. Already accepted jobs and MCP retry identities retain their policy. Model/reasoning saves preserve prompts, extension policy, enablement, tools and legacy context. All other role settings are manual-config-only. Schemas, pickers and archives accept custom role names; no fixed role allowlist. The former `docs` name is an ordinary custom role and needs a prompt.
 
 ## Tool
 
@@ -32,7 +31,7 @@ Description must say: named agents, model from config, no nesting.
 | Field | Required | Rules |
 |---|---|---|
 | `task` | spawn | non-empty, max `maxTaskChars` |
-| `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` |
+| `kind` | spawn | configured role name |
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking. |
@@ -122,13 +121,13 @@ Reuse `../child-runtime/` for process/JSONL/truncate.
 Always:
 
 ```
---mode rpc --session <unique-private-run-file> --no-extensions --no-skills --no-prompt-templates
+--mode rpc --session <unique-private-run-file> --no-skills --no-prompt-templates
 --no-context-files --model --thinking --tools --system-prompt
 ```
 
-No role-level startup mode or delegate-added `--offline`. Legacy role `offline` keys are ignored. Pi's inherited `PI_OFFLINE` environment setting is preserved; test harnesses may set it explicitly.
+Add `--no-extensions` unless the role explicitly sets `extensions: true`; opt-in permits normal Pi extension discovery. No role-level offline mode or delegate-added `--offline`. Legacy role `offline` keys are ignored. Pi's inherited `PI_OFFLINE` environment setting is preserved; test harnesses may set it explicitly.
 
-Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Local delegation explicitly loads `child-runtime/lease-guard.ts` for lease-only startup. Hosted delegation has no explicit `--extension`. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
+Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Local delegation explicitly loads `child-runtime/lease-guard.ts` for lease-only startup. Hosted delegation has no explicit `--extension`; extension opt-in changes discovery, not the explicit helper list. The child session must be a newly allocated run archive, never the parent session. Task is an RPC `prompt` on stdin, not argv.
 
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 

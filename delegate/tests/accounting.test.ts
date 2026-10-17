@@ -11,7 +11,7 @@ import type { RunIdentity } from "../archive.ts";
 const identity: RunIdentity = { parentSessionId: "parent-a", toolCallId: "call", kind: "recon", cwd: "/tmp", requestedModel: "local-qwen38/qwen38-q4km", thinking: "off", tools: ["read"] };
 function setup(t: TestContext) {
 	const root = mkdtempSync(join(tmpdir(), "delegate-accounting-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-	const prompt = join(root, "prompt.md"); writeFileSync(prompt, "prompt");
+	const prompt = "prompt";
 	const statuses: Array<string | undefined> = [];
 	const notices: string[] = [];
 	const ui = { setStatus: (key: string, text: string | undefined) => { assert.equal(key, "delegate-usage"); statuses.push(text); }, notify: (text: string) => { notices.push(text); } };

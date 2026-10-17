@@ -93,6 +93,7 @@ export default function probe(pi: ExtensionAPI) {
 		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: {
 			recon: { model: oldModel, thinking: "medium", tools: ["read", "bash"] },
 			implement: { model: "picker-extra/other" },
+			writer: { model: "picker-extra/other", prompt: "Write documents." },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const original = readFileSync(userPath, "utf8");
@@ -131,8 +132,8 @@ export default function probe(pi: ExtensionAPI) {
 					}
 					assert.match(title, /Delegate models/);
 					assert.match(title, /model picker; reasoning follows/);
-					assert.equal(options.length, 4);
-					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
+					assert.equal(options.length, 5);
+					for (const kind of ["recon", "implement", "review", "oracle", "writer"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
 					if (rolePicks === 0) {
 						assert.doesNotMatch(options[0], /unavailable|not in scope/);
 						assert.ok(options.some(option => option.startsWith("implement · picker-extra/other (not in scope)")));
@@ -231,8 +232,7 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(modelPicks, 3, notices.join("\n"));
 			assert.ok(!notices.some(text => text.includes("Saved")), "save feedback stays in the dialog");
 			assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
-				recon: { ...overlay.agents.recon, model: selected, thinking: "max" },
-				implement: overlay.agents.implement,
+				...overlay.agents, recon: { ...overlay.agents.recon, model: selected, thinking: "max" },
 			} });
 			const fresh = await call({ kind: "recon", task: "fresh" });
 			assert.equal(fresh.details.model, selected);
@@ -316,7 +316,7 @@ export default function probe(pi: ExtensionAPI) {
 	});
 	register("delegate-accounting-probe", async (ctx) => {
 		assert.ok(pi.getCommands().some((c) => c.name === "pi-delegate"));
-		const prompt = join(ctx.cwd, "probe-prompt.md"); writeFileSync(prompt, "Probe custom prompt");
+		const prompt = "Probe custom prompt";
 		const archive = new ArchivedRun(archiveRoot(getAgentDir()), {
 			parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 			toolCallId: "probe", kind: "recon", cwd: ctx.cwd, requestedModel: "local-qwen38/qwen38-q4km", thinking: "off", tools: ["read"],

@@ -19,7 +19,6 @@ export function enqueueDelegate(input: {
 	identity: Omit<RunIdentity, "tools" | "capabilities">;
 	agent: AgentConfig;
 	task: string;
-	promptPath: string;
 	timeoutMs: number;
 	background: boolean;
 	config: Pick<DelegateConfig, "hardTimeoutMs" | "maxOutputBytes">;
@@ -35,7 +34,7 @@ export function enqueueDelegate(input: {
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
-	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, input.promptPath);
+	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, agent.prompt);
 	try {
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
@@ -48,7 +47,7 @@ export function enqueueDelegate(input: {
 				childSignal.throwIfAborted();
 				return (input.childRunner ?? runChild)({
 					task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
-					thinking: agent.thinking, tools: [...tools],
+					thinking: agent.thinking, tools: [...tools], extensions: agent.extensions,
 					...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 					hardTimeoutMs: input.config.hardTimeoutMs, maxOutputBytes: input.config.maxOutputBytes,
 					promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
@@ -79,7 +78,6 @@ export interface ServiceOptions {
 	workspace: string;
 	agentDir: string;
 	config: DelegateConfig;
-	promptDir: string;
 	invocation: PiInvocation;
 	leaseGuardPath: string;
 	allowModelOverride?: boolean;
@@ -124,6 +122,8 @@ export class DelegateService {
 		});
 	}
 
+	roleNames(): string[] { return Object.keys(this.config.agents); }
+
 	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string }): { job: JobReceipt; reused: boolean } {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
 		assertNotNested(this.options.env ?? process.env);
@@ -149,7 +149,7 @@ export class DelegateService {
 			identity: { parentSessionId: this.ownerId, toolCallId: randomUUID(), kind, cwd,
 				requestedModel: resolved.model, thinking: resolved.agent.thinking,
 				savingsUnavailable: "MCP does not load the parent pricing registry/calibration estimates." },
-			agent: resolved.agent, task, promptPath: join(this.options.promptDir, `${kind}.md`),
+			agent: resolved.agent, task,
 			timeoutMs: this.config.defaultTimeoutMs, background: true, config: this.config,
 			env: this.options.env, invocation: this.options.invocation, leaseGuardPath: this.options.leaseGuardPath,
 			childRunner: this.options.childRunner,

@@ -18,7 +18,7 @@ async function wrappedResult(): Promise<ChildResult> {
 	let control!: ChildControl;
 	const pending = runMockPiChild({ cwd: process.cwd(), model: "xai/grok-4.6", task: "mock wrap",
 		hardTimeoutMs: 0, maxOutputBytes: 220, env: {}, buildArgs: () => [], spawnFn: () => proc,
-		promptSourcePath: fileURLToPath(new URL("../../delegate/prompts/review.md", import.meta.url)),
+		promptSourcePath: fileURLToPath(new URL("../../delegate/config.json", import.meta.url)),
 		onControl: next => { control = next; },
 	});
 	const emit = (message: object) => proc.stdout!.write(encodeRpc({ type: "message_end", message }));
