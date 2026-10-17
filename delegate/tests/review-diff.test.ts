@@ -14,7 +14,7 @@ import { savings } from "./calibration-fixtures.ts";
 
 const delegateDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
-test("review dispatch supplies the complete private Git diff without bash and fails closed on capture errors", { timeout: 20000 }, async () => {
+test("opted-in review dispatch supplies the complete private Git diff without bash and fails closed on capture errors", { timeout: 20000 }, async () => {
 	const temp = mkdtempSync(join(tmpdir(), "delegate-review-diff-"));
 	const repo = join(temp, "repo"), agentDir = join(temp, "agent");
 	mkdirSync(repo); mkdirSync(join(repo, "sub"));
@@ -36,7 +36,7 @@ test("review dispatch supplies the complete private Git diff without bash and fa
 	symlinkSync("ignored.txt", join(repo, "link"));
 	chmodSync(join(repo, "tracked.txt"), 0o755);
 	const config = mergeDelegateConfig(loadDelegateConfig({ shippedPath: join(delegateDir, "config.json") }), {
-		maxConcurrent: 1, agents: { implement: { enabled: false }, review: { model: "test/review" }, oracle: { model: "test/oracle" } },
+		maxConcurrent: 1, agents: { implement: { enabled: false }, review: { model: "test/review", context: ["git-diff"] }, oracle: { model: "test/oracle" } },
 	}, "test");
 	let release!: () => void;
 	const launched: { task: string; tools: string[]; cwd?: string }[] = [];
@@ -159,7 +159,7 @@ test("dispatch rechecks host authorization after asynchronous review preparation
 	let authorized = true, launched = false, checked = false;
 	try {
 		const job = enqueueDelegate({
-			scheduler, accounting, agent: config.agents.review, config,
+			scheduler, accounting, agent: { ...config.agents.review, context: ["git-diff"] }, config,
 			identity: { parentSessionId: "policy", toolCallId: "policy", kind: "review", cwd: temp, requestedModel: "test/review", thinking: "off", savings: savings() },
 			task: "Review", promptPath: join(delegateDir, "prompts/review.md"), timeoutMs: 10000, background: true,
 			beforeRun: () => { assert.ok(authorized); queueMicrotask(() => { authorized = false; }); },

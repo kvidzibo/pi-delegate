@@ -48,7 +48,7 @@ Roles can request parent-prepared context separately from their tools:
 }
 ```
 
-`git-diff` is the only provider. Shipped defaults enable it for `review`; other roles default to `[]`. Any role may opt in. Set `"context": []` on a role to disable all context preparation, including Git discovery. Omitted settings inherit the shipped role default; unknown names or invalid lists refuse configuration loading, and duplicate names execute once. This is manual configuration, not a model-picker/operator-settings control.
+`git-diff` is the only provider. All roles default to `[]`: tasks are dispatched without prepared context or Git discovery. Supply a readable diff or file paths and review scope for review tasks; the reviewer has no shell by default. Any role may explicitly opt in as shown above. Set `"context": []` to disable preparation, including an existing user override. Omitted settings inherit the shipped role default; unknown names or invalid lists refuse configuration loading, and duplicate names execute once. This is manual configuration, not a model-picker/operator-settings control.
 
 Both hosts freeze the selected providers at acceptance and run them after queue waits, before child dispatch. Providers attach artifact paths/instructions to the archived task and use the parent’s permissions; they do not grant tools to the child. Include a file reader such as `read` in the role’s tools to inspect artifacts. Providers are built-in code, not arbitrary shell commands from configuration. Existing calibration profiles do not cover added context, so jobs with context providers do not use legacy savings estimates.
 

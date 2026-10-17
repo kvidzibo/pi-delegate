@@ -13,8 +13,7 @@ const shipped = () => loadDelegateConfig({ shippedPath: join(delegateDir, "confi
 
 test("context lists inherit, replace, deduplicate and validate independently of role/model/tools", () => {
 	const base = shipped();
-	assert.deepEqual(base.agents.review.context, ["git-diff"]);
-	assert.deepEqual(base.agents.recon.context, []);
+	for (const agent of Object.values(base.agents)) assert.deepEqual(agent.context, []);
 	const config = mergeDelegateConfig(base, { agents: {
 		review: { context: [] }, recon: { context: ["git-diff", "git-diff"] },
 	} }, "overlay");
@@ -34,7 +33,7 @@ test("shared dispatch routes configured context on any role and freezes accepted
 	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, encoding: "utf8" });
 	git("init", "-qb", "main"); git("commit", "--allow-empty", "-qm", "base");
 	const config = mergeDelegateConfig(shipped(), { maxConcurrent: 1, agents: {
-		review: { context: [], model: "test/review" }, recon: { context: ["git-diff"], tools: ["read"], model: "test/recon" }, oracle: { model: "test/oracle" },
+		review: { model: "test/review" }, recon: { context: ["git-diff"], tools: ["read"], model: "test/recon" }, oracle: { model: "test/oracle" },
 	} }, "test");
 	let release!: () => void;
 	const dispatched = new Map<string, { task: string; tools: string[] }>();

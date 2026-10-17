@@ -24,7 +24,6 @@
       "thinking": "low"
     },
     "review": {
-      "context": ["git-diff"],
       "model": "openai-codex/gpt-6.1-sol",
       "tools": ["read", "grep", "find", "ls"],
       "thinking": "medium"

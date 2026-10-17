@@ -71,7 +71,7 @@ export default function probe(pi: ExtensionAPI) {
 		git("-c", "user.name=Test", "-c", "user.email=test@invalid", "commit", "-qm", "base");
 		const repo = (await repositoryFor(repoPath))!;
 		const userPath = join(getAgentDir(), "delegate.json"), previousSkip = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
-		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: { [repo.configKey]: true } } }));
+		writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, agents: { review: { context: ["git-diff"] } }, snapshots: { directory: storage, defaultEnabled: true, repositories: { [repo.configKey]: true } } }));
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
 		let tool: any, release!: () => void, auditRelease: (() => void) | undefined, launches = 0, sequence = 0, failNotice = false, noticeThrows = 0, consent = false;
@@ -133,7 +133,7 @@ export default function probe(pi: ExtensionAPI) {
 			assert.equal(notices.length, 1, "settings changes must not repeat startup output");
 			// Global enablement in an unknown repository offers consent instead of capturing.
 			await handlers.get("session_shutdown")!();
-			writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
+			writeFileSync(userPath, JSON.stringify({ maxConcurrent: 1, agents: { review: { context: ["git-diff"] } }, snapshots: { directory: storage, defaultEnabled: true, repositories: {} } }));
 			delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand: (name: string, next: any) => commands.set(name, next),
 				registerMessageRenderer() {}, on: (name: string, handler: Function) => handlers.set(name, handler), sendMessage() {},
 				sendUserMessage: (message: string) => auditMessages.push(message),
