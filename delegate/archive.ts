@@ -18,7 +18,7 @@ export type RunRecord = {
 	parentSessionFile?: string;
 	toolCallId: string;
 	jobId?: string;
-	kind: Kind | "docs"; // Historical runs remain readable after role retirement.
+	kind: Kind;
 	cwd: string;
 	requestedModel: string;
 	actualModel?: string;

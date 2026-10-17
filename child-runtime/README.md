@@ -12,7 +12,7 @@ Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract
 
 ## Local-worker capacity
 
-`resourceLease` accepts a borrowed Linux descriptor from the [shared-capacity broker](../delegate/capacity.ts) and requires an explicit `leaseStartupMs`. Before sending the task, lease-only startup verifies the child's inherited descriptor. It does not replace tools or change steering/runtime deadlines. Local delegation uses a 15-second startup deadline. The scheduler releases capacity after process closure; the runtime never closes the borrowed parent descriptor. This coordinates participating processes, not unrelated GPU work or server-side requests.
+`resourceLease` accepts a borrowed Linux descriptor from the [shared-capacity broker](../delegate/capacity.ts) and requires an explicit `leaseStartupMs`. Before sending the task, lease-only startup verifies the child's inherited descriptor. It preserves the caller's extension-discovery flags, does not replace tools, and does not change steering/runtime deadlines. The private lease helper is always loaded explicitly. Local delegation uses a 15-second startup deadline. The scheduler releases capacity after process closure; the runtime never closes the borrowed parent descriptor. This coordinates participating processes, not unrelated GPU work or server-side requests.
 
 Execution/headroom guard APIs are retired. Both runtime entry points refuse stale `execution` options rather than silently launch without the requested policy. Wrap remains advisory steering. Read-only finalization/headroom metadata schemas remain for existing archives and custom-runner results; historical guarded metadata still excludes incompatible savings estimates.
 

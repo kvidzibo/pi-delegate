@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import { FileCapacityBroker } from "../../delegate/capacity.ts";
+import { buildChildArgs } from "../../delegate/spawn.ts";
 import { validateLeaseIdentity, sameLease, readLeaseIdentity } from "../lease.ts";
 import { LEASE_ENV, LEASE_NOTICE } from "../lease-startup.ts";
 import { encodeRpc, type RunPiChildInput } from "../spawn.ts";
@@ -13,14 +14,14 @@ function fixture(t: TestContext) {
 	const root = mkdtempSync("/tmp/pi-delegate-lease-runtime-");
 	const lease = new FileCapacityBroker(root).tryAcquire({ key: "runtime-test", capacity: 1 })!;
 	t.after(() => { lease.release(); rmSync(root, { recursive: true, force: true }); });
-	const proc = mockChild(); let options: any;
+	const proc = mockChild(); let options: any, args: readonly string[] = [];
 	const input: RunPiChildInput = { cwd: root, model: "test/model", task: "must wait for lease acknowledgement", hardTimeoutMs: 0,
 		maxOutputBytes: 1000, env: {}, buildArgs: () => [], resourceLease: lease.inherited,
 		promptSourcePath: fileURLToPath(new URL("../../delegate/config.json", import.meta.url)),
 		leaseStartupMs: 1000,
-		spawnFn: (_command, _args, value) => { options = value; return proc; },
+		spawnFn: (_command, argv, value) => { args = argv; options = value; return proc; },
 	};
-	return { input, proc, lease, options: () => options };
+	return { input, proc, lease, options: () => options, args: () => args };
 }
 
 test("lease identities reject malformed values and reserve fd 3+ for non-stdio files", linux, () => {
@@ -30,28 +31,35 @@ test("lease identities reject malformed values and reserve fd 3+ for non-stdio f
 	for (const fd of [0, 1, 2, -1, 1.5, NaN]) assert.throws(() => readLeaseIdentity(fd), /descriptor/);
 });
 
-test("leased child startup inherits the descriptor and requires its correlated acknowledgement", linux, async t => {
-	const f = fixture(t), pending = runMockPiChild(f.input);
-	try {
-		const options = f.options(); assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe", f.lease.inherited.fd]);
-		const config = JSON.parse(options.env[LEASE_ENV]);
-		assert.deepEqual(config.lease, { dev: f.lease.inherited.dev, ino: f.lease.inherited.ino });
-		assert.equal(f.proc.stdinBytes, "");
-		f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
-			type: LEASE_NOTICE, nonce: "another-child-nonce", version: 1, lease: config.lease,
-		}) }));
-		await Promise.resolve();
-		assert.equal(f.proc.stdinBytes, "", "another child's receipt cannot release the task");
-		f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
-			type: LEASE_NOTICE, nonce: config.nonce, version: 1, lease: config.lease,
-		}) }));
-		for (let i = 0; i < 20 && !f.proc.stdinBytes.includes('"id":"p1"'); i++) await Promise.resolve();
-		assert.ok(f.proc.stdinBytes.includes('"id":"p1"'));
-		f.proc.stdout!.write(encodeRpc({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] } }));
-		f.proc.stdout!.write(encodeRpc({ type: "agent_settled" }));
-		assert.equal((await pending).stopReason, "stop");
-		assert.doesNotThrow(() => readLeaseIdentity(f.lease.inherited.fd), "runtime must not close the scheduler's borrowed descriptor");
-	} finally { f.proc.close(1); await pending; }
+test("leased child startup preserves extension policy and requires its correlated acknowledgement", linux, async t => {
+	for (const extensions of [false, true]) {
+		const f = fixture(t), pending = runMockPiChild({ ...f.input,
+			buildArgs: promptPath => buildChildArgs({ model: f.input.model, thinking: "off", tools: ["*"], extensions,
+				promptPath, sessionFile: `${f.input.cwd}/session.jsonl` }),
+		});
+		try {
+			assert.equal(f.args().includes("--no-extensions"), !extensions);
+			assert.ok(f.args().includes("--extension"), "lease helper must load even when discovery is disabled");
+			const options = f.options(); assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe", f.lease.inherited.fd]);
+			const config = JSON.parse(options.env[LEASE_ENV]);
+			assert.deepEqual(config.lease, { dev: f.lease.inherited.dev, ino: f.lease.inherited.ino });
+			assert.equal(f.proc.stdinBytes, "");
+			f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
+				type: LEASE_NOTICE, nonce: "another-child-nonce", version: 1, lease: config.lease,
+			}) }));
+			await Promise.resolve();
+			assert.equal(f.proc.stdinBytes, "", "another child's receipt cannot release the task");
+			f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
+				type: LEASE_NOTICE, nonce: config.nonce, version: 1, lease: config.lease,
+			}) }));
+			for (let i = 0; i < 20 && !f.proc.stdinBytes.includes('"id":"p1"'); i++) await Promise.resolve();
+			assert.ok(f.proc.stdinBytes.includes('"id":"p1"'));
+			f.proc.stdout!.write(encodeRpc({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] } }));
+			f.proc.stdout!.write(encodeRpc({ type: "agent_settled" }));
+			assert.equal((await pending).stopReason, "stop");
+			assert.doesNotThrow(() => readLeaseIdentity(f.lease.inherited.fd), "runtime must not close the scheduler's borrowed descriptor");
+		} finally { f.proc.close(1); await pending; }
+	}
 });
 
 for (const acknowledgement of ["missing", "wrong"] as const) {

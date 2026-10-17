@@ -336,7 +336,6 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 	if (leaseConfig) {
-		if (!args.includes("--no-extensions")) args.push("--no-extensions");
 		args.push("--extension", input.leaseGuardPath ?? fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
 		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
 	}
