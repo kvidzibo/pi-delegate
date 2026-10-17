@@ -39,7 +39,7 @@ Description must say: named agents, model from config, no nesting.
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking. |
 | `background` | no | `true` = return `jobId` now; child keeps running until completion or cancellation, including parent-run interruption. Interactive mode may later inject a short completion notice |
 | `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with `background`. Terminal collect suppresses the notice |
-| `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
+| `wrap` | no | refused for `docs`; otherwise with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
 | `cancel` | no | with `jobId`: abort + kill. Idempotent if already terminal |
 | `auditId` + `auditResult` | audit report | matching user-approved snapshot safety audit; mutually exclusive with child/job controls; never spawns |
 
@@ -115,7 +115,7 @@ Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with expl
 
 ## Automatic review diffs
 
-Roles accept a `context` array of built-in provider names; currently only `git-diff` is supported. Missing fields inherit shipped defaults: `review` selects `["git-diff"]`, other roles select `[]`. Arrays replace defaults, duplicates execute once, invalid values refuse loading. Empty context bypasses Git discovery entirely. Freeze provider arrays at acceptance; model overrides keep them, settings updates affect future jobs only, and retries never recapture. The shared context dispatcher uses the configured list, never a role-name check; providers cannot grant child tools or execute arbitrary configured commands. Do not apply legacy savings calibrations to context-enriched tasks.
+Roles accept a `context` array of `git-diff` names or full-file provider objects. Missing fields inherit shipped defaults: `review` selects `["git-diff"]`, `docs` selects full files, other roles select `[]`. Arrays replace defaults, duplicate names execute once, invalid values refuse loading. At most one full-file provider is allowed; `docs` requires one and no diff. Empty context on other roles bypasses Git discovery entirely. Deep-copy provider configuration at acceptance; model overrides keep them, settings updates affect future jobs only, and retries never recapture. The shared context dispatcher uses the configured list, never a role-name check; providers cannot grant child tools or execute arbitrary configured commands. Do not apply legacy savings calibrations to context-enriched tasks.
 
 Review defaults to `read`, `grep`, `find`, `ls`, without bash. At dispatch, for any role selecting `git-diff`, the shared context dispatcher prepares a private `review.diff` in the run archive and appends its path, root, base/HEAD and coverage to the dispatched/archived task. Capture net working-tree changes against the HEAD/main-or-master merge base plus Git-discovered nonignored untracked files across the entire checkout, even from subdirectories. Git-invisible filesystem entries (e.g. FIFOs/sockets) are outside this Git-diff scope, not grounds for claiming a complete filesystem snapshot. Prefer local main, local master, origin/main, origin/master; disable lazy fetching and deny every Git transport so older Git also fails closed on missing partial-clone objects. Include binary patches, symlink targets and Gitlink commit changes, not dirty/untracked submodule files or recursive contents. Never invoke submodule status, which can execute submodule-local filters. Revalidate host audit/snapshot authorization after diff preparation, immediately before invoking the child. No eval snapshot permission is implied or required.
 
@@ -139,6 +139,9 @@ Never `-p`, `--no-session`, `--continue`, `--fork`, `--append-system-prompt`. Lo
 Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (cancel). After `agent_settled`, close stdin so RPC exits. Dialog `extension_ui_request` → `cancelled: true`.
 
 Correlated rejection of the initial RPC prompt (`id: p1`, `success: false`) is a terminal error: preserve its message, close stdin, terminate the child, and release the slot. Unrelated responses do not terminate the run. Keep the first terminal cause when errors, timeout, or abort race.
+
+An empty configured tool list uses `--no-tools --no-mcp`, never an empty
+`--tools` argument that might inherit defaults.
 
 Preserve the last assistant message's provider error separately from its text and return the error before any partial answer. A successful retry replaces earlier errors. Model token-limit termination (`stopReason: "length"`) is a failure with an explicit incomplete-answer explanation, including thinking-only/empty answers. The explanation precedes partial text and is subject to the normal output cap. A natural completion shortened only by `maxOutputBytes` remains successful.
 
@@ -170,7 +173,8 @@ Capture tracked/nonignored-untracked source, executable modes, symlink targets, 
 The generic provider uses caller-pinned revisions and configurable path globs;
 worktree selection includes local edits/untracked files. Preserve captured hashes
 and archive context privately. Reject unsupported/unstable sources and size
-limits rather than truncate. No model call for an empty file set.
+limits rather than truncate. No model call for an empty file set. Refuse `docs`
+wrap requests before steering: generic wrapped-report formatting is not JSON.
 
 Accept only completed strict JSON replacements for unique captured paths, with
 summary/concerns arrays. Reject malformed, out-of-scope, blanking and stale-source

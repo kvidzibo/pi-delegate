@@ -99,7 +99,8 @@ Omit `jobId` to list this server's jobs, 20 per page. Pass the returned numeric 
 { "jobId": "<returned UUID>", "action": "cancel" }
 ```
 
-Actions: `wrap` or `cancel`. Wrap is advisory and does not interrupt a running tool; **wrapping a queued job cancels it**. Cancel requests worker termination, but receipts remain nonterminal until cleanup releases capacity. Repeated controls do not restart work.
+Actions: `wrap` or `cancel`. `docs` rejects wrap requests; wait or cancel instead.
+For other roles, wrap is advisory and does not interrupt a running tool; **wrapping a queued job cancels it**. Cancel requests worker termination, but receipts remain nonterminal until cleanup releases capacity. Repeated controls do not restart work.
 
 ### Results
 

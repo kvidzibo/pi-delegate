@@ -430,6 +430,7 @@ export class JobScheduler {
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
 		if (this.terminal(job) || job.controller.signal.aborted) return this.snapshot(job);
+		if (job.kind === "docs") throw new Error("Docs jobs do not support wrap; wait or cancel instead.");
 		if (job.status === "queued") {
 			this.cancel(id);
 			return this.get(id);

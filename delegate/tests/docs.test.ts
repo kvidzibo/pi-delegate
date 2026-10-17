@@ -63,7 +63,9 @@ test("docs injects complete selected files with no tools/diff, validates proposa
 	try {
 		assert.throws(() => service.start({ kind: "docs", task: "Polish docs", requestId: "no-base" }), /full base commit SHA/);
 		const started = service.start({ kind: "docs", task: "Polish docs", requestId: "docs-1", base, head }).job;
+		assert.throws(() => service.control(started.jobId, "wrap"), /Docs jobs do not support wrap/);
 		const done = (await service.status(started.jobId, 10000)).job;
+		assert.equal(done.wrapped, undefined, "unsupported steering never marks the JSON editor as wrapped");
 		assert.equal(done.status, "done", done.answer);
 		const archive = dirname(started.archive.sessionFile);
 		const bundle: FileBundle = JSON.parse(readFileSync(join(archive, "files-context.json"), "utf8"));
@@ -109,5 +111,8 @@ test("docs injects complete selected files with no tools/diff, validates proposa
 		rmSync(join(repo, "link.md"));
 		writeFileSync(join(repo, "binary.md"), Buffer.from([0, 1]));
 		await assert.rejects(capture(), /binary/);
+		git("replace", head, base);
+		const immutable = await prepareFullFiles({ cwd: repo, archiveDir: mkdtempSync(join(temp, "immutable-")), signal: new AbortController().signal, base, head, spec });
+		assert.deepEqual(immutable.bundle.files.map(f => f.path), ["README.md", "guide with spaces.md"], "pinned Git contents ignore replacement refs");
 	} finally { await service.shutdown(); rmSync(temp, { recursive: true, force: true }); }
 });

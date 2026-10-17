@@ -439,7 +439,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"delegate timeoutMs is a wait budget, never a kill. Foreground expiry auto-backgrounds and returns a short check-in.",
 			"With delegate jobId, omit timeoutMs to wait until done or 60s quiet; timeoutMs:0 peeks.",
 			"On a nonterminal delegate check-in, inspect current/recent tools and quietForMs. Wait while useful progress continues; silence or wait expiry alone does not prove a stall.",
-			"For a suspected delegate stall, request wrap:true once, then wait again in a separate call; allow the current turn/tools and final report time to finish.",
+			"For a suspected delegate stall (except docs, which rejects wraps), request wrap:true once, then wait again in a separate call; allow the current turn/tools and final report time to finish.",
 			"Before delegate cancel:true for a suspected stall, fetch and inspect a fresh jobId/timeoutMs:0 snapshot in a separate call. Cancel only if post-wrap checks still show a stall; explicit user stop or unsafe/out-of-scope work may cancel immediately.",
 			"delegate wrap:true is advisory steering, not an interrupt or delivery acknowledgement. cancel:true aborts and kills.",
 			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",

@@ -15,7 +15,8 @@ Omit `head` to include dispatch-time local changes: committed branch changes,
 staged/unstaged edits and non-ignored untracked files relative to `base`. The
 Pi extension's `delegate` tool accepts the same `base`/`head` fields.
 
-Collect the terminal result before applying anything. Empty selections complete
+Wait for the terminal result or cancel the job; `docs` rejects wrap requests to
+preserve its single structured response. Collect before applying anything. Empty selections complete
 without a model call. Related unchanged documents are not injected; cross-file
 checks cover only the selected set.
 
