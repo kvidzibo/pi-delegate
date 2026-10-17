@@ -97,6 +97,7 @@ export class DelegateService {
 	private readonly jobs = new Map<string, { internalId: string; cwd: string; finishedAt?: number }>();
 	private closing?: Promise<void>;
 	private closed = false;
+	private readonly roleObservers = new Set<() => void>();
 	private readonly observers = new Set<() => void>();
 	private readonly options: ServiceOptions;
 
@@ -123,6 +124,11 @@ export class DelegateService {
 	}
 
 	roleNames(): string[] { return Object.keys(this.config.agents); }
+
+	onRolesChanged(listener: () => void): () => void {
+		this.roleObservers.add(listener);
+		return () => { this.roleObservers.delete(listener); };
+	}
 
 	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string }): { job: JobReceipt; reused: boolean } {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
@@ -248,12 +254,18 @@ export class DelegateService {
 	/** Trusted host settings only; queued/running workers retain their acceptance-time configuration. */
 	updateRoleSettings(agents: DelegateConfig["agents"]): void {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
+		const previousNames = this.roleNames().join("\n");
 		this.config.agents = Object.fromEntries(Object.entries(agents).map(([kind, agent]) =>
 			[kind, { ...agent, tools: [...agent.tools] }])) as DelegateConfig["agents"];
+		if (this.roleNames().join("\n") !== previousNames) {
+			for (const listener of this.roleObservers) {
+				try { listener(); } catch { /* Schema observers cannot affect persistence. */ }
+			}
+		}
 	}
 
 	shutdown(): Promise<void> {
 		this.closed = true;
-		return this.closing ??= this.scheduler.shutdown().finally(() => { this.observers.clear(); this.accounting.close(); });
+		return this.closing ??= this.scheduler.shutdown().finally(() => { this.observers.clear(); this.roleObservers.clear(); this.accounting.close(); });
 	}
 }

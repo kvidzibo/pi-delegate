@@ -36,7 +36,7 @@ For a checkout, set `command` to your Node executable and prepend `/absolute/pat
 
 ### Configuration
 
-Role definitions, prompts, enablement (`agents.<role>.enabled`, default `true`), models, tools, extensions, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI change role models and reasoning without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
+Role definitions, prompts, enablement (`agents.<role>.enabled`, default `true`), models, tools, extensions, reasoning and queue/runtime limits use the existing [delegate configuration](../delegate/README.md#configuration): shipped defaults plus `~/.pi/agent/delegate.json`. There is no built-in MCP model picker or model-callable configuration-writing tool. An opt-in [operator settings extension](#operator-settings-extension) lets a trusted UI edit roles and add new ones without restarting. Manual configuration edits still require a restart; this cancels outstanding jobs.
 
 Options:
 
@@ -51,7 +51,7 @@ Options:
 
 Directory/config options resolve relative to the launch directory; use absolute paths in client configuration. Keep the same agent directory across participating clients to retain shared local-worker coordination. Changing it creates a separate capacity namespace and model/credential setup.
 
-Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review remains read-only by prompt policy. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role definitions, prompts, enablement, tools and extension policy are manual configuration settings, not writable through the operator API.
+Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review remains read-only by prompt policy. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. The private operator API can edit role definitions, including prompts, enablement, tools and extension discovery.
 
 ## Tools
 
@@ -147,11 +147,12 @@ When enabled, discovery advertises `com.kvidzibo/settings` in `capabilities.exte
   "getMethod": "kvidzibo/settings/get",
   "updateMethod": "kvidzibo/settings/update",
   "authorization": "token",
-  "audience": "operator"
+  "audience": "operator",
+  "title": "Roles"
 }
 ```
 
-Neither method appears in `tools/list`, and `tools/call` cannot invoke them. **The gateway must not publish a generic custom-RPC forwarding tool or expose the token to the agent.** Its trusted UI route sends these JSON-RPC requests directly to its existing child connection. Missing/wrong authorization is rejected before reading the catalogue.
+The optional `title` names the trusted UI action. Neither method appears in `tools/list`, and `tools/call` cannot invoke them. **The gateway must not publish a generic custom-RPC forwarding tool or expose the token to the agent.** Its trusted UI route sends these JSON-RPC requests directly to its existing child connection. Missing/wrong authorization is rejected before reading the catalogue.
 
 ### Read settings
 
@@ -162,13 +163,13 @@ Call `kvidzibo/settings/get` with `{ "token": "<private operator token>" }`. The
 | `schemaVersion`, `title` | Contract version (1) and display name |
 | `revision` | Opaque configuration revision for optimistic updates |
 | `schema` | JSON Schema 2020-12 with titles, descriptions, defaults, model choices and read-only hints |
-| `values.agents` | Active per-role `model` and `thinking` values |
+| `values.agents` | Active per-role `enabled` (boolean), `model`, `thinking`, `tools` (string array), `extensions` (boolean), and `prompt` |
 | `sources.agents` | `user` or `default` for each returned value |
 | `models` | Sanitized model IDs, labels, availability, supported `thinking` levels and `local` classification |
 | `writable`, `conflict`, `warning` | Persistence/catalogue availability and external-edit conflicts |
 | `applyTo` | `future-jobs`: accepted running/queued jobs retain their policy |
 
-The catalogue belongs to the **server’s configured Pi installation and agent directory**, not the parent Pi session. It loads configured chat models and credential availability without model calls or network catalogue discovery. It does not load extensions or return credentials, endpoints, prompts, tools or storage paths. Model availability is configuration presence, not proof that credentials or endpoints work. Unsupported installations, wrappers without a matching `--pi-package-dir`, or catalogue errors produce a generic warning and disable editing; delegation remains usable.
+The catalogue belongs to the **server’s configured Pi installation and agent directory**, not the parent Pi session. It loads configured chat models and credential availability without model calls or network catalogue discovery. The catalogue does not load extensions or return credentials, endpoints or storage paths. Role prompts and configured tool names are included only in the private operator response; never forward this response into model context. Model availability is configuration presence, not proof that credentials or endpoints work. Unsupported installations, wrappers without a matching `--pi-package-dir`, or catalogue errors produce a generic warning and disable editing; delegation remains usable.
 
 The UI uses JSON Schema for basic controls, `models[].available` to disable unavailable selections and `models[].thinking` for dependent reasoning choices. Current unavailable models remain visible; no fallback or reasoning clamp is chosen automatically.
 
@@ -188,11 +189,13 @@ After showing the exact changes and receiving human confirmation, call `kvidzibo
 }
 ```
 
-Only nonempty role `model`/`thinking` patches are accepted. The resulting model must be available and its reasoning supported. A model change that makes existing reasoning invalid must include a supported reasoning value. Local and hosted selections follow the same save flow; no offline acknowledgement is required. Legacy `confirmOfflineChange` booleans are accepted but ignored. Clients must read the returned schema rather than assume a fixed role field list; the version-1 envelope and model/reasoning patch contract are unchanged.
+Only nonempty strict role patches containing `enabled`, `model`, `thinking`, `tools`, `extensions` and/or `prompt` are accepted. Unknown fields, invalid names (including prototype keys), blank prompts/tool names and duplicate tools are rejected. The resulting model must be available and its reasoning supported. A model change that makes existing reasoning invalid must include a supported reasoning value. Local and hosted selections follow the same save flow; no offline acknowledgement is required. Legacy `confirmOfflineChange` booleans are accepted but ignored. Clients must read the returned schema rather than assume a fixed role field list; existing model/reasoning patches and the version-1 envelope remain supported.
+
+The document title and agents schema title are `Roles`. Existing role schemas remain in `agents.properties` and their names in `agents.required`; `agents.additionalProperties` is a complete reusable schema for Add role, with `propertyNames.pattern` defining role-name syntax. Each role has model choices, reasoning levels, enablement, unique tool toggles (Pi builtins plus all configured custom names), extension access and a nonblank multiline prompt. New roles require an explicit available model and nonblank prompt. They default to `enabled: true`, `thinking: "off"`, `tools: []`, `extensions: false`; the UI should stage these values explicitly (the empty prompt schema default is only a draft placeholder). `extensions: true` enables normal installed/configured extension discovery, including MCP—not a sandbox or per-extension allowlist. An empty tool list disables tools and MCP in the worker. New roles are immediately launchable and refresh `tools/list` kind choices with a `notifications/tools/list_changed` notification.
 
 The server validates all roles before atomically replacing the configured user overlay, preserving unrelated keys and existing symlinks/modes. It applies the new role policy to future launches immediately; retries and already accepted jobs remain unchanged. The update returns the same description shape as `get`, with the new revision. An uncertain update can be resolved by reading current settings; do not blindly repeat a stale patch.
 
-Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown application fields and direct `offline`/tool/permission writes are rejected. Standard request `_meta` (progress/tracing metadata) is accepted but cannot grant settings authorization. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
+Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown application fields and direct `offline` writes are rejected. Standard request `_meta` (progress/tracing metadata) is accepted but cannot grant settings authorization. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
 
 External file edits are detected but not silently adopted. A conflict requires collecting/cancelling work before restarting. Concurrent settings writers sharing the canonical overlay use a short-lived `.settings-lock` directory; a leftover lock after a crash fails closed. Remove it only after confirming no settings writer is active. Legacy manual/extension writers do not participate in that lock: avoid simultaneous writes.
 
@@ -214,7 +217,7 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
 - Review defaults to `read`, `grep`, `find`, `ls` and `bash`, without `write`/`edit` tools. Read-only roles rely on prompt policy; shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable context files, skills and prompt templates. Extension discovery is disabled unless the role sets `extensions: true`; local runs also load the private lease helper.
-- No tool can change role configuration. The optional operator-only RPC extension changes only role models/reasoning.
+- No tool can change role configuration. The optional operator-only RPC extension edits roles through the trusted UI only.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.
 
 ## Validation
