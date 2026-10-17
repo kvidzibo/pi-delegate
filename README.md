@@ -12,7 +12,6 @@ One child per call; no nested delegation. Roles can be disabled with `agents.<ro
 | `implement` | Make bounded edits and run tests |
 | `review` | Review without shell/edit tools; automatic Git diff |
 | `oracle` | Last-resort analysis without editing |
-| `docs` | Edit complete documents together; no tools, returns proposals only |
 
 ## MCP setup
 
@@ -60,10 +59,6 @@ The parent can wait, peek, request wrap-up or cancel using the returned job ID. 
 
 Completed results expose `durationMs` and readable `Duration` (for example, `4m 36s`). Timing matches the run's archived `metadata.json`, excludes queue wait, and is zero if cancelled before starting. Use archived timing when a result is unavailable; use “Unknown” only when timing cannot be recovered.
 
-For documentation cleanup, use `docs` with the exact base commit SHA and an
-optional head SHA. It receives complete changed Markdown files, not a diff, and
-proposes replacements without writing them. See [documentation editing](docs/documentation-editor.md).
-
 Check receipts freeze elapsed runtime (or queue time) and the interval since the previous returned check; the first check omits the interval.
 
 See [configuration and job controls](delegate/README.md) for manual settings and tool arguments.
@@ -71,7 +66,7 @@ See [configuration and job controls](delegate/README.md) for manual settings and
 ## Important constraints
 
 - Shared local capacity requires Linux and `/usr/bin/flock`. All local providers share one slot per agent directory; hosted jobs bypass it. Reload older sessions to participate.
-- **No sandbox.** Children have your system permissions; shipped roles other than `review` and `docs` include shell access. `docs` has no tools; `review` defaults to `read`, `grep`, `find`, `ls`; other read-only roles rely on prompt policy, not write protection. Delegation leaves Pi's `PI_OFFLINE` environment setting unchanged; legacy role `offline` keys are ignored. Without `PI_OFFLINE=1`, startup may perform automatic networking. It is not network isolation.
+- **No sandbox.** Children have your system permissions; shipped roles other than `review` include shell access. `review` defaults to `read`, `grep`, `find`, `ls`; other read-only roles rely on prompt policy, not write protection. Delegation leaves Pi's `PI_OFFLINE` environment setting unchanged; legacy role `offline` keys are ignored. Without `PI_OFFLINE=1`, startup may perform automatic networking. It is not network isolation.
 - Children do not inherit the parent conversation or project instructions. Provide a self-contained task and avoid overlapping edits to shared files.
 - A review covers the full requested diff unless the task asks for a small review. Review defaults to `context: ["git-diff"]`, providing a private whole-checkout diff against the main/master merge base, including non-ignored untracked files: exclude secrets first. Any role may opt in; `context: []` disables preparation. See [capture scope and limits](delegate/README.md#automatic-review-diffs).
 - Worker completion is not proof of task correctness. The parent must inspect and validate results.

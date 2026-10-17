@@ -26,10 +26,12 @@ test("kind validation", () => {
 	assert.equal(assertKind("recon"), "recon");
 	assert.throws(() => assertKind("scout"), /kind must be/);
 	assert.throws(() => assertKind("worker"), /kind must be/);
+	assert.throws(() => assertKind("docs"), /kind must be/);
 });
 
-test("shipped config parses five agents", () => {
+test("shipped config parses four agents", () => {
 	const config = shipped();
+	assert.deepEqual(Object.keys(config.agents), ["recon", "implement", "review", "oracle"]);
 	assert.equal(config.maxTaskChars, 20000);
 	assert.equal(config.maxConcurrent, 8);
 	assert.equal(config.maxLocalConcurrent, 1);
@@ -90,8 +92,11 @@ test("user overlay overrides one model", () => {
 	assert.equal(merged.agents.implement.model, config.agents.implement.model);
 });
 
-test("legacy role offline keys are accepted but ignored in defaults and overlays", () => {
+test("legacy role settings are accepted but ignored in defaults and overlays", () => {
 	const base = shipped();
+	const docs = { model: "old/docs", context: [{ source: "git-changed-files" }] };
+	assert.deepEqual(parseDelegateConfig({ ...base, agents: { ...base.agents, docs } }, "legacy.json"), base);
+	assert.deepEqual(mergeDelegateConfig(base, { agents: { docs } }, "overlay.json"), base);
 	for (const offline of [true, false, "obsolete"]) {
 		const legacy = { ...base, agents: { ...base.agents, recon: { ...base.agents.recon, offline } } };
 		assert.deepEqual(parseDelegateConfig(legacy, "legacy.json"), base);
@@ -134,6 +139,7 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
 			recon: { ...patch, thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
+			docs: { model: "old/docs", context: [{ source: "git-changed-files" }] },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
