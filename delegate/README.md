@@ -28,6 +28,10 @@ ignored and preserved on saves; historical runs remain readable. Automatic diff
 and full-file context preparation, and `base`/`head` job arguments, are no longer
 supported. Supply context in the task instead. Existing private archives are not deleted.
 
+Repository snapshot capture and safety audits have been removed. Legacy `snapshots`
+configuration is ignored and preserved on settings saves. Existing stored snapshots
+are not deleted; remove them manually if no longer needed.
+
 Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
@@ -39,44 +43,6 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
 
 `review` defaults to `read`, `grep`, `find` and `ls`—no `bash`, `write` or `edit`. Existing user `tools` overrides still replace the defaults. Removing shell/edit tools is not a filesystem sandbox.
-
-## Eval repository snapshots
-
-Capture is **off by default**. Open **`/pi-delegate snapshots`** from the options menu to offer first-use audits globally, audit/re-audit the current repository, enable manually after a risk confirmation, disable explicitly enabled capture, reset a repository to the global default, or choose a dedicated storage directory. The global default offers the audit workflow for repositories without an explicit setting; it never enables capture or captures automatically. Explicit `true`/`false` repository settings take precedence over the global default. Existing explicit `true` settings remain manual opt-ins, not evidence that the repository was audited.
-
-For a new repository with the global offer enabled, startup asks whether the current agent should audit it before capture is enabled. The audit prompt disables capture for that repository before asking consent. No model call is made until you choose Yes. The audit requires an idle parent agent; if it is busy, capture stays disabled and you must retry when it is idle. It uses the current parent agent/model in a best-effort review of captured source, staged changes, Git history, storage and unsupported coverage; it reports findings without secret values and never snapshots or delegates. A substantive best-effort report with no demonstrated secret material or hard capture blockers enables an explicit repository `true`: **“No secret leak was demonstrated”** by the checks performed. Coverage gaps, unverified secret-like literals and non-blocking privacy/storage/retention risks are reported as warnings, not automatic failure. This explicitly accepts the risk of missed secrets. No, blockers, or an interrupted/unperformed audit leave capture disabled so you can retry from the menu. Hard capture/storage constraints still apply. Results are bound to the pending audit/session/working tree and source/index/reachable-history state; changes during the audit or stale settings invalidate automatic approval. Delegate launches are refused during an audit, and unknown repositories requiring an audit cannot silently launch without capture. Queued jobs recheck safety permission at dispatch; re-auditing or disabling capture overrides their frozen capture policy. Refused jobs must be retried. Already-started captures are not retroactively erased. Reload, session/branch changes, compaction and parent interruption invalidate pending results. Approval is repository-wide and shared by linked worktrees, not a per-commit safety seal. Other worktrees or changes made after approval can introduce secrets. This is not a hard sandbox. The one-time startup snapshot notice remains informational and does not repeat on reload, captures or settings changes. The directory setting is global; changing it leaves existing captures in the old directory. Other open Pi sessions need `/reload`.
-
-Expired audit submissions are **warnings, not tool errors**. They explain the cancellation reason when available and retain the submitted verdict, checked coverage, issues and warnings. After a reload or for an unknown audit ID, the exact cause may be unavailable; the warning says so. A report with no issues means only that no secret leak or hard capture blocker was reported by the checks performed, not that the current repository is safe.
-
-To proceed, open **`/pi-delegate snapshots`** and run a new audit or choose **Enable capture anyway (manual approval)**. Manual enablement requires a separate warning confirmation accepting missed/new secrets and indefinite private retention. It does not rerun the model, create snapshots, or certify stale findings. Repository identity, current settings and storage protections are checked before saving; hard capture constraints remain enforced when jobs launch. Declining leaves capture disabled. UI examples: [expired-audit warning](../docs/images/eval-snapshots-expired-warning.png) and [manual confirmation](../docs/images/eval-snapshots-manual-confirm.png).
-
-Manual configuration in `~/.pi/agent/delegate.json`:
-
-```json
-{
-  "snapshots": {
-    "directory": "/absolute/private/eval-snapshots",
-    "defaultEnabled": true,
-    "repositories": {
-      "/absolute/primary/repository/root": false
-    }
-  }
-}
-```
-
-Omit `defaultEnabled` (or set it to `false`) to keep first-use audits off by default. Setting it to `true` offers the audit workflow for Git repositories without an explicit override; it never captures or enables them automatically. Remove a repository key to make it follow the global audit-offer setting. Non-Git working directories are never captured.
-
-Omit `directory` to use `<agent-dir>/delegate-snapshots/`, independently of transcript archive overrides. Keys are canonical absolute repository paths shown by the menu: the shared Git directory's parent when it is named `.git`, otherwise the shared Git directory itself. This normally means the primary checkout root; separate-Git-directory layouts can use a Git-directory key. Subdirectories and linked worktrees share that repository's setting/storage. Separate clones are separate repositories. Storage must be outside the checkout and primary repository, owned by you, private, and not reached through symlinks. Existing directories must have no group/other access (`chmod 700`); stored files likewise require private permissions (`chmod 600`). Validation errors identify the failing path and reason, with a permission-fix command when applicable; permissions are never changed automatically.
-
-For enabled repositories, session startup prints capture status, snapshot count, stored-file size and storage directory once in the transcript, without adding model context. It is not a sticky widget and does not repeat on `/reload`, capture completion or settings changes. Open the snapshots menu for current counts. Counts include every completed capture, even when file contents are identical; size counts deduplicated objects, history bundles and capture manifests, not filesystem allocation blocks. Startup metrics scans are asynchronous and never delay child dispatch or cleanup. Browsing disabled settings creates no snapshot directories.
-
-Each accepted job freezes its capture settings, but captures the **actual launch-time state**, after queue/capacity waits and before starting the child. Cancelled queued jobs are not captured. Failed capture or failure to persist its archive link blocks launch. Successful captures are linked by `repositorySnapshot` in the run's `metadata.json`.
-
-Captures contain current tracked and non-ignored untracked files, executable modes, symlink targets, deletions, staged index entries, a binary staged patch, and a Git bundle rooted at the starting HEAD (no unrelated branch refs). Unborn repositories have no history bundle. Files and history bundles are SHA-256-addressed and verified before reuse; unchanged content and identical history are shared. Storage layout is `<directory>/<repository-id>/{objects,history,captures}/`; manifests describe file hashes, starting HEAD, coverage and provenance. The live checkout/index is never modified.
-
-**Constraints:** capture requires Linux with `/proc` for pinned, descriptor-relative source reads that prevent ancestor-symlink races. Ignored untracked files are excluded, but tracked or non-ignored dependencies/caches can be captured. Empty directories, dependency installation and external services are not reproduced. Conflicted indexes, submodules/nested repositories and special tracked files are refused rather than silently producing incomplete captures. Non-UTF-8 filenames are refused. Limits are 128 MiB per regular file, 2 GiB total source and 100,000 paths. Capture checks file stability and compares two full source/index/HEAD reads; detected changes refuse launch. This is not an atomic filesystem snapshot or a repository write lock: coordinate concurrent writers for stronger guarantees.
-
-**Privacy:** source and reachable Git history can contain secrets, including tracked or previously committed credentials. Captures are private, never uploaded or automatically deleted, and are not redacted because changing code would defeat reproduction. Review repository contents before approving an audit and enabling capture. The audit report must not include secret values; it distinguishes blocking `issues` from non-blocking `warnings`, reports actually checked areas and discloses unexamined slices. Passing requires at least one substantive check and no blocking issues, not complete coverage or proof of being secret-free. Identifying metadata alone is not a credential leak; public availability or a test filename does not excuse demonstrated secrets. Coverage is best-effort and changes after approval can add secrets. No environment or credential files outside the repository are copied. This feature captures inputs only; it does not run Docker or grade results.
 
 ## Cross-extension busy query
 

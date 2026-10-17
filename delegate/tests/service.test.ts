@@ -4,11 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { Accounting } from "../accounting.ts";
 import { KINDS, loadDelegateConfig, mergeDelegateConfig } from "../config.ts";
-import { JobScheduler } from "../jobs.ts";
-import { DelegateService, enqueueDelegate } from "../service.ts";
-import { savings } from "./calibration-fixtures.ts";
+import { DelegateService } from "../service.ts";
 
 const delegateDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const shipped = () => loadDelegateConfig({ shippedPath: join(delegateDir, "config.json") });
@@ -41,37 +38,6 @@ test("all roles dispatch only the supplied task, even with retired context setti
 		}
 	} finally {
 		await service.shutdown();
-		rmSync(temp, { recursive: true, force: true });
-	}
-});
-
-test("dispatch rechecks host authorization after asynchronous snapshot preparation", async () => {
-	const temp = mkdtempSync(join(tmpdir(), "delegate-dispatch-policy-"));
-	const config = shipped();
-	const accounting = new Accounting(join(temp, "archive"));
-	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 1 });
-	const snapshot = savings();
-	let authorized = true, launched = false, checked = false;
-	try {
-		const job = enqueueDelegate({
-			scheduler, accounting, agent: config.agents.review, config,
-			identity: { parentSessionId: "policy", toolCallId: "policy", kind: "review", cwd: temp, requestedModel: "test/review", thinking: "off", savings: snapshot },
-			task: "Review", promptPath: join(delegateDir, "prompts/review.md"), timeoutMs: 10000, background: true,
-			beforeRun: async () => { assert.ok(authorized); await Promise.resolve(); authorized = false; },
-			beforeDispatch: archive => {
-				checked = true;
-				assert.deepEqual(archive.data.savings, snapshot);
-				assert.equal(readFileSync(archive.paths.task, "utf8"), "Review");
-				if (!authorized) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
-			},
-			childRunner: async () => { launched = true; throw new Error("must not launch"); },
-		});
-		const result = await scheduler.wait(job.id, { timeoutMs: 10000 });
-		assert.equal(result.status, "failed");
-		assert.match(result.answer ?? "", /permission was revoked/);
-		assert.equal(checked, true); assert.equal(launched, false);
-	} finally {
-		await scheduler.shutdown(); accounting.close();
 		rmSync(temp, { recursive: true, force: true });
 	}
 });

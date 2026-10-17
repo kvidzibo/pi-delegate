@@ -28,7 +28,7 @@ Operator settings are enabled only with PI_DELEGATE_SETTINGS_TOKEN (random base6
   --help                    Show this help
   --version                 Show package version
 
-Snapshots are disabled. Workers are not sandboxed. Jobs belong to this connection.
+Workers are not sandboxed. Jobs belong to this connection.
 `;
 
 /** Observe the real wire lifetime, not per-instance probe/fallback closures. */

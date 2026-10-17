@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, keyHint, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { promptSourceFromDir } from "../child-runtime/spawn.ts";
 import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
@@ -34,9 +34,6 @@ import { capabilityContent, copyCapabilities, describeCapabilities, type Capabil
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
 import { FileCapacityBroker } from "./capacity.ts";
-import { snapshotCommand } from "./snapshot-command.ts";
-import { AUDIT_CHECKS, parseAuditCall, SnapshotAudits, SnapshotAuditWarning } from "./snapshot-audit.ts";
-import { captureRepository, formatSnapshotBytes, repositoryFor, repositorySnapshotStats, snapshotDirectory, snapshotEnabled, snapshotNeedsAudit, snapshotSettings, type Repository } from "./snapshots.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -175,7 +172,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				: join(agentDir(), "delegate.json"),
 	};
 	const config = loadDelegateConfig(configPaths);
-	const audits = new SnapshotAudits(pi, config, configPaths, agentDir());
 	const modelCommand = new ModelCommand(config, configPaths);
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const cards = new JobCards();
@@ -245,7 +241,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	// of tying background cancellation to the spawn/collect call that happened to be active.
 	let parentSignal: AbortSignal | undefined;
 	const onParentAbort = (): void => {
-		audits.cancel("The parent agent was interrupted.");
 		// Include completed jobs whose notices are still waiting for the parent to go idle.
 		for (const snap of scheduler.list()) gate.consume(snap.id);
 		scheduler.cancelAll();
@@ -260,8 +255,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		if (parentSignal?.aborted) onParentAbort();
 		else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 	});
-	pi.on("agent_settled", () => { detachParentAbort(); audits.endTurn(); });
-	pi.on("session_compact", () => audits.cancel("The session was compacted during the audit."));
+	pi.on("agent_settled", () => detachParentAbort());
 
 	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
@@ -297,41 +291,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			isPartial: snapshot ? !isTerminal(snapshot) : context.isPartial, isError: context.isError };
 	};
 
-	let captureContext: ExtensionContext | undefined;
-	let captureStatusGeneration = 0;
-	let captureStatusController: AbortController | undefined;
-	const showCaptureStartup = async (ctx: ExtensionContext): Promise<void> => {
-		captureStatusController?.abort();
-		const controller = new AbortController();
-		captureStatusController = controller;
-		const generation = ++captureStatusGeneration;
-		try {
-			let lines: string[] | undefined;
-			if (config.snapshots.defaultEnabled || Object.values(config.snapshots.repositories).some(Boolean)) {
-				const repo = await repositoryFor(ctx.cwd, controller.signal);
-				if (snapshotNeedsAudit(repo, config.snapshots)) {
-					await audits.request(ctx, repo!, controller.signal);
-					return;
-				}
-				if (snapshotEnabled(repo, config.snapshots)) {
-					const directory = snapshotDirectory(agentDir(), config.snapshots);
-					const stats = await repositorySnapshotStats(repo!, directory, controller.signal);
-					lines = [`Eval repository capture enabled · ${stats.count} snapshots · ${formatSnapshotBytes(stats.bytes)}`, `Storage: ${directory}`];
-				}
-			}
-			if (lines && !controller.signal.aborted && !shuttingDown && captureContext === ctx && generation === captureStatusGeneration) {
-				ctx.ui.notify(lines.join("\n"), "info");
-			}
-		} catch (error) {
-			// UI is an observer, never a dependency of capture/child execution.
-			if (controller.signal.aborted || shuttingDown || captureContext !== ctx || generation !== captureStatusGeneration) return;
-			try { ctx.ui.notify(`Snapshot storage: ${error instanceof Error ? error.message : String(error)}`, "error"); } catch { /* detached UI */ }
-		}
-	};
 	let busyUnsubscribe: (() => void) | undefined;
-	pi.on("session_start", async (event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		shuttingDown = false;
-		audits.cancel(event.reason === "reload" ? "Extensions were reloaded during the audit." : "The session changed during the audit.");
 		busyUnsubscribe?.();
 		const events = pi.events;
 		if (events?.on) {
@@ -342,22 +304,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		bindUi(ctx);
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
-		captureStatusController?.abort();
-		captureContext = ctx;
-		if (ctx.hasUI && event.reason !== "reload") void showCaptureStartup(ctx);
 	});
-	pi.on("session_tree", (_event, ctx) => { audits.cancel("The session branch changed during the audit."); cards.restore(ctx.sessionManager.getBranch()); });
+	pi.on("session_tree", (_event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); });
 	const dialogs = new AbortController();
 	registerDelegateCommand(pi, [{
 		name: "models",
 		description: "Choose role models and reasoning levels",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
-	}, {
-		name: "snapshots",
-		description: "Configure eval repository capture (off by default)",
-		handler: async (args, ctx) => {
-			await snapshotCommand(args, ctx, config, configPaths, agentDir(), dialogs.signal, audits);
-		},
 	}, {
 		name: "stats",
 		description: "Recorded child usage (no model calls)",
@@ -391,16 +344,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
-		audits.cancel("The session runtime shut down during the audit.");
 		dialogs.abort();
 		busyUnsubscribe?.();
 		busyUnsubscribe = undefined;
 		detachParentAbort();
 		modelCommand.stop();
-		captureContext = undefined;
-		captureStatusController?.abort();
-		captureStatusController = undefined;
-		++captureStatusGeneration;
 		gate.shutdown();
 		await scheduler.shutdown();
 		accounting.close();
@@ -444,7 +392,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",
 			"Use recorded delegate durationMs and Duration as authoritative elapsed timing; recover missing timing from archived metadata.json. Use Unknown only when timing cannot be recovered.",
 			"Local delegate jobs may queue under maxLocalConcurrent; hosted jobs can run independently. Running children retain their slots until they stop.",
-			"Only for a user-approved pending snapshot safety audit, submit auditId and auditResult without child/job arguments. Audit results never launch a child; passed requires substantive checks and no demonstrated secrets or hard capture blockers. Coverage gaps and non-blocking risks belong in warnings and do not prevent enabling. Never include secret values.",
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
@@ -471,13 +418,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				Type.Boolean({ description: "With jobId: steer child to wrap up. Does not interrupt the current tool." }),
 			),
 			cancel: optionalArgument(Type.Boolean({ description: "With jobId: abort and kill the child." })),
-			auditId: optionalArgument(Type.String({ description: "ID of the user-approved pending snapshot safety audit. Only with auditResult; no child/job arguments." })),
-			auditResult: optionalArgument(Type.Object({
-				verdict: Type.Union([Type.Literal("passed"), Type.Literal("blocked"), Type.Literal("incomplete")]),
-				checked: Type.Array(Type.Union(AUDIT_CHECKS.map(check => Type.Literal(check))), { maxItems: AUDIT_CHECKS.length, uniqueItems: true }),
-				issues: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 32, description: "Demonstrated secrets or hard capture blockers: redacted paths/categories only, never secret values. Must be empty for passed." }),
-				warnings: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 32, description: "Non-blocking privacy/storage risks, unverified secret-like literals and coverage gaps; redacted paths/categories only. Do not prevent passed." })),
-			}, { additionalProperties: false, description: "Best-effort safety audit, not a child task. passed means no secret leak was demonstrated after substantive checks; partial coverage and warnings are allowed." })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			let capabilities: CapabilityManifest | undefined;
@@ -488,18 +428,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			try {
 				assertNotNested(process.env, "delegate");
 				bindUi(ctx);
-				const auditCall = parseAuditCall(params);
-				if (auditCall) {
-					try {
-						const message = await audits.submit(ctx, auditCall.auditId, auditCall.auditResult, signal);
-						return { content: [{ type: "text" as const, text: message }], details: { ok: true, snapshotAudit: true, auditVerdict: auditCall.auditResult.verdict } };
-					} catch (error) {
-						if (!(error instanceof SnapshotAuditWarning)) throw error;
-						return { content: [{ type: "text" as const, text: error.message }], details: { ok: true, snapshotAudit: true, auditVerdict: auditCall.auditResult.verdict, auditWarning: true } };
-					}
-				}
 				const parsed = parseDelegateCall(params, config);
-				if (parsed.mode === "spawn" && audits.active) throw new Error("A snapshot safety audit is pending; finish it before launching delegates.");
 				const operation = parsed.mode === "collect"
 					? parsed.cancel ? "cancel" : parsed.wrap ? "wrap" : parsed.peek ? "peek" : "wait"
 					: "wait";
@@ -554,10 +483,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							}) : { reason: "No hosted alternative configured for this local model" };
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
 					}
-					// Freeze capture policy on acceptance; queued jobs capture their eventual start state.
-					const captureConfig = snapshotSettings(config.snapshots);
-					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
-					let capturedRepository: Repository | undefined;
 					snap = enqueueDelegate({
 						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
 						identity: {
@@ -569,26 +494,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						onAccepted: archive => {
 							origins.set(archive.data.runId, toolCallId);
 							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
-						},
-						beforeRun: (archive, childSignal) => {
-							if (audits.active) throw new Error("A snapshot safety audit is pending; queued delegate launch refused.");
-							if (!captureConfig.defaultEnabled && !Object.values(captureConfig.repositories).some(Boolean)) return;
-							return (async () => {
-								childSignal.throwIfAborted();
-								const repo = await repositoryFor(cwd, childSignal);
-								if (snapshotNeedsAudit(repo, captureConfig)) throw new Error("Snapshot capture requires a user-approved safety audit for this repository. Open /pi-delegate snapshots before launching a delegate.");
-								if (snapshotEnabled(repo, captureConfig)) {
-									if (audits.active || !snapshotEnabled(repo, config.snapshots)) throw new Error("Snapshot capture permission was revoked; retry after the safety audit or settings change.");
-									const snapshot = await captureRepository(repo!, captureDirectory, archive.data.runId, childSignal);
-									archive.attachSnapshot(snapshot);
-									capturedRepository = repo;
-								}
-								childSignal.throwIfAborted();
-							})();
-						},
-						beforeDispatch: () => {
-							if (audits.active) throw new Error("A snapshot safety audit is pending; delegate launch refused.");
-							if (capturedRepository && !snapshotEnabled(capturedRepository, config.snapshots)) throw new Error("Snapshot capture permission was revoked; delegate launch refused.");
 						},
 					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");
@@ -644,18 +549,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		},
 		renderCall(args, theme, context) {
 			context.state.delegateArgs = args;
-			if (args.auditId) return new Text(theme.fg("toolTitle", "delegate · snapshot safety audit"), 0, 0);
 			cards.watch(context.toolCallId, context.invalidate);
 			return renderChildCall({ theme, read: () => readRow(context) });
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			context.state.delegateResult = result;
-			const auditDetails = result.details as { snapshotAudit?: boolean; auditVerdict?: string; auditWarning?: boolean; ok?: boolean } | undefined;
-			const auditArgs = context.state.delegateArgs as { auditId?: string } | undefined;
-			if (auditDetails?.snapshotAudit || auditArgs?.auditId) {
-				const color = auditDetails?.ok === false ? "error" : auditDetails?.auditWarning ? "warning" : auditDetails?.auditVerdict === "passed" ? "muted" : "warning";
-				return new Text(theme.fg(color, result.content.filter(item => item.type === "text").map(item => (item as { text: string }).text).join("\n")), 0, 0);
-			}
 			return renderChildResult({ theme, read: () => readRow({ ...context, expanded, isPartial }),
 				expandHint: keyHint("app.tools.expand", "full result and tool details") });
 		},
