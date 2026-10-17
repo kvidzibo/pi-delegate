@@ -11,6 +11,8 @@ import { assertKind, resolveAgent, type AgentConfig, type DelegateConfig, type K
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
 import { prepareContextTask } from "./context.ts";
+import { COMMIT_SHA } from "./full-files.ts";
+import { archiveDocsProposal } from "./docs-result.ts";
 import { isLocalModel } from "./tg.ts";
 
 /** Shared acceptance/execution path. Hosts own consent, observers and lifecycle. */
@@ -20,6 +22,8 @@ export function enqueueDelegate(input: {
 	identity: Omit<RunIdentity, "tools" | "capabilities">;
 	agent: AgentConfig;
 	task: string;
+	base?: string;
+	head?: string;
 	promptPath: string;
 	timeoutMs: number;
 	background: boolean;
@@ -35,7 +39,13 @@ export function enqueueDelegate(input: {
 	beforeDispatch?: (archive: ArchivedRun, signal: AbortSignal) => void;
 }): JobSnapshot {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
-	const agent = { ...input.agent, tools: [...input.agent.tools], context: [...(input.agent.context ?? [])] };
+	const agent = { ...input.agent, tools: [...input.agent.tools], context: structuredClone(input.agent.context ?? []) };
+	const revision = { base: input.base, head: input.head };
+	const fullFiles = agent.context.some(provider => typeof provider !== "string");
+	if (fullFiles && (!revision.base || !COMMIT_SHA.test(revision.base) || (revision.head !== undefined && !COMMIT_SHA.test(revision.head)))) {
+		throw new Error("Full-file context requires a full base commit SHA and an optional full head commit SHA.");
+	}
+	if (!fullFiles && (revision.base !== undefined || revision.head !== undefined)) throw new Error("base/head require a full-file context provider.");
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
@@ -56,16 +66,19 @@ export function enqueueDelegate(input: {
 				const preparation = input.beforeRun?.(archive, childSignal);
 				if (preparation) await preparation;
 				childSignal.throwIfAborted();
-				const task = agent.context.length
+				const prepared = agent.context.length
 					? await prepareContextTask(agent.context, {
-						task: input.task, cwd: input.identity.cwd, archiveDir: archive.paths.dir, signal: childSignal, env: input.env,
+						task: input.task, cwd: input.identity.cwd, archiveDir: archive.paths.dir, signal: childSignal, env: input.env, ...revision,
 					})
-					: input.task;
+					: { task: input.task };
+				const task = prepared.task + (input.identity.kind === "docs" ? `\n\nReturn valid JSON within ${input.config.maxOutputBytes} UTF-8 bytes. Never truncate replacements.` : "");
 				childSignal.throwIfAborted();
 				if (task !== input.task) writeFileSync(archive.paths.task, task, { mode: 0o600 });
 				input.beforeDispatch?.(archive, childSignal);
 				childSignal.throwIfAborted();
-				return (input.childRunner ?? runChild)({
+				const result = input.identity.kind === "docs" && !prepared.files?.files.length
+					? { text: JSON.stringify({ files: [], summary: ["No matching existing documents."], concerns: [] }), exitCode: 0, stderrTail: "", stopReason: "stop" }
+					: await (input.childRunner ?? runChild)({
 					task, cwd: input.identity.cwd, model: input.identity.requestedModel,
 					thinking: agent.thinking, tools: [...tools],
 					...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
@@ -75,6 +88,15 @@ export function enqueueDelegate(input: {
 					invocation: input.invocation, leaseGuardPath: input.leaseGuardPath,
 					onEvent: event => { onUsage(event); onEvent(event); }, onControl,
 				});
+				if (input.identity.kind === "docs" && result.exitCode === 0 && (!result.stopReason || result.stopReason === "stop")) {
+					childSignal.throwIfAborted();
+					try {
+						await archiveDocsProposal(result.text, prepared.files!, archive.paths.dir, input.config.maxOutputBytes);
+					} catch (error) {
+						return { ...result, exitCode: 1, stopReason: "invalid-docs-result", text: `Documentation proposal rejected: ${String(error).slice(0, 500)}. No files were changed.` };
+					}
+				}
+				return result;
 			}, childSignal),
 		});
 	} catch (error) {
@@ -144,7 +166,7 @@ export class DelegateService {
 		});
 	}
 
-	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string }): { job: JobReceipt; reused: boolean } {
+	start(input: { kind: Kind; task: string; requestId: string; cwd?: string; model?: string; base?: string; head?: string }): { job: JobReceipt; reused: boolean } {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
 		assertNotNested(this.options.env ?? process.env);
 		const kind = assertKind(input.kind);
@@ -155,7 +177,7 @@ export class DelegateService {
 		const subpath = relative(this.workspace, cwd);
 		if (isAbsolute(subpath) || subpath === ".." || subpath.startsWith("../") || subpath.startsWith("..\\")) throw new Error("cwd must be inside the configured workspace (not a filesystem sandbox).");
 		// Retries belong to their original acceptance, even after an operator changes role defaults.
-		const fingerprint = JSON.stringify([kind, task, cwd, input.model ?? null]);
+		const fingerprint = JSON.stringify([kind, task, cwd, input.model ?? null, input.base ?? null, input.head ?? null]);
 		const previous = this.requests.get(input.requestId);
 		if (previous) {
 			if (previous.fingerprint !== fingerprint) throw new Error("requestId was already used with different arguments.");
@@ -169,7 +191,7 @@ export class DelegateService {
 			identity: { parentSessionId: this.ownerId, toolCallId: randomUUID(), kind, cwd,
 				requestedModel: resolved.model, thinking: resolved.agent.thinking,
 				savingsUnavailable: "MCP does not load the parent pricing registry/calibration estimates." },
-			agent: resolved.agent, task, promptPath: join(this.options.promptDir, `${kind}.md`),
+			agent: resolved.agent, task, base: input.base, head: input.head, promptPath: join(this.options.promptDir, `${kind}.md`),
 			timeoutMs: this.config.defaultTimeoutMs, background: true, config: this.config,
 			env: this.options.env, invocation: this.options.invocation, leaseGuardPath: this.options.leaseGuardPath,
 			childRunner: this.options.childRunner,
@@ -269,7 +291,7 @@ export class DelegateService {
 	updateRoleSettings(agents: DelegateConfig["agents"]): void {
 		if (this.closed) throw new Error("Delegate server is shutting down.");
 		this.config.agents = Object.fromEntries(Object.entries(agents).map(([kind, agent]) =>
-			[kind, { ...agent, tools: [...agent.tools], context: [...(agent.context ?? [])] }])) as DelegateConfig["agents"];
+			[kind, { ...agent, tools: [...agent.tools], context: structuredClone(agent.context ?? []) }])) as DelegateConfig["agents"];
 	}
 
 	shutdown(): Promise<void> {

@@ -1,10 +1,10 @@
 # delegate — implementation contract
 
-The Pi extension has one routing tool. Four named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
+The Pi extension has one routing tool. Five named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
 
 ## Goal
 
-One routing tool. Four named agents. Child model is config (any Pi model id). No nesting.
+One routing tool. Five named agents. Child model is config (any Pi model id). No nesting.
 
 Background spawn returns `jobId` immediately. Local/GPU children share `maxLocalConcurrent` (queue, do not overlap). Hosted children use `maxConcurrent` only. Do not start/stop GPU servers.
 
@@ -15,7 +15,7 @@ delegate/
   README.md SPEC.md config.json
   index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts dock.ts panel.ts tg.ts jobs.ts notify.ts
   archive.ts usage.ts accounting.ts stats.ts calibration.ts capacity.ts capabilities.ts outcomes.ts
-  prompts/{recon,implement,review,oracle}.md
+  prompts/{recon,implement,review,oracle,docs}.md
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
 
@@ -32,13 +32,14 @@ Description must say: named agents, model from config, no nesting.
 | Field | Required | Rules |
 |---|---|---|
 | `task` | spawn | non-empty, max `maxTaskChars` |
-| `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` |
+| `kind` | spawn | `recon` \| `implement` \| `review` \| `oracle` \| `docs` |
+| `base`, `head` | full-file context | Full commit SHAs; base required, omitted head selects dispatch-time worktree |
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
 | `model` | no | any Pi model id. Kind keeps tools/prompt/thinking. |
 | `background` | no | `true` = return `jobId` now; child keeps running until completion or cancellation, including parent-run interruption. Interactive mode may later inject a short completion notice |
 | `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with `background`. Terminal collect suppresses the notice |
-| `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
+| `wrap` | no | refused for `docs`; otherwise with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
 | `cancel` | no | with `jobId`: abort + kill. Idempotent if already terminal |
 | `auditId` + `auditResult` | audit report | matching user-approved snapshot safety audit; mutually exclusive with child/job controls; never spawns |
 
@@ -114,7 +115,7 @@ Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with expl
 
 ## Automatic review diffs
 
-Roles accept a `context` array of built-in provider names; currently only `git-diff` is supported. Missing fields inherit shipped defaults: `review` selects `["git-diff"]`, other roles select `[]`. Arrays replace defaults, duplicates execute once, invalid values refuse loading. Empty context bypasses Git discovery entirely. Freeze provider arrays at acceptance; model overrides keep them, settings updates affect future jobs only, and retries never recapture. The shared context dispatcher uses the configured list, never a role-name check; providers cannot grant child tools or execute arbitrary configured commands. Do not apply legacy savings calibrations to context-enriched tasks.
+Roles accept a `context` array of `git-diff` names or full-file provider objects. Missing fields inherit shipped defaults: `review` selects `["git-diff"]`, `docs` selects full files, other roles select `[]`. Arrays replace defaults, duplicate names execute once, invalid values refuse loading. At most one full-file provider is allowed; `docs` requires one and no diff. Empty context on other roles bypasses Git discovery entirely. Deep-copy provider configuration at acceptance; model overrides keep them, settings updates affect future jobs only, and retries never recapture. The shared context dispatcher uses the configured list, never a role-name check; providers cannot grant child tools or execute arbitrary configured commands. Do not apply legacy savings calibrations to context-enriched tasks.
 
 Review defaults to `read`, `grep`, `find`, `ls`, without bash. At dispatch, for any role selecting `git-diff`, the shared context dispatcher prepares a private `review.diff` in the run archive and appends its path, root, base/HEAD and coverage to the dispatched/archived task. Capture net working-tree changes against the HEAD/main-or-master merge base plus Git-discovered nonignored untracked files across the entire checkout, even from subdirectories. Git-invisible filesystem entries (e.g. FIFOs/sockets) are outside this Git-diff scope, not grounds for claiming a complete filesystem snapshot. Prefer local main, local master, origin/main, origin/master; disable lazy fetching and deny every Git transport so older Git also fails closed on missing partial-clone objects. Include binary patches, symlink targets and Gitlink commit changes, not dirty/untracked submodule files or recursive contents. Never invoke submodule status, which can execute submodule-local filters. Revalidate host audit/snapshot authorization after diff preparation, immediately before invoking the child. No eval snapshot permission is implied or required.
 
@@ -139,6 +140,9 @@ Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (
 
 Correlated rejection of the initial RPC prompt (`id: p1`, `success: false`) is a terminal error: preserve its message, close stdin, terminate the child, and release the slot. Unrelated responses do not terminate the run. Keep the first terminal cause when errors, timeout, or abort race.
 
+An empty configured tool list uses `--no-tools --no-mcp`, never an empty
+`--tools` argument that might inherit defaults.
+
 Preserve the last assistant message's provider error separately from its text and return the error before any partial answer. A successful retry replaces earlier errors. Model token-limit termination (`stopReason: "length"`) is a failure with an explicit incomplete-answer explanation, including thinking-only/empty answers. The explanation precedes partial text and is subject to the normal output cap. A natural completion shortened only by `maxOutputBytes` remains successful.
 
 Build the completed model identifier from Pi's separate `message.provider` and `message.model` fields, without stripping slashes from a namespaced model ID. If either field is missing or empty, retain the last known identifier (initially the configured model).
@@ -162,6 +166,21 @@ Child is `pi` (or `node <pi-script>`) plus those flags. Non-Pi hosts supply an e
 Freeze capture policy at job acceptance, then capture source/index/HEAD after queue/capacity admission and before invoking the child runner. Audit preparation/reporting and revoked safety permission override that frozen policy at actual dispatch; refused queued jobs must be retried. Cancelled queued jobs never capture. Persist `repositorySnapshot` in native run metadata before launch; any capture/link failure prevents child dispatch. Status/metrics observers are fire-and-forget, abort on replacement/shutdown, and never gate child execution or cleanup. Never modify the live index, refs or working tree. Keep snapshot storage separate/private, publish immutable content-addressed objects and same-HEAD history bundles exclusively, and create one capture manifest per successful preparation. No automatic cleanup of retained captures.
 
 Capture tracked/nonignored-untracked source, executable modes, symlink targets, binary staged changes and starting-HEAD history. The user-approved current-parent-model audit is best-effort: no model calls before Yes; it examines captured source, staged changes, history, storage and unsupported coverage, and reports no secret values. Changes after approval can introduce secrets; there is no hard sandbox. Compare two full reads and refuse detected instability; do not claim atomicity or repository-lock enforcement. Use Linux pinned descriptor-relative source traversal; pathname checks alone cannot prevent ancestor swaps. Hash/retain staged index entries and refuse conflicted indexes. Verify content-addressed history before reuse. Refuse unsupported nested/submodule/special-file inputs and unsafe storage instead of silently omitting them. See README for coverage and size limits. No environment dumps, uploads, Docker, grading or default activation. The existing sole `delegate` tool receives parent-owned `auditId`/`auditResult` control-mode input for this workflow; do not add a separate audit tool. Validate bounded redacted blocking issues, optional warnings and checked coverage before accepting results; passing requires at least one substantively checked area and zero blocking issues, not complete coverage. The acceptance claim is “No secret leak was demonstrated” by the checks performed, never a secret-free guarantee. Report unexamined slices and non-blocking risks as warnings. Existing hard capture/storage constraints remain enforced. Audit IDs are single-use and session/working-tree bound. Hash source, staged index/patch and reachable history without writing snapshot artifacts; reject repository/settings changes during audit. Require the parent idle both before preparation and immediately before dispatching the audit; do not queue audits behind busy-parent follow-ups. Refuse child launches while audit preparation/reporting is active and refuse launch from an unknown globally opted-in repository. Cancellation, branch/session changes, compaction, reload and incomplete settlement invalidate pending reports without enabling capture. Expired submissions return warning-styled non-error tool feedback with the known cancellation reason (or an explicit unknown-cause disclosure), submitted verdict, coverage, issues and warnings. They offer re-audit or separately confirmed manual enablement; stale findings never authorize capture automatically.
+
+## Documentation proposals
+
+`docs` receives a bounded, complete full-file bundle inline and no tools or diff.
+The generic provider uses caller-pinned revisions and configurable path globs;
+worktree selection includes local edits/untracked files. Preserve captured hashes
+and archive context privately. Reject unsupported/unstable sources and size
+limits rather than truncate. No model call for an empty file set. Refuse `docs`
+wrap requests before steering: generic wrapped-report formatting is not JSON.
+
+Accept only completed strict JSON replacements for unique captured paths, with
+summary/concerns arrays. Reject malformed, out-of-scope, blanking and stale-source
+results before archiving a validated proposal. No automatic repository writes.
+The parent must recheck hashes immediately before applying and obtain required
+approvals. See [the input/output contract](../docs/documentation-editor.md).
 
 ## Durable accounting
 

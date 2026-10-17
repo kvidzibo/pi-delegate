@@ -8,12 +8,12 @@ const exec = promisify(execFile);
 const MAX_BYTES = 16 * 1024 * 1024;
 const DIFF_OPTIONS = ["--no-ext-diff", "--no-textconv", "--no-color", "--binary", "--full-index", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/"];
 
-async function git(cwd: string, args: string[], signal: AbortSignal, inherited: NodeJS.Dict<string>, allowed: number[] = []) {
+export async function contextGit(cwd: string, args: string[], signal: AbortSignal, inherited: NodeJS.Dict<string>, allowed: number[] = []) {
 	// Do not let an enclosing Git command redirect capture to another repository/index.
 	const env = { ...inherited };
 	for (const key of Object.keys(env)) if (key.startsWith("GIT_")) delete env[key];
 	Object.assign(env, {
-		LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1",
+		LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1", GIT_NO_REPLACE_OBJECTS: "1",
 		// Also deny every transport: older Git versions can ignore GIT_NO_LAZY_FETCH.
 		GIT_ALLOW_PROTOCOL: "",
 	});
@@ -44,7 +44,7 @@ async function hasGitMarker(cwd: string): Promise<boolean> {
 /** Capture at dispatch, without fetching, touching the index, or granting Git access to the child. */
 export async function prepareGitDiffTask(task: string, cwd: string, archiveDir: string, signal: AbortSignal, env: NodeJS.Dict<string> = process.env): Promise<string> {
 	const filterOverrides: string[] = [];
-	const run = (at: string, args: string[], allowed: number[] = []) => git(at, [...filterOverrides, ...args], signal, env, allowed);
+	const run = (at: string, args: string[], allowed: number[] = []) => contextGit(at, [...filterOverrides, ...args], signal, env, allowed);
 	const location = await run(cwd, ["rev-parse", "--show-toplevel"], [128]);
 	if (location.code !== 0) {
 		if (location.stderr.toString().startsWith("fatal: not a git repository") && !(await hasGitMarker(cwd))) {

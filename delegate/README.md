@@ -4,6 +4,11 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
+Shipped models use `openai-codex`: `recon` and `implement` use `gpt-6-luna`,
+`oracle` uses `gpt-6-astra`, and `review` and `docs` use `gpt-6.1-sol`.
+All role defaults are hosted; local models remain available through overrides.
+Existing user model overrides take precedence over these defaults.
+
 Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role. Its model picker opens immediately; selecting a model continues to reasoning. Enter on the current model skips a model save. If no selectable model is available, reasoning still opens for the current model. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Reasoning choices come from Pi's supported levels for that model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saves go to `~/.pi/agent/delegate.json` and apply to new jobs in this session; running and queued jobs keep their settings. Other sessions need `/reload`. Esc returns to the role list. Declining a save stays on that picker; successful saves are confirmed in the next dialog.
 
 For manual configuration, override [shipped defaults](config.json) in that user file, not in the installed package. Replace `provider/model` with an available Pi model ID:
@@ -16,7 +21,7 @@ For manual configuration, override [shipped defaults](config.json) in that user 
 }
 ```
 
-Each role accepts `enabled` (default `true`), `model`, `tools`, `thinking` and `context`. Set `"agents": { "implement": { "enabled": false } }` to refuse new implementation jobs, including calls with model overrides. Other roles are unaffected; already accepted jobs keep their policy. Role names remain fixed. Enable/disable is a manual configuration setting, not a model-picker or operator-settings control. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool and context arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Each role accepts `enabled` (default `true`), `model`, `tools`, `thinking` and `context`. An empty `tools: []` disables all tools. `docs` requires this and exactly one full-file provider; its prompt and output validation are specific to documentation editing. Set `"agents": { "implement": { "enabled": false } }` to refuse new implementation jobs, including calls with model overrides. Other roles are unaffected; already accepted jobs keep their policy. Role names remain fixed. Enable/disable is a manual configuration setting, not a model-picker or operator-settings control. Legacy role `offline` keys are accepted but ignored; saves preserve them without changing them. Omitted fields inherit defaults; tool and context arrays replace rather than extend them. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
 
 Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools, thinking and context providers. Providers available only through parent extensions must be configured separately for children, which disable extension discovery.
 
@@ -26,7 +31,12 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 
 ## Context providers
 
-Roles can request parent-prepared context separately from their tools:
+Roles can request parent-prepared context separately from their tools. `docs`
+uses a configurable full-file provider to inject complete documents inline, with
+no tools or diff; see [documentation editing](../docs/documentation-editor.md).
+Other roles can use the same provider for any selected UTF-8 text files.
+
+For automatic code-review diffs:
 
 ```json
 {
@@ -37,7 +47,7 @@ Roles can request parent-prepared context separately from their tools:
 }
 ```
 
-`git-diff` is the only current provider. Shipped defaults enable it for `review`; other roles default to `[]`. Any role may opt in. Set `"context": []` on a role to disable all context preparation, including Git discovery. Omitted settings inherit the shipped role default; unknown names or invalid lists refuse configuration loading, and duplicate names execute once. This is manual configuration, not a model-picker/operator-settings control.
+`git-diff` is the patch provider; full-file provider objects use `source: "git-changed-files"`. Shipped defaults enable `git-diff` for `review`, full files for `docs`, and no context for other roles. Roles other than `docs` may opt out with `"context": []`. Omitted settings inherit the shipped role default; unknown names or invalid lists refuse configuration loading, and duplicate names execute once. At most one full-file provider is allowed per role. This is manual configuration, not a model-picker/operator-settings control.
 
 Both hosts freeze the selected providers at acceptance and run them after queue waits, before child dispatch. Providers attach artifact paths/instructions to the archived task and use the parent’s permissions; they do not grant tools to the child. Include a file reader such as `read` in the role’s tools to inspect artifacts. Providers are built-in code, not arbitrary shell commands from configuration. Existing calibration profiles do not cover added context, so jobs with context providers do not use legacy savings estimates.
 
