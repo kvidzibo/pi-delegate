@@ -106,7 +106,3 @@ export function normalizeTask(task: unknown, maxTaskChars: number, label = "chil
 	}
 	return task;
 }
-
-export function isNonEmptyStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.length > 0);
-}

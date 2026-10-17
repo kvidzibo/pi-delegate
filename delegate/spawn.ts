@@ -2,7 +2,6 @@ import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runPiChild, type ChildControl, type ChildResult, type PiInvocation } from "../child-runtime/spawn.ts";
-import type { GuardedExecution } from "../child-runtime/guard-protocol.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
 
 export interface ChildArgsInput {
@@ -27,8 +26,6 @@ export interface RunChildInput {
 	env?: NodeJS.Dict<string>;
 	onEvent?: (event: unknown) => void;
 	onControl?: (ctl: ChildControl) => void;
-	/** Runtime API opt-in; configuration/default activation is separate. */
-	execution?: Omit<GuardedExecution, "tools">;
 	resourceLease?: InheritedLease;
 	leaseStartupMs?: number;
 	invocation?: PiInvocation;
@@ -103,6 +100,7 @@ function logChildResult(input: RunChildInput, result: ChildResult): void {
 }
 
 export async function runChild(input: RunChildInput): Promise<ChildResult> {
+	if ("execution" in input && input.execution !== undefined) throw new Error("Execution/headroom guard APIs are retired; refusing to launch without the requested policy.");
 	const result = await runPiChild({
 		cwd: input.cwd,
 		model: input.model,
@@ -122,7 +120,6 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		signal: input.signal,
 		onEvent: input.onEvent,
 		onControl: input.onControl,
-		execution: input.execution ? { ...input.execution, tools: input.tools } : undefined,
 		resourceLease: input.resourceLease,
 		leaseStartupMs: input.leaseStartupMs,
 		invocation: input.invocation,

@@ -6,13 +6,10 @@ import { fileURLToPath } from "node:url";
 import { MAX_TIMER_MS, truncateOutput, truncateToUtf8Bytes } from "./policy.ts";
 import { canDiscardOversizedEvent, JsonlReader, RPC_RECORD_LIMIT_BYTES } from "./jsonl.ts";
 import { AnswerHistory, answerExplanation } from "./answers.ts";
-import { StreamedAnswer } from "./streamed-answer.ts";
 import type { ResponseEvidence } from "./evidence.ts";
 import { verifyLease, type InheritedLease } from "./lease.ts";
 import { LEASE_ENV, LeaseStartup } from "./lease-startup.ts";
-import { ChildFinalizer, type FinalizationFailure } from "./child-finalizer.ts";
-import { GUARD_ENV, validateGuardedExecution, type GuardedExecution, type FinalizationProgress } from "./guard-protocol.ts";
-import { HEADROOM_EXIT_CODE, parseHeadroomRefusal, type HeadroomProgress } from "./headroom-protocol.ts";
+import type { FinalizationProgress } from "./guard-protocol.ts";
 
 export interface PiInvocation {
 	command: string;
@@ -89,11 +86,9 @@ export interface RunPiChildInput {
 	onControl?: (ctl: ChildControl) => void;
 	/** Optional fail-closed startup handshake, before the task is sent to the child. */
 	beforePrompt?: (signal: AbortSignal) => Promise<void>;
-	/** Explicit opt-in runtime API; delegate configuration/default activation is separate. */
-	execution?: GuardedExecution;
-	/** Borrowed locked descriptor, inherited by the child; requires guarded startup acknowledgement. */
+	/** Borrowed locked descriptor, inherited by the child; requires lease startup acknowledgement. */
 	resourceLease?: InheritedLease;
-	/** Explicit lease-only handshake; mutually exclusive with execution. No runtime/tool policy changes. */
+	/** Explicit lease-only handshake. No runtime/tool policy changes. */
 	leaseStartupMs?: number;
 	/** Explicit worker executable and prefix arguments for non-Pi hosts. */
 	invocation?: PiInvocation;
@@ -301,7 +296,7 @@ export function tailBytes(text: string, maxBytes: number): string {
 
 function resolveStopReason(input: {
 	stopKind?: "aborted" | "hard_timeout";
-	failure?: { reason: "error" | "protocol-error" | FinalizationFailure; text: string };
+	failure?: { reason: "error" | "protocol-error"; text: string };
 	state: AssistantState;
 }): string | undefined {
 	if (input.stopKind) return input.stopKind;
@@ -322,31 +317,24 @@ function writeStdin(stdin: { write: (chunk: string) => unknown; destroyed?: bool
 }
 
 export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
+	if ("execution" in input && input.execution !== undefined) throw new Error("Execution/headroom guard APIs are retired; refusing to launch without the requested policy.");
 	// The caller owns the private, per-run archive snapshot. Fail before spawning if unreadable.
 	readFileSync(input.promptSourcePath);
-	const execution = input.execution ? validateGuardedExecution(input.execution) : undefined;
 	if (!Number.isSafeInteger(input.hardTimeoutMs) || input.hardTimeoutMs < 0 || input.hardTimeoutMs > MAX_TIMER_MS) {
 		throw new Error("Invalid hardTimeoutMs: must be a supported timer duration.");
 	}
 	const lease = input.resourceLease !== undefined ? { ...input.resourceLease } : undefined;
-	if (input.leaseStartupMs !== undefined && (execution || !lease || !Number.isSafeInteger(input.leaseStartupMs)
+	if (input.leaseStartupMs !== undefined && (!lease || !Number.isSafeInteger(input.leaseStartupMs)
 		|| input.leaseStartupMs < 1 || input.leaseStartupMs > MAX_TIMER_MS)) throw new Error("Invalid lease-only startup policy.");
 	if (lease) {
-		if (!execution && input.leaseStartupMs === undefined) throw new Error("Inherited resource leases require guarded child execution or explicit lease-only startup.");
+		if (input.leaseStartupMs === undefined) throw new Error("Inherited resource leases require explicit lease-only startup.");
 		verifyLease(lease.fd, lease);
 	}
-	const nonce = execution || lease ? randomUUID() : undefined;
-	const leaseConfig = lease && !execution ? { nonce: nonce!, lease: { dev: lease.dev, ino: lease.ino } } : undefined;
+	const nonce = lease ? randomUUID() : undefined;
+	const leaseConfig = lease ? { nonce: nonce!, lease: { dev: lease.dev, ino: lease.ino } } : undefined;
 	const leaseStartup = leaseConfig ? new LeaseStartup(leaseConfig, input.leaseStartupMs!) : undefined;
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
-	if (execution) {
-		if (!args.includes("--no-extensions")) args.push("--no-extensions");
-		args.push("--extension", fileURLToPath(new URL("./guard.ts", import.meta.url)));
-		childEnv[GUARD_ENV] = JSON.stringify({ nonce, tools: execution.tools,
-			...(lease ? { lease: { dev: lease.dev, ino: lease.ino } } : {}),
-			...(execution.headroom ? { headroom: execution.headroom } : {}) });
-	}
 	if (leaseConfig) {
 		if (!args.includes("--no-extensions")) args.push("--no-extensions");
 		args.push("--extension", input.leaseGuardPath ?? fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
@@ -360,10 +348,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const terminate = input.killTree ?? killChildTree;
 
 	let stderr = "";
-	let refusalReceipt: HeadroomProgress | undefined;
 	let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
 	const answers = new AnswerHistory(input.maxOutputBytes);
-	const streamed = execution ? new StreamedAnswer(input.maxOutputBytes) : undefined;
 	// Correlate delivered steering by exact text without retaining arbitrary control messages.
 	const pendingWraps = new Map<string, number>();
 	const wrapKey = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -371,9 +357,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	let timedOut = false;
 	let aborted = false;
 	let stopKind: "aborted" | "hard_timeout" | undefined;
-	let failure: { reason: "error" | "protocol-error" | FinalizationFailure; text: string } | undefined;
-	let drainRefusalOutput = false;
-	let finalizer: ChildFinalizer | undefined;
+	let failure: { reason: "error" | "protocol-error"; text: string } | undefined;
 	let taskDispatched = false;
 	let startupWrap: string | undefined;
 	let openResponse = false;
@@ -401,18 +385,9 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const finish = (code: number): void => {
 			if (closed) return;
 			closed = true;
-			if (execution?.headroom && (code === HEADROOM_EXIT_CODE || refusalReceipt) && !failure && !stopKind) {
-				try {
-					finalizer?.refusalExit(refusalReceipt);
-					failure = { reason: "context_budget", text: refusalReceipt
-						? `Child context request refused: ${refusalReceipt.detail ?? "unsafe payload"}`
-						: "Child context request refused; the RPC receipt was unavailable. Available evidence may be incomplete." };
-				} catch (error) { failure = { reason: "guard-error", text: String(error) }; }
+			if (leaseStartup && !taskDispatched && !failure && !stopKind) {
+				failure = { reason: "error", text: "Child exited before the leased task was dispatched." };
 			}
-			if ((execution || leaseStartup) && !taskDispatched && !failure && !stopKind) {
-				failure = { reason: "guard-error", text: "Child exited before the guarded task was dispatched." };
-			}
-			finalizer?.dispose();
 			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
 			input.signal?.removeEventListener("abort", onAbort);
@@ -429,10 +404,9 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			}
 		};
 
-		const fail = (reason: "error" | "protocol-error" | FinalizationFailure, text: string): void => {
+		const fail = (reason: "error" | "protocol-error", text: string): void => {
 			if (closed || stopKind || failure) return;
 			failure = { reason, text };
-			finalizer?.dispose();
 			startup.abort();
 			closeStdin();
 			terminate(proc);
@@ -446,16 +420,9 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			if (count) pendingWraps.set(key, count); else pendingWraps.delete(key);
 			return false;
 		};
-		if (execution) finalizer = new ChildFinalizer(execution, nonce!, {
-			send, steer, fail,
-			onState: state => {
-				try { input.onEvent?.({ type: "delegate_finalization", state }); }
-				catch { /* Progress observers cannot alter enforcement. */ }
-			},
-		}, undefined, lease);
 
 		const consume = (line: string): void => {
-			if (closed || stopKind || (failure && !drainRefusalOutput) || !line.trim()) return;
+			if (closed || stopKind || failure || !line.trim()) return;
 			try {
 				const parsed = JSON.parse(line);
 				const type = jsonlEventType(parsed);
@@ -467,9 +434,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					fail("error", typeof parsed.error === "string" && parsed.error.trim() ? parsed.error : "Child rejected the RPC prompt.");
 					return;
 				}
-				finalizer?.accept(parsed);
 				leaseStartup?.accept(parsed);
-				if ((failure && !drainRefusalOutput) || stopKind || closed) return;
+				if (failure || stopKind || closed) return;
 				const cancel = failure ? undefined : uiCancelResponse(parsed);
 				if (cancel) writeStdin(proc.stdin, cancel);
 				if (type === "message_end" && parsed.message?.role === "user") {
@@ -489,12 +455,10 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					if (type === "message_start") openResponse = true;
 					else if (type === "message_end") openResponse = false;
 				}
-				streamed?.observe(parsed, answers.currentPhase);
 				const next = applyAssistantSnapshot(state, parsed, input.maxOutputBytes);
 				if (next !== state) { state = next; answers.observe(state); }
 				if (isAgentSettled(parsed) && !settled) {
 					settled = true;
-					finalizer?.settled();
 					closeStdin();
 				}
 				try {
@@ -511,7 +475,6 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			if (closed || failure || stopKind) return;
 			aborted = true;
 			if (!stopKind) stopKind = "aborted";
-			finalizer?.dispose();
 			startup.abort();
 			send({ type: "abort" });
 			terminate(proc);
@@ -523,7 +486,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					if (settled || aborted || timedOut || closed || failure) return false;
 					const text = message && message.trim() ? message : DEFAULT_WRAP_MESSAGE;
 					if (leaseStartup && !taskDispatched) { startupWrap ??= text; return true; }
-					return finalizer ? finalizer.request(text) : steer(text);
+					return steer(text);
 				},
 			});
 		} catch {
@@ -535,7 +498,6 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				if (closed || failure || stopKind) return;
 				timedOut = true;
 				if (!stopKind) stopKind = "hard_timeout";
-				finalizer?.dispose();
 				startup.abort();
 				terminate(proc);
 			}, input.hardTimeoutMs);
@@ -560,24 +522,9 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			},
 		});
 		proc.stdout?.on("data", (chunk: string) => {
-			if (!closed && !stopKind && (!failure || drainRefusalOutput)) reader.write(chunk);
+			if (!closed && !stopKind && !failure) reader.write(chunk);
 		});
-		const refusalReader = execution?.headroom ? new JsonlReader({ maxBytes: 4096, onOversized: () => {},
-			onLine: line => {
-				const receipt = parseHeadroomRefusal(line, nonce!);
-				if (!receipt || refusalReceipt || closed || stopKind || failure) return;
-				refusalReceipt = receipt;
-				// Latch the first terminal cause, but stderr can overtake preceding stdout reports.
-				// Continue draining those reports through process closure instead of discarding them.
-				drainRefusalOutput = true;
-				try {
-					finalizer?.refusalExit(receipt);
-					fail("context_budget", `Child context request refused: ${receipt.detail ?? "unsafe payload"}`);
-				} catch (error) { fail("guard-error", String(error)); }
-			},
-		}) : undefined;
 		proc.stderr?.on("data", (chunk: string) => {
-			refusalReader?.write(chunk);
 			stderr += chunk;
 			if (Buffer.byteLength(stderr, "utf8") > STDERR_TAIL_BYTES * 4) {
 				stderr = tailBytes(stderr, STDERR_TAIL_BYTES);
@@ -585,14 +532,13 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		});
 		proc.on("error", (error) => {
 			closed = true;
-			finalizer?.dispose();
 			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
 			input.signal?.removeEventListener("abort", onAbort);
 			reject(error);
 		});
 		proc.on("close", (code) => {
-			reader.end(); refusalReader?.end();
+			reader.end();
 			finish(code ?? 1);
 		});
 		const startupFailure = (error: unknown) => {
@@ -600,54 +546,29 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		};
 		const startPrompt = () => {
 			if (closed || taskDispatched || stopKind || failure) return;
+			// Recheck after beforePrompt: a later acknowledgement may have invalidated readiness.
 			try { leaseStartup?.assertReady(); }
-			catch (error) { fail("guard-error", String(error)); return; }
-			// Controls can arrive during beforePrompt or between its promise and this callback.
-			// Recheck synchronously at dispatch, not only at the initial readiness await.
-			if (finalizer && !finalizer.canDispatchTask()) {
-				void finalizer.waitReady(startup.signal).then(startPrompt, startupFailure);
-				return;
-			}
+			catch (error) { fail("error", String(error)); return; }
 			taskDispatched = send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
 			if (taskDispatched) {
-				finalizer?.markTaskSent();
 				if (startupWrap) { steer(startupWrap); startupWrap = undefined; }
 			}
-			else if (execution || leaseStartup) fail("guard-error", "Could not send the guarded child task.");
+			else if (leaseStartup) fail("error", "Could not send the leased child task.");
 		};
-		finalizer?.start(DEFAULT_WRAP_MESSAGE);
-		if (input.beforePrompt || finalizer || leaseStartup) {
+		if (input.beforePrompt || leaseStartup) {
 			Promise.resolve().then(async () => {
-				if (finalizer) await finalizer.waitReady(startup.signal);
 				if (leaseStartup) await leaseStartup.wait(startup.signal);
 				if (input.beforePrompt) await input.beforePrompt(startup.signal);
 			}).then(startPrompt, startupFailure);
 		} else startPrompt();
 	});
 
-	const openStream = streamed?.open ?? false;
-	if (openStream) answers.observePartial(streamed!.text() ?? "", streamed!.originPhase);
-	const completedError = !answers.awaitingResponse && (state.stopReason === "error" || state.stopReason === "length");
-	let stopReason = !stopKind && !failure && openStream && !completedError ? "incomplete-output"
-		: !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
-			: resolveStopReason({ stopKind, failure, state });
-	const finalization = finalizer?.snapshot();
-	if (!stopKind && !failure && !completedError) {
-		if (finalization?.reason === "execution_budget") stopReason = "execution_budget";
-		else if (finalization?.reason === "context_budget" || finalization?.headroom?.limited) stopReason = "context_budget";
-	}
-	// Put the cause before partial output so the answer cap cannot hide it.
-	const explanation = answerExplanation({ ...state, stopReason })
-		?? (execution && stopReason === "hard_timeout" ? "Child hard runtime limit expired; available evidence may be incomplete."
-			: execution && stopReason === "aborted" ? "Child cancelled; available evidence may be incomplete."
-				: stopReason === "context_budget" ? "Child context budget reached; available evidence may be incomplete."
-				: stopReason === "execution_budget" ? "Child execution budget exhausted; available evidence may be incomplete."
-					: stopReason === "incomplete-output" ? "Child exited before its assistant response was finalized; available evidence may be incomplete." : undefined);
+	const stopReason = !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
+		: resolveStopReason({ stopKind, failure, state });
+	const explanation = answerExplanation({ ...state, stopReason });
 	const assistantText = explanation
 		? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
 		: state.text || state.errorMessage || "";
-	const failureText = failure && execution && assistantText
-		? `${failure.text}\n\nPartial assistant output:\n${assistantText}` : failure?.text;
 	const stderrTail = tailBytes(stderr, STDERR_TAIL_BYTES);
 	const diag: ChildDiag = {
 		command: invocation.command,
@@ -656,7 +577,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		durationMs: Date.now() - started,
 		eventCount,
 		events,
-		sawAssistant: state.sawAssistant || openStream,
+		sawAssistant: state.sawAssistant,
 	};
 	if (pid !== undefined) diag.pid = pid;
 	const dump = summarizeChildRun({
@@ -666,14 +587,13 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		stderrTail,
 	});
 	return {
-		text: finalizeChildText(answers.format(failureText ?? assistantText, failure?.text ?? explanation), dump, input.maxOutputBytes),
+		text: finalizeChildText(answers.format(failure?.text ?? assistantText, failure?.text ?? explanation), dump, input.maxOutputBytes),
 		exitCode,
 		stderrTail,
 		model: state.model,
 		stopReason,
 		diag,
 		evidence: answers.evidence(taskDispatched, openResponse, settled),
-		...(finalization ? { finalization } : {}),
 	};
 }
 

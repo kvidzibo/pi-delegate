@@ -17,8 +17,6 @@ export type CalibrationProfile = {
 };
 export type SavingsSnapshot = { version: 1; profile: CalibrationProfile; pricing: Pricing; pricedAt: string };
 export type EstimatedUsage = { usd: number; requests: number; unpriced: number };
-export type CalibrationSample = { taskId: string; repeat: number; local: SampleArm; alternative: SampleArm };
-export type SampleArm = { passed: boolean; complete: boolean; tokens: Tokens };
 
 const obj = (x: unknown): Record<string, any> => x !== null && typeof x === "object" && !Array.isArray(x) ? x as Record<string, any> : {};
 const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0;
@@ -70,30 +68,6 @@ export function validSnapshot(value: unknown): value is SavingsSnapshot {
 }
 export function validEstimate(value: unknown): value is EstimatedUsage {
 	const e = obj(value); return finite(e.usd) && count(e.requests) && count(e.unpriced);
-}
-
-/** Successful-pair fit, not a success-adjusted economic claim. Failed and incomplete pairs remain in diagnostics. */
-export function fitCalibration(key: CalibrationKey, suiteHash: string, samples: CalibrationSample[], now = new Date()): CalibrationProfile {
-	if (new Set(samples.map(s => `${s.taskId}:${s.repeat}`)).size !== samples.length) throw new Error("Duplicate calibration pair");
-	const validTokens = (t: Tokens) => [t.input, t.output, t.cacheRead, t.cacheWrite, t.total].every(count)
-		&& t.total === t.input + t.output + t.cacheRead + t.cacheWrite && t.total > 0;
-	const accepted = samples.filter(s => s.local.passed && s.alternative.passed && s.local.complete && s.alternative.complete
-		&& validTokens(s.local.tokens) && validTokens(s.alternative.tokens));
-	if (accepted.length < 4 || new Set(accepted.map(s => s.taskId)).size < 4) throw new Error("Calibration needs at least four distinct mutually successful, fully recorded tasks");
-	const sum = (arm: "local" | "alternative", bucket: keyof Tokens) => accepted.reduce((n, s) => n + s[arm].tokens[bucket], 0);
-	const prompt = (arm: "local" | "alternative") => sum(arm, "input") + sum(arm, "cacheRead") + sum(arm, "cacheWrite");
-	const ratios = accepted.map(s => s.alternative.tokens.total / s.local.tokens.total);
-	const profile: CalibrationProfile = {
-		version: 1, id: keyId(key), createdAt: now.toISOString(), key: structuredClone(key), suiteHash,
-		pairs: samples.length, acceptedPairs: accepted.length,
-		localFailures: samples.filter(s => !s.local.passed).length, alternativeFailures: samples.filter(s => !s.alternative.passed).length,
-		incompletePairs: samples.filter(s => !s.local.complete || !s.alternative.complete || !validTokens(s.local.tokens) || !validTokens(s.alternative.tokens)).length,
-		promptRatio: prompt("alternative") / prompt("local"), outputRatio: sum("alternative", "output") / sum("local", "output"),
-		cacheReadShare: sum("alternative", "cacheRead") / prompt("alternative"), cacheWriteShare: sum("alternative", "cacheWrite") / prompt("alternative"),
-		totalRatioRange: [Math.min(...ratios), Math.max(...ratios)],
-	};
-	if (!validProfile(profile)) throw new Error("Invalid calibration totals or profile identity");
-	return profile;
 }
 
 export function estimateRequest(tokens: Tokens, model: string, snapshot: SavingsSnapshot): number | undefined {

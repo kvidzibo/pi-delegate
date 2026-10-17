@@ -3,25 +3,22 @@ import { test } from "node:test";
 import { mkdtempSync, writeFileSync, rmSync, appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { estimateRequest, fingerprint, fitCalibration, keyId, loadSavingsSnapshot, priceTokens, snapshotPricing, validProfile, validSnapshot } from "../calibration.ts";
+import { estimateRequest, fingerprint, keyId, loadSavingsSnapshot, priceTokens, snapshotPricing, validProfile, validSnapshot } from "../calibration.ts";
 import { UsageMeter, sessionUsage, validUsage } from "../usage.ts";
 import { ArchivedRun, loadRuns } from "../archive.ts";
 import { infobar, savingsTotals, statsReport } from "../stats.ts";
 import { loadDelegateConfig, mergeDelegateConfig } from "../config.ts";
-import { key, pricing, samples, savings, tokens } from "./calibration-fixtures.ts";
+import { key, pricing, savings, tokens } from "./calibration-fixtures.ts";
 
 function temp(t: any) { const dir = mkdtempSync(join(tmpdir(), "delegate-calibration-test-")); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; }
 const message = (usage = tokens(100, 20, 100), model = key.localModel) => ({ role: "assistant", provider: model.split("/")[0], model: model.split("/").slice(1).join("/"), usage, timestamp: 1 });
 
-test("successful-pair fit retains failures, rejects duplicates/undersampling, separates caches and reasoning", () => {
-	const rows = samples(); rows.push({ ...rows[0], taskId: "failed", alternative: { ...rows[0].alternative, passed: false } });
-	const p = fitCalibration(key, fingerprint("suite"), rows);
-	assert.equal(p.promptRatio, 0.5); assert.equal(p.outputRatio, 0.5); assert.equal(p.cacheReadShare, 0.5);
-	assert.equal(p.acceptedPairs, 4); assert.equal(p.pairs, 5); assert.equal(p.alternativeFailures, 1);
+test("profile validation checks ratios, sample counts, identity and pricing", () => {
+	const p = savings().profile;
 	assert.ok(validProfile(p)); assert.equal(keyId({ ...key, tools: [...key.tools].reverse() }), p.id);
-	assert.throws(() => fitCalibration(key, fingerprint("suite"), rows.concat(rows[0])), /Duplicate/);
-	assert.throws(() => fitCalibration(key, fingerprint("suite"), samples().slice(0, 3)), /four distinct/);
-	assert.throws(() => fitCalibration(key, fingerprint("suite"), samples().map((r,i) => ({ ...r, taskId: "same", repeat: i }))), /distinct/);
+	assert.equal(validProfile({ ...p, acceptedPairs: 3 }), false);
+	assert.equal(validProfile({ ...p, pairs: 3 }), false);
+	assert.equal(validProfile({ ...p, id: fingerprint("wrong identity") }), false);
 	assert.equal(validProfile({ ...p, outputRatio: NaN }), false);
 	assert.equal(validProfile({ ...p, cacheWriteShare: 0.6 }), false);
 	assert.equal(validSnapshot({ ...savings(), pricing: { ...pricing, input: 0 } }), false);
@@ -81,13 +78,6 @@ test("missing final usage keeps observed partial estimate but cannot earn comple
 	const after = meter.snapshot();
 	assert.equal(after.estimate!.usd, before); assert.equal(after.estimate!.requests, 1);
 	assert.equal(after.estimate!.unpriced, 1); assert.equal(after.incomplete, true);
-});
-
-test("zero prompt/output calibration denominators fail without producing a profile", () => {
-	for (const tok of [tokens(0, 1), tokens(1, 0)]) {
-		const rows = samples().map(s => ({ ...s, local: { ...s.local, tokens: tok } }));
-		assert.throws(() => fitCalibration(key, fingerprint("suite"), rows), /Invalid calibration/);
-	}
 });
 
 test("native reconstruction and archive reload/rebuild preserve captured prices, never backfill legacy runs", async t => {

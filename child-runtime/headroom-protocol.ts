@@ -1,5 +1,4 @@
-export const HEADROOM_EXIT_CODE = 79;
-export const HEADROOM_STDERR_PREFIX = "delegate-context-refusal: ";
+/** Read-only compatibility schema for historical archive metadata. */
 export type HeadroomProgress = {
 	policyId: string;
 	phase: "starting" | "ready" | "checked" | "limited" | "compaction-blocked" | "refused" | "refusal-exit";
@@ -11,17 +10,6 @@ export type HeadroomProgress = {
 	clippedToolResults?: number;
 	detail?: string;
 };
-
-/** Caller bounds stderr lines. Ignore ordinary diagnostics and receipts from another child. */
-export function parseHeadroomRefusal(line: string, nonce: string): HeadroomProgress | undefined {
-	if (!line.startsWith(HEADROOM_STDERR_PREFIX)) return;
-	try {
-		const raw = JSON.parse(line.slice(HEADROOM_STDERR_PREFIX.length));
-		if (raw?.nonce !== nonce) return;
-		const progress = copyHeadroomProgress(raw.headroom);
-		return progress?.phase === "refused" && progress.limited ? progress : undefined;
-	} catch { return; }
-}
 
 export function copyHeadroomProgress(value: unknown): HeadroomProgress | undefined {
 	const raw = value as Partial<HeadroomProgress> | undefined;

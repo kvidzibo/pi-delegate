@@ -136,4 +136,4 @@ node --test --experimental-strip-types delegate/tests/*.test.ts
 xvfb-run -a npm test
 ```
 
-The [implementation contract](SPEC.md) covers changes to runtime behavior. Guarded execution and shared-capacity APIs are opt-in library features, not delegate configuration defaults; see [child-runtime](../child-runtime/README.md).
+The [implementation contract](SPEC.md) covers runtime changes; see [child-runtime](../child-runtime/README.md) for RPC and shared-capacity requirements. Execution/headroom guard APIs are retired; existing archive metadata remains readable.
