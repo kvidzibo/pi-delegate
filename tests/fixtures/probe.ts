@@ -256,8 +256,8 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-models-probe", async (ctx) => {
 		assert.ok(pi.getCommands().some(command => command.name === "pi-delegate"));
 		assert.ok(!pi.getCommands().some(command => command.name === "delegate"));
-		const initial = JSON.parse(readFileSync(new URL("../../delegate/config.json", import.meta.url), "utf8"));
-		const oldModel = initial.agents.recon.model;
+		// Keep a local job queued while a newly selected hosted model bypasses it.
+		const oldModel = "local-qwen38/qwen38-q4km";
 		const slash = oldModel.indexOf("/");
 		const selected = "picker-cloud/team/new";
 		writeFileSync(join(getAgentDir(), "models.json"), JSON.stringify({ providers: {
@@ -288,7 +288,7 @@ export default function probe(pi: ExtensionAPI) {
 		}
 		const userPath = join(getAgentDir(), "delegate.json");
 		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: {
-			recon: { thinking: "medium", tools: ["read", "bash"] },
+			recon: { model: oldModel, thinking: "medium", tools: ["read", "bash"] },
 			implement: { model: "picker-extra/other" },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));

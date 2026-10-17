@@ -28,7 +28,7 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 	};
 	const a = factory(), b = factory();
 	try {
-		const first = await a({ kind: "recon", task: "hold", background: true });
+		const first = await a({ kind: "recon", model: "local-qwen38/qwen38-q4km", task: "hold", background: true });
 		assert.ok(starts[0].resourceLease); assert.equal(starts[0].leaseStartupMs, 15000);
 		assert.equal(starts[0].execution, undefined, "shared capacity must not enable finalization deadlines");
 		const second = await b({ kind: "recon", model: "ollama/other", task: "wait", background: true });

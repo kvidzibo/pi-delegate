@@ -4,6 +4,11 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
+Shipped models use `openai-codex`: `recon` uses `gpt-6-astra`, `implement`
+uses `gpt-6-luna`, and `review`, `oracle` and `docs` use `gpt-6.1-sol`.
+All role defaults are hosted; local models remain available through overrides.
+Existing user model overrides take precedence over these defaults.
+
 Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role. Its model picker opens immediately; selecting a model continues to reasoning. Enter on the current model skips a model save. If no selectable model is available, reasoning still opens for the current model. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Reasoning choices come from Pi's supported levels for that model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saves go to `~/.pi/agent/delegate.json` and apply to new jobs in this session; running and queued jobs keep their settings. Other sessions need `/reload`. Esc returns to the role list. Declining a save stays on that picker; successful saves are confirmed in the next dialog.
 
 For manual configuration, override [shipped defaults](config.json) in that user file, not in the installed package. Replace `provider/model` with an available Pi model ID:

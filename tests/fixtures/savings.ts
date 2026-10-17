@@ -14,7 +14,11 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	s.profile.key.promptHash = fingerprint(readFileSync(fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url)), "utf8"));
 	const { keyId } = await import("../../delegate/calibration.ts"); s.profile.id = keyId(s.profile.key);
 	const file = join(ctx.cwd, "profile.json"); writeFileSync(file, JSON.stringify(s.profile));
-	const configPath = join(getAgentDir(), "delegate.json"); writeFileSync(configPath, JSON.stringify({ calibrationProfiles: [file] }));
+	const configPath = join(getAgentDir(), "delegate.json"); writeFileSync(configPath, JSON.stringify({
+		calibrationProfiles: [file],
+		agents: { recon: { model: s.profile.key.localModel, thinking: s.profile.key.localThinking } },
+		localAlternatives: { [s.profile.key.localModel]: { model: s.profile.key.alternativeModel, thinking: s.profile.key.alternativeThinking } },
+	}));
 	const previous = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 	const api = { ...pi, registerTool: (t: any) => { tool = t; }, registerCommand: (name: string, command: any) => commands.set(name, command),
 		registerMessageRenderer: () => {}, on: (event: string, handler: Function) => handlers.set(event, handler) } as unknown as ExtensionAPI;
