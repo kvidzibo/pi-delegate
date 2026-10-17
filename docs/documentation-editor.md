@@ -14,6 +14,7 @@ base, not an assumed local main/master.
 Omit `head` to include dispatch-time local changes: committed branch changes,
 staged/unstaged edits and non-ignored untracked files relative to `base`. The
 Pi extension's `delegate` tool accepts the same `base`/`head`/`files` fields.
+Only roles configured with a full-file provider accept these fields.
 
 To review existing documents without changing them first, pass `files`: 1–128
 unique, exact repository-root-relative paths, not globs. This **replaces**
@@ -37,9 +38,10 @@ configured patterns, ignored untracked files, missing files and unsupported
 sources fail capture rather than being silently omitted.
 
 Wait for the terminal result or cancel the job; `docs` rejects wrap requests to
-preserve its single structured response. Collect before applying anything. Empty selections complete
-without a model call. Related unchanged documents are injected only when
-explicitly selected with `files`; cross-file checks cover only the selected set.
+preserve its single structured response. Collect before applying anything.
+Empty selections complete without a model call. Related unchanged documents are
+injected only when explicitly selected with `files`; cross-file checks cover only
+the selected set.
 
 ## Configure file selection
 
