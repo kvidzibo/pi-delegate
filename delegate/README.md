@@ -4,8 +4,15 @@ The extension provides the `delegate` tool, model picker, job controls and usage
 
 ## Configuration
 
-Shipped models use `openai-codex`: `recon` and `implement` use `gpt-6-luna`,
-`oracle` uses `gpt-6-astra`, and `review` uses `gpt-6.1-sol`.
+Shipped models use `openai-codex`:
+
+| Role | Model | Reasoning |
+|---|---|---|
+| `recon` | `gpt-6-luna` | `off` |
+| `implement` | `gpt-6.1-sol` | `medium` |
+| `review` | `gpt-6.1-sol` | `high` |
+| `oracle` | `gpt-6-astra` | `high` |
+
 All role defaults are hosted; local models remain available through overrides.
 Existing user model overrides take precedence over these defaults.
 
@@ -54,7 +61,7 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 
 Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
 
-`review` defaults to `read`, `grep`, `find` and `ls`—no `bash`, `write` or `edit`. Existing user `tools` overrides still replace the defaults. Removing shell/edit tools is not a filesystem sandbox.
+`review` defaults to `read`, `grep`, `find`, `ls` and `bash`—no `write` or `edit` tools. Read-only behavior relies on its prompt, not shell write protection. Existing user `tools` overrides still replace the defaults.
 
 ## Cross-extension busy query
 

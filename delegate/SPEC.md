@@ -112,7 +112,7 @@ Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with expl
 
 ## Task context
 
-Pass the supplied task unchanged to every role and archive that exact task. Do not prepare automatic diffs or discover Git state for task context. Legacy role `context` keys are ignored and preserved on configuration saves. Callers supply readable artifacts or file paths and scope; review defaults to `read`, `grep`, `find`, `ls`, without bash.
+Pass the supplied task unchanged to every role and archive that exact task. Do not prepare automatic diffs or discover Git state for task context. Legacy role `context` keys are ignored and preserved on configuration saves. Callers supply readable artifacts or file paths and scope; review defaults to `read`, `grep`, `find`, `ls` and `bash`, with read-only behavior specified by prompt policy rather than a sandbox.
 
 ## Spawn
 

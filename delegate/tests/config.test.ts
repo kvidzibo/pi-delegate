@@ -40,7 +40,10 @@ test("shipped config parses four agents", () => {
 	assert.equal("offline" in config.agents.recon, false);
 	assert.equal("offline" in config.agents.implement, false);
 	assert.ok(config.agents.implement.tools.includes("edit"));
-	assert.equal(config.agents.review.thinking, "medium");
+	assert.equal(config.agents.implement.model, "openai-codex/gpt-6.1-sol");
+	assert.equal(config.agents.implement.thinking, "medium");
+	assert.equal(config.agents.review.model, "openai-codex/gpt-6.1-sol");
+	assert.equal(config.agents.review.thinking, "high");
 	assert.equal(config.agents.oracle.thinking, "high");
 });
 
@@ -50,7 +53,7 @@ test("model override keeps agent tools and prompt kind", () => {
 	assert.equal(resolved.model, "ollama/qwen3");
 	assert.deepEqual(resolved.agent.tools, config.agents.implement.tools);
 	assert.equal(resolved.agent.prompt, config.agents.implement.prompt);
-	assert.equal(resolved.agent.thinking, "low");
+	assert.equal(resolved.agent.thinking, "medium");
 	assert.equal(resolveAgent("recon", "  ", config).model, config.agents.recon.model);
 	assert.equal(resolveAgent("review", undefined, config).model, config.agents.review.model);
 });
@@ -58,7 +61,7 @@ test("model override keeps agent tools and prompt kind", () => {
 test("disabled roles reject launches and overrides while other roles and explicit re-enabling work", () => {
 	const base = shipped();
 	assert.equal(base.agents.implement.enabled, true);
-	assert.deepEqual(base.agents.review.tools, ["read", "grep", "find", "ls"]);
+	assert.deepEqual(base.agents.review.tools, ["read", "grep", "find", "ls", "bash"]);
 	const disabled = mergeDelegateConfig(base, { agents: { implement: { enabled: false } } }, "overlay.json");
 	for (const model of [undefined, "hosted/override"]) {
 		assert.throws(() => resolveAgent("implement", model, disabled), /implement is disabled/);

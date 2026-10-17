@@ -51,7 +51,7 @@ Options:
 
 Directory/config options resolve relative to the launch directory; use absolute paths in client configuration. Keep the same agent directory across participating clients to retain shared local-worker coordination. Changing it creates a separate capacity namespace and model/credential setup.
 
-Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review has no shell by default. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role definitions, prompts, enablement, tools and extension policy are manual configuration settings, not writable through the operator API.
+Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review remains read-only by prompt policy. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role definitions, prompts, enablement, tools and extension policy are manual configuration settings, not writable through the operator API.
 
 ## Tools
 
@@ -212,7 +212,7 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 
 - **No sandbox.** Workspace validation selects where work starts; shell commands can still access other paths, processes, credentials and network services available to the server's OS account.
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
-- Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. Other read-only roles rely on prompt policy; their shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
+- Review defaults to `read`, `grep`, `find`, `ls` and `bash`, without `write`/`edit` tools. Read-only roles rely on prompt policy; shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable context files, skills and prompt templates. Extension discovery is disabled unless the role sets `extensions: true`; local runs also load the private lease helper.
 - No tool can change role configuration. The optional operator-only RPC extension changes only role models/reasoning.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.
