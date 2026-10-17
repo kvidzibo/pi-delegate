@@ -29,9 +29,6 @@ export function enqueueDelegate(input: {
 	leaseGuardPath?: string;
 	childRunner?: typeof runChild;
 	onAccepted?: (archive: ArchivedRun) => void;
-	beforeRun?: (archive: ArchivedRun, signal: AbortSignal) => Promise<void> | void;
-	/** Recheck host authorization after all asynchronous preparation, immediately before child dispatch. */
-	beforeDispatch?: (archive: ArchivedRun, signal: AbortSignal) => void;
 }): JobSnapshot {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = { ...input.agent, tools: [...input.agent.tools] };
@@ -47,11 +44,7 @@ export function enqueueDelegate(input: {
 			local, task: input.task, timeoutMs: input.timeoutMs,
 			...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 			background: input.background, cancelOnAbort: input.background ? undefined : input.signal,
-			run: (handle, childSignal, onEvent, onControl) => input.accounting.run(archive, handle.id, async onUsage => {
-				const preparation = input.beforeRun?.(archive, childSignal);
-				if (preparation) await preparation;
-				childSignal.throwIfAborted();
-				input.beforeDispatch?.(archive, childSignal);
+			run: (handle, childSignal, onEvent, onControl) => input.accounting.run(archive, handle.id, onUsage => {
 				childSignal.throwIfAborted();
 				return (input.childRunner ?? runChild)({
 					task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
@@ -95,7 +88,7 @@ export interface ServiceOptions {
 	childRunner?: typeof runChild;
 }
 
-/** Connection-owned headless host; no Pi session, UI, snapshots or model calls. */
+/** Connection-owned headless host; no Pi session, UI or model calls. */
 export class DelegateService {
 	private readonly ownerId = randomUUID();
 	private readonly workspace: string;
@@ -113,8 +106,7 @@ export class DelegateService {
 		this.options = options;
 		assertNotNested(options.env ?? process.env);
 		this.workspace = realpathSync(resolveChildCwd(options.workspace, process.cwd()));
-		// Ignore even explicit inherited repository approvals: MCP has no consent UI.
-		this.config = { ...options.config, snapshots: { defaultEnabled: false, repositories: {} } };
+		this.config = { ...options.config };
 		this.accounting = new Accounting(archiveRoot(options.agentDir, options.env));
 		this.scheduler = new JobScheduler({
 			maxConcurrent: this.config.maxConcurrent, maxLocalConcurrent: this.config.maxLocalConcurrent,

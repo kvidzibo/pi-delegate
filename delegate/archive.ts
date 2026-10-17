@@ -9,7 +9,6 @@ import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
-import type { SnapshotRef } from "./snapshots.ts";
 
 export type RunRecord = {
 	version: 1;
@@ -39,7 +38,6 @@ export type RunRecord = {
 	savingsUnavailable?: string;
 	finalization?: FinalizationProgress;
 	outcome?: ExecutionOutcome;
-	repositorySnapshot?: SnapshotRef;
 };
 
 export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities"> & { kind: Kind };
@@ -133,13 +131,6 @@ export class ArchivedRun {
 		this.data.outcome = describeOutcome(this.data);
 		this.data.revision++;
 		// Refuse launch if recording cannot be established. Do not silently run without an archive.
-		atomicJson(this.paths.metadata, this.data);
-	}
-
-	/** Persist the capture link before dispatching any child task; recording failures block launch. */
-	attachSnapshot(snapshot: SnapshotRef): void {
-		this.data.repositorySnapshot = { ...snapshot };
-		this.data.revision++;
 		atomicJson(this.paths.metadata, this.data);
 	}
 

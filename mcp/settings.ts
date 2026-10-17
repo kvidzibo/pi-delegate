@@ -63,7 +63,7 @@ const patchSchema = z.object({
 		.refine(agents => Object.keys(agents).length > 0, "Select at least one role"),
 }).strict();
 
-/** Operator API: no tools, no caller-controlled paths, no snapshot or permission writes. */
+/** Operator API: no tools, no caller-controlled paths, no permission writes. */
 export class DelegateSettings {
 	private readonly tokenHash: Buffer;
 	private closed = false;

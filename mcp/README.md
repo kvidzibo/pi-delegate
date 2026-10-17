@@ -53,8 +53,6 @@ Directory/config options resolve relative to the launch directory; use absolute 
 
 Tasks are dispatched without automatic diffs or extra prepared context. Supply readable artifacts or file paths and scope in the task; review has no shell by default. Legacy role `context` settings are ignored and preserved on saves. Disabled roles reject new starts, even with model overrides; retries of already accepted jobs still retrieve the original job. Role enablement/tools are manual configuration settings, not writable through the operator API.
 
-**Eval repository snapshot capture is always disabled in MCP**, even when inherited delegate configuration contains repository approvals or a global audit offer. Configuration is not modified. Snapshot auditing/approval remains an extension-only workflow.
-
 ## Tools
 
 ### `delegate_start`
@@ -170,7 +168,7 @@ Call `kvidzibo/settings/get` with `{ "token": "<private operator token>" }`. The
 | `writable`, `conflict`, `warning` | Persistence/catalogue availability and external-edit conflicts |
 | `applyTo` | `future-jobs`: accepted running/queued jobs retain their policy |
 
-The catalogue belongs to the **server’s configured Pi installation and agent directory**, not the parent Pi session. It loads configured chat models and credential availability without model calls or network catalogue discovery. It does not load extensions or return credentials, endpoints, prompts, tools, storage paths or snapshot configuration. Model availability is configuration presence, not proof that credentials or endpoints work. Unsupported installations, wrappers without a matching `--pi-package-dir`, or catalogue errors produce a generic warning and disable editing; delegation remains usable.
+The catalogue belongs to the **server’s configured Pi installation and agent directory**, not the parent Pi session. It loads configured chat models and credential availability without model calls or network catalogue discovery. It does not load extensions or return credentials, endpoints, prompts, tools or storage paths. Model availability is configuration presence, not proof that credentials or endpoints work. Unsupported installations, wrappers without a matching `--pi-package-dir`, or catalogue errors produce a generic warning and disable editing; delegation remains usable.
 
 The UI uses JSON Schema for basic controls, `models[].available` to disable unavailable selections and `models[].thinking` for dependent reasoning choices. Current unavailable models remain visible; no fallback or reasoning clamp is chosen automatically.
 
@@ -194,7 +192,7 @@ Only nonempty role `model`/`thinking` patches are accepted. The resulting model 
 
 The server validates all roles before atomically replacing the configured user overlay, preserving unrelated keys and existing symlinks/modes. It applies the new role policy to future launches immediately; retries and already accepted jobs remain unchanged. The update returns the same description shape as `get`, with the new revision. An uncertain update can be resolved by reading current settings; do not blindly repeat a stale patch.
 
-Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown application fields, snapshots and direct `offline`/tool/permission writes are rejected. Standard request `_meta` (progress/tracing metadata) is accepted but cannot grant settings authorization. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
+Application errors: `-33001` unauthorized; `-33002` revision/disk conflict; `-33003` persistence or catalogue unavailable. Invalid parameters use `-32602`. Unknown application fields and direct `offline`/tool/permission writes are rejected. Standard request `_meta` (progress/tracing metadata) is accepted but cannot grant settings authorization. With `PI_DELEGATE_SKIP_USER_CONFIG=1` and no explicit `--config`, settings are read-only.
 
 External file edits are detected but not silently adopted. A conflict requires collecting/cancelling work before restarting. Concurrent settings writers sharing the canonical overlay use a short-lived `.settings-lock` directory; a leftover lock after a crash fails closed. Remove it only after confirming no settings writer is active. Legacy manual/extension writers do not participate in that lock: avoid simultaneous writes.
 
@@ -216,7 +214,7 @@ Model-facing observation remains pull-based: call status when needed, or use bou
 - Workers inherit the server environment. Provide only credentials/services needed for the task. A client's approval of `delegate_start` does not approve or restrict each child tool call.
 - Review defaults to `read`, `grep`, `find`, `ls`, without shell/edit tools. Other read-only roles rely on prompt policy; their shell access is not write protection. Workers preserve Pi's inherited `PI_OFFLINE` setting. Legacy role `offline` keys are ignored and retained on saves. Without `PI_OFFLINE=1`, startup may perform automatic networking; this flag is not network isolation.
 - Nesting is refused when the delegate-child marker is present. Workers disable extension discovery, context files, skills and prompt templates; local runs explicitly load only the private lease helper.
-- No tool can change role configuration, enable snapshots or authorize capture. The optional operator-only RPC extension changes only role models/reasoning; snapshots remain forcibly disabled.
+- No tool can change role configuration. The optional operator-only RPC extension changes only role models/reasoning.
 - Archives retain tasks, code, thinking and tool output indefinitely. Keep them private; no automatic upload, redaction or expiry.
 
 ## Validation
