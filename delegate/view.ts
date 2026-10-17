@@ -189,10 +189,6 @@ export function renderChildResult(input: RowInput): ChildView {
 	});
 }
 
-export function renderJobBoardLine(line: string, width: number): string[] {
-	return width < 1 ? [] : [truncateToWidth(` ${line}`, width, "…")];
-}
-
 function clippedLines(lines: string[], limit: number, width: number): string[] {
 	if (limit < 1) return [];
 	const clipped = lines.slice(0, limit);

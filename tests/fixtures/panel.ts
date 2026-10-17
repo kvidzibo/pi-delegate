@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Container, CURSOR_MARKER, Spacer, Text, TuiMainScreen, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { Container, CURSOR_MARKER, Spacer, Text, TuiMainScreen, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { JobBoard } from "../../delegate/board.ts";
-import { renderChildResult, renderJobBoard, renderJobBoardLine } from "../../delegate/view.ts";
+import { renderChildResult, renderJobBoard } from "../../delegate/view.ts";
 import { projectJobBoard } from "../../delegate/panel.ts";
 import type { JobSnapshot } from "../../delegate/jobs.ts";
 import delegate from "../../delegate/index.ts";
@@ -10,6 +10,7 @@ import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
 
+const renderLine = (line: string, width: number): string[] => width < 1 ? [] : [truncateToWidth(` ${line}`, width, "…")];
 const theme = { fg: (_color: string, text: string) => text, bold: (s: string) => s, italic: (s: string) => s };
 function widgetHost(onRender: () => void = () => {}, tui?: TUI) {
 	const widgets = new Map<string, any>(); const container = new Container();
@@ -52,7 +53,7 @@ function checkResourcePresentation() {
 }
 
 function checkBoardGeometry() {
-	const board = new JobBoard(renderJobBoardLine); const host = widgetHost();
+	const board = new JobBoard(renderLine); const host = widgetHost();
 	board.paint(host.ui, "tui", `delegate reading ${"界 🧪 ".repeat(40)}`);
 	const component = host.widgets.get("delegate");
 	for (const width of [1, 2, 8, 16, 80]) {
@@ -69,7 +70,7 @@ function checkBottomAnchoring() {
 	const terminal: any = { columns: 100, rows: 16, write: (s: string) => writes.push(s), hideCursor() {}, showCursor() {}, stop() {} };
 	const tui = new TuiMainScreen(terminal, false);
 	const host = widgetHost(() => tui.requestRender(), tui);
-	const board = new JobBoard(renderJobBoardLine, () => new Container());
+	const board = new JobBoard(renderLine, () => new Container());
 	const transcript = new Text("parent 0", 0, 0);
 	let editorLines = ["editor top", `${CURSOR_MARKER}> input`, "editor end"];
 	const editor = { render: () => editorLines, invalidate() {} };

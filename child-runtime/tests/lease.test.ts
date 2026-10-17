@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import { FileCapacityBroker } from "../../delegate/capacity.ts";
 import { validateLeaseIdentity, sameLease, readLeaseIdentity } from "../lease.ts";
-import { GUARD_ENV, GUARD_NOTICE } from "../guard-protocol.ts";
 import { LEASE_ENV, LEASE_NOTICE } from "../lease-startup.ts";
 import { encodeRpc, type RunPiChildInput } from "../spawn.ts";
 import { mockChild, runMockPiChild } from "./helpers.ts";
@@ -18,7 +17,7 @@ function fixture(t: TestContext) {
 	const input: RunPiChildInput = { cwd: root, model: "test/model", task: "must wait for lease acknowledgement", hardTimeoutMs: 0,
 		maxOutputBytes: 1000, env: {}, buildArgs: () => [], resourceLease: lease.inherited,
 		promptSourcePath: fileURLToPath(new URL("../../delegate/prompts/recon.md", import.meta.url)),
-		execution: { tools: ["read"], finalizeAfterMs: 0, finalizationGraceMs: 1000, startupTimeoutMs: 1000 },
+		leaseStartupMs: 1000,
 		spawnFn: (_command, _args, value) => { options = value; return proc; },
 	};
 	return { input, proc, lease, options: () => options };
@@ -35,12 +34,16 @@ test("leased child startup inherits the descriptor and requires its correlated a
 	const f = fixture(t), pending = runMockPiChild(f.input);
 	try {
 		const options = f.options(); assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe", f.lease.inherited.fd]);
-		const config = JSON.parse(options.env[GUARD_ENV]);
+		const config = JSON.parse(options.env[LEASE_ENV]);
 		assert.deepEqual(config.lease, { dev: f.lease.inherited.dev, ino: f.lease.inherited.ino });
 		assert.equal(f.proc.stdinBytes, "");
 		f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
-			type: GUARD_NOTICE, nonce: config.nonce, version: 1, event: "ready", tools: ["read"], lease: config.lease,
-			state: { phase: "running", activeTools: 0 },
+			type: LEASE_NOTICE, nonce: "another-child-nonce", version: 1, lease: config.lease,
+		}) }));
+		await Promise.resolve();
+		assert.equal(f.proc.stdinBytes, "", "another child's receipt cannot release the task");
+		f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
+			type: LEASE_NOTICE, nonce: config.nonce, version: 1, lease: config.lease,
 		}) }));
 		for (let i = 0; i < 20 && !f.proc.stdinBytes.includes('"id":"p1"'); i++) await Promise.resolve();
 		assert.ok(f.proc.stdinBytes.includes('"id":"p1"'));
@@ -55,14 +58,13 @@ for (const acknowledgement of ["missing", "wrong"] as const) {
 	test(`${acknowledgement} inherited-lease acknowledgement refuses the task`, linux, async t => {
 		const f = fixture(t), pending = runMockPiChild(f.input);
 		try {
-			const config = JSON.parse(f.options().env[GUARD_ENV]);
+			const config = JSON.parse(f.options().env[LEASE_ENV]);
 			const lease = acknowledgement === "wrong" ? { dev: config.lease.dev, ino: config.lease.ino === "0" ? "1" : "0" } : undefined;
 			f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
-				type: GUARD_NOTICE, nonce: config.nonce, version: 1, event: "ready", tools: ["read"], lease,
-				state: { phase: "running", activeTools: 0 },
+				type: LEASE_NOTICE, nonce: config.nonce, version: 1, lease,
 			}) }));
 			const result = await pending;
-			assert.equal(result.stopReason, "guard-error"); assert.match(result.text, /expected inherited resource lease/);
+			assert.equal(result.stopReason, "error"); assert.match(result.text, /expected resource lease|Invalid resource lease identity/);
 			assert.equal(f.proc.stdinBytes.includes('"id":"p1"'), false);
 		} finally { f.proc.close(1); await pending; }
 	});
@@ -71,7 +73,7 @@ for (const acknowledgement of ["missing", "wrong"] as const) {
 test("lease-only startup withholds task and early steering until acknowledgement, and fails closed", linux, async t => {
 	for (const mode of ["ready", "wrong", "late-wrong", "timeout", "exit", "abort"] as const) {
 		const f = fixture(t), control = new AbortController();
-		const pending = runMockPiChild({ ...f.input, execution: undefined, leaseStartupMs: 30, signal: control.signal,
+		const pending = runMockPiChild({ ...f.input, leaseStartupMs: 30, signal: control.signal,
 			onControl: ctl => { assert.equal(ctl.wrap("Finish briefly"), true); },
 			beforePrompt: async () => {
 				if (mode !== "late-wrong") return;
@@ -83,7 +85,7 @@ test("lease-only startup withholds task and early steering until acknowledgement
 		});
 		try {
 			assert.equal(f.proc.stdinBytes, "", "even early wrap must not reach the model before startup");
-			assert.equal(f.options().env[GUARD_ENV], undefined);
+			assert.equal(f.options().env.PI_DELEGATE_RUNTIME_GUARD, undefined);
 			const config = JSON.parse(f.options().env[LEASE_ENV]);
 			if (mode === "ready" || mode === "wrong" || mode === "late-wrong") {
 				f.proc.stdout!.write(encodeRpc({ type: "extension_ui_request", method: "notify", message: JSON.stringify({
@@ -108,10 +110,10 @@ test("lease-only startup withholds task and early steering until acknowledgement
 	}
 });
 
-test("missing guard or changed parent descriptor fails before spawning, never uncoordinated", linux, async t => {
+test("missing startup policy or changed parent descriptor fails before spawning, never uncoordinated", linux, async t => {
 	const f = fixture(t); let spawns = 0;
 	const spawnFn = () => { spawns++; return f.proc; };
-	await assert.rejects(runMockPiChild({ ...f.input, execution: undefined, spawnFn }), /require guarded/);
+	await assert.rejects(runMockPiChild({ ...f.input, leaseStartupMs: undefined, spawnFn }), /require explicit lease-only startup/);
 	await assert.rejects(runMockPiChild({ ...f.input, resourceLease: { ...f.lease.inherited, ino: "0" }, spawnFn }), /identity changed/);
 	await assert.rejects(runMockPiChild({ ...f.input, resourceLease: null as any, spawnFn }), /descriptor/);
 	assert.equal(spawns, 0);
