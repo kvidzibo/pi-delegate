@@ -383,13 +383,13 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 		assert.ok(tools.find((tool: any) => tool.name === "delegate_start").inputSchema.properties.kind.enum.includes("writer"));
 		assert.equal(before.values.agents.writer.thinking, "off");
 		assert.ok(before.schema.properties.agents.properties.writer);
-		assert.ok(!JSON.stringify(before).includes(initial.agents.writer.prompt));
+		assert.equal(before.values.agents.writer.prompt, initial.agents.writer.prompt);
 		assert.equal(before.sources.agents.recon.model, "user");
 		assert.equal(before.sources.agents.review.model, "default");
 		assert.deepEqual(Object.keys(before.values), ["agents"]);
-		assert.deepEqual(Object.keys(before.values.agents.recon).sort(), ["model", "thinking"]);
-		assert.deepEqual(Object.keys(before.sources.agents.recon).sort(), ["model", "thinking"]);
-		assert.deepEqual(Object.keys(before.schema.properties.agents.properties.recon.properties).sort(), ["model", "thinking"]);
+		assert.deepEqual(Object.keys(before.values.agents.recon).sort(), ["enabled", "extensions", "model", "prompt", "thinking", "tools"]);
+		assert.deepEqual(Object.keys(before.sources.agents.recon).sort(), ["enabled", "extensions", "model", "prompt", "thinking", "tools"]);
+		assert.deepEqual(Object.keys(before.schema.properties.agents.properties.recon.properties).sort(), ["enabled", "extensions", "model", "prompt", "thinking", "tools"]);
 		assert.ok(!JSON.stringify(before).includes(token));
 		const held = service.start({ kind: "recon", task: "hold", requestId: "old-running" }).job;
 		await service.status(held.jobId, 50);
@@ -400,7 +400,7 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 			_meta: { progressToken: "operator-update", "gateway/sessionId": "fixture-session" } });
 		const originalText = readFileSync(overlay, "utf8");
 		for (const patch of [
-			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: ["bash"] } } }, { agents: { missing: { model: "test/after" } } },
+			{ snapshots: { defaultEnabled: true } }, { agents: { recon: { tools: [""] } } }, { agents: { missing: { model: "test/after" } } },
 			{ agents: { recon: { offline: false } } }, { agents: { recon: {} } },
 			{ agents: { recon: { model: "test/unavailable" } } },
 			{ agents: { recon: { model: "test/after" } } }, // old reasoning is unsupported; don't silently clamp
@@ -477,3 +477,99 @@ test("operator settings stay off tools and atomically affect future jobs only", 
 function childNotify(child: ChildProcessWithoutNullStreams, message: Record<string, unknown>): void {
 	child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
+
+test("full operator role edits add launchable roles, refresh tools and preserve accepted snapshots", { timeout: 15000 }, async () => {
+	const temp = mkdtempSync(join(tmpdir(), "pi-delegate-roles-"));
+	const paths = { shippedPath: join(root, "delegate/config.json"), userPath: join(temp, "delegate.json") };
+	const token = "role_operator_" + "x".repeat(32);
+	writeFileSync(paths.userPath, JSON.stringify({ maxConcurrent: 1, unrelated: 42,
+		agents: { writer: { model: "test/model", prompt: "Original prompt", tools: ["custom_tool"], context: "legacy", offline: true } } }));
+	const captured: any[] = [];
+	let release: (() => void) | undefined;
+	const service = new DelegateService({ workspace: temp, agentDir: join(temp, "agent"), config: loadDelegateConfig(paths),
+		invocation: { command: "unused", args: [] }, leaseGuardPath: join(root, "dist/lease-guard.js"), env: { PI_DELEGATE_LOG: "0" },
+		childRunner: async input => {
+			captured.push({ model: input.model, thinking: input.thinking, tools: input.tools, extensions: input.extensions });
+			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; input.signal?.addEventListener("abort", resolve, { once: true }); });
+			return { text: "fixture", exitCode: 0, stopReason: "stop", stderrTail: "" };
+		} });
+	const settings = new DelegateSettings({ token, paths, apply: agents => service.updateRoleSettings(agents),
+		catalogue: async () => ({ models: [{ id: "test/model", label: "Fixture", available: true, thinking: ["off", "high"] }] }) });
+	const [client, wire] = InMemoryTransport.createLinkedPair();
+	const replies = new Map<number, (message: any) => void>();
+	let seq = 0, notifications = 0;
+	client.onmessage = (message: any) => {
+		if (message.method === "notifications/tools/list_changed") notifications++;
+		const reply = replies.get(message.id); replies.delete(message.id); reply?.(message);
+	};
+	const request = async (method: string, params: unknown = {}) => {
+		const id = ++seq, received = new Promise<any>(resolve => replies.set(id, resolve));
+		await client.send({ jsonrpc: "2.0", id, method, params }); return received;
+	};
+	const handle = serveStdio(() => createMcpServer(service, "test", settings), { transport: wire });
+	try {
+		await client.start();
+		const initialized = await request("initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "roles-ui", version: "1" } });
+		assert.equal(initialized.result.capabilities.experimental[SETTINGS_EXTENSION].title, "Roles");
+		await client.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+		const before = (await request(SETTINGS_GET, { token })).result;
+		assert.equal(before.title, "Roles");
+		const schema = before.schema.properties.agents;
+		assert.equal(schema.propertyNames.pattern, "^[a-z][a-z0-9_-]{0,63}$");
+		assert.deepEqual(schema.additionalProperties.required, ["model", "prompt"]);
+		assert.equal(schema.additionalProperties.properties.prompt["x-multiline"], true);
+		assert.ok(schema.additionalProperties.properties.tools.items.enum.includes("custom_tool"));
+		assert.deepEqual(before.values.agents.writer.tools, ["custom_tool"]);
+		const held = service.start({ kind: "writer", task: "hold", requestId: "held" }).job;
+		await service.status(held.jobId, 50);
+		const queued = service.start({ kind: "writer", task: "queued", requestId: "queued" }).job;
+		const original = readFileSync(paths.userPath, "utf8");
+		const update = (agents: unknown, revision = before.revision) => request(SETTINGS_UPDATE, { token, revision, patch: { agents } });
+		for (const agents of [
+			{ writer: { enabled: false }, added: { model: "test/model", prompt: "  " } },
+			{ added: { prompt: "Missing model" } }, { added: { model: "test/model" } },
+			{ writer: { tools: [" "] } }, { writer: { tools: [" read"] } }, { writer: { tools: ["read", "read"] } },
+			{ writer: { extensions: "yes" } }, { writer: { thinking: "invalid" } },
+			{ writer: { model: "test/missing" } }, { writer: { extra: true } },
+			{ "Bad name": { model: "test/model", prompt: "Prompt" } },
+			JSON.parse('{"__proto__":{"model":"test/model","prompt":"Prompt"}}'),
+			{ constructor: { model: "test/model", prompt: "Prompt" } }, { prototype: { model: "test/model", prompt: "Prompt" } },
+		]) {
+			assert.ok((await update(agents)).error);
+			assert.equal(readFileSync(paths.userPath, "utf8"), original);
+		}
+		const edited = { enabled: false, model: "test/model", thinking: "high", tools: ["read", "custom_tool"], extensions: true, prompt: "Updated private prompt" };
+		const result = await update({ writer: edited, added: { model: "test/model", prompt: "New private prompt" } });
+		assert.equal(result.error, undefined, JSON.stringify(result));
+		assert.deepEqual(result.result.values.agents.writer, edited);
+		assert.deepEqual(result.result.values.agents.added, { enabled: true, model: "test/model", thinking: "off", tools: [], extensions: false, prompt: "New private prompt" });
+		await setImmediate();
+		assert.ok(notifications > 0);
+		const tools = (await request("tools/list")).result.tools;
+		assert.ok(tools.find((tool: any) => tool.name === "delegate_start").inputSchema.properties.kind.enum.includes("added"));
+		assert.ok(!JSON.stringify(tools).includes("private prompt"));
+		assert.ok(!JSON.stringify(tools).includes(token));
+		assert.throws(() => service.start({ kind: "writer", task: "new", requestId: "disabled" }), /disabled/);
+		assert.equal(service.start({ kind: "writer", task: "hold", requestId: "held" }).job.jobId, held.jobId);
+		const added = (await request("tools/call", { name: "delegate_start", arguments: { kind: "added", task: "new", requestId: "added" } })).result.structuredContent.job;
+		const saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
+		assert.equal(saved.unrelated, 42); assert.equal(saved.agents.writer.context, "legacy"); assert.equal(saved.agents.writer.offline, true);
+		release!();
+		for (const job of [held, queued, added]) await service.status(job.jobId, 10000);
+		assert.deepEqual(captured, [
+			{ model: "test/model", thinking: "off", tools: ["custom_tool"], extensions: false },
+			{ model: "test/model", thinking: "off", tools: ["custom_tool"], extensions: false },
+			{ model: "test/model", thinking: "off", tools: [], extensions: false },
+		]);
+		assert.equal(readFileSync(join(dirname(queued.archive!.sessionFile), "system-prompt.md"), "utf8"), "Original prompt");
+		assert.equal(readFileSync(join(dirname(added.archive.sessionFile), "system-prompt.md"), "utf8"), "New private prompt");
+		const enabled = await update({ writer: { enabled: true } }, result.result.revision);
+		assert.equal(enabled.error, undefined);
+		const fresh = service.start({ kind: "writer", task: "edited", requestId: "edited" }).job;
+		await service.status(fresh.jobId, 10000);
+		assert.deepEqual(captured.at(-1), { model: "test/model", thinking: "high", tools: ["read", "custom_tool"], extensions: true });
+		assert.equal(readFileSync(join(dirname(fresh.archive!.sessionFile), "system-prompt.md"), "utf8"), edited.prompt);
+	} finally {
+		release?.(); await service.shutdown(); await handle.close(); await client.close(); rmSync(temp, { recursive: true, force: true });
+	}
+});

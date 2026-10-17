@@ -36,16 +36,17 @@ export function createMcpServer(service: DelegateService, version: string, setti
     ].join(' '),
   });
 
-  server.registerTool('delegate_start', {
-    title: 'Start a delegate job',
-    description: 'Start one configured role. Returns its receipt immediately.',
-    inputSchema: z.object({
+  const startSchema = () => z.object({
       kind: z.enum(service.roleNames()),
       task: nonblank(20_000),
       requestId: nonblank(128),
       cwd: z.string().optional(),
       model: z.string().max(256).refine((value) => value.trim().length > 0 && /^[^/\s]+\/[^\s]+$/.test(value), 'Expected provider/model').optional(),
-    }).strict(),
+    }).strict();
+  const startTool = server.registerTool('delegate_start', {
+    title: 'Start a delegate job',
+    description: 'Start one configured role. Returns its receipt immediately.',
+    inputSchema: startSchema(),
     outputSchema: z.object({ job: jobValue, reused: z.boolean() }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   }, async ({ kind, task, requestId, cwd, model }, ctx) => {
@@ -57,6 +58,8 @@ export function createMcpServer(service: DelegateService, version: string, setti
       return failure(error);
     }
   });
+
+  service.onRolesChanged(() => startTool.update({ paramsSchema: startSchema() }));
 
   server.registerTool('delegate_status', {
     title: 'Observe delegate jobs',
