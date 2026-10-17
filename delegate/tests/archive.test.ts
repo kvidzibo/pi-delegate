@@ -48,6 +48,25 @@ test("private native sessions, tasks, and prompts are retained after completion;
 	assert.equal((await loadRuns(root)).runs[0].usage.local.total, 120);
 });
 
+test("retired docs runs retain native evidence and usage across reload and rebuild", async t => {
+	const { root, run } = setup(t);
+	run.start("d0001"); assistant(run); run.observe({ type: "agent_settled" });
+	await run.finish({ status: "done", stopReason: "stop", exitCode: 0 });
+	const metadata = { ...JSON.parse(readFileSync(run.paths.metadata, "utf8")), kind: "docs" };
+	const source = JSON.stringify(metadata);
+	writeFileSync(run.paths.metadata, source);
+	const native = readFileSync(run.paths.session, "utf8");
+	for (const rebuild of [false, true]) {
+		const restored = await loadRuns(root, { rebuild });
+		assert.deepEqual(restored.warnings, []);
+		assert.equal(restored.runs.length, 1);
+		assert.equal(restored.runs[0].kind, "docs");
+		assert.equal(totalTokens(restored.runs[0].usage), 120);
+	}
+	assert.equal(readFileSync(run.paths.metadata, "utf8"), source);
+	assert.equal(readFileSync(run.paths.session, "utf8"), native);
+});
+
 test("context refusal progress survives archive reload and rebuild without rewriting native evidence", async t => {
 	const { root, run } = setup(t); run.start("d0001"); assistant(run);
 	const native = readFileSync(run.paths.session, "utf8");

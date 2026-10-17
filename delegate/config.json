@@ -33,18 +33,6 @@
       "model": "openai-codex/gpt-6-astra",
       "tools": ["read", "grep", "find", "ls", "bash"],
       "thinking": "high"
-    },
-    "docs": {
-      "model": "openai-codex/gpt-6.1-sol",
-      "tools": [],
-      "thinking": "medium",
-      "context": [{
-        "source": "git-changed-files",
-        "include": ["**/*.md", "**/*.mdx", "**/*.markdown"],
-        "exclude": ["**/node_modules/**", "**/vendor/**", "**/generated/**"],
-        "content": "full",
-        "delivery": "inline"
-      }]
     }
   }
 }

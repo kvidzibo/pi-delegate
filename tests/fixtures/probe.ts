@@ -328,8 +328,8 @@ export default function probe(pi: ExtensionAPI) {
 					}
 					assert.match(title, /Delegate models/);
 					assert.match(title, /model picker; reasoning follows/);
-					assert.equal(options.length, 5);
-					for (const kind of ["recon", "implement", "review", "oracle", "docs"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
+					assert.equal(options.length, 4);
+					for (const kind of ["recon", "implement", "review", "oracle"]) assert.ok(options.some(option => option.startsWith(`${kind} · `)));
 					if (rolePicks === 0) {
 						assert.doesNotMatch(options[0], /unavailable|not in scope/);
 						assert.ok(options.some(option => option.startsWith("implement · picker-extra/other (not in scope)")));

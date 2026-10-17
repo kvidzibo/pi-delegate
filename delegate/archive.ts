@@ -19,7 +19,7 @@ export type RunRecord = {
 	parentSessionFile?: string;
 	toolCallId: string;
 	jobId?: string;
-	kind: Kind;
+	kind: Kind | "docs"; // Historical runs remain readable after role retirement.
 	cwd: string;
 	requestedModel: string;
 	actualModel?: string;
@@ -42,7 +42,7 @@ export type RunRecord = {
 	repositorySnapshot?: SnapshotRef;
 };
 
-export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "kind" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities">;
+export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities"> & { kind: Kind };
 export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress; evidence?: ResponseEvidence };
 const GUARDED_SAVINGS_UNAVAILABLE = "Legacy calibration does not cover guarded execution; a policy-aware calibration is required.";
 function invalidateGuardedSavings(data: RunRecord): void {
@@ -217,7 +217,7 @@ function validRecord(value: unknown, id: string): value is RunRecord {
 	const r = record(value);
 	return r.version === 1 && Number.isSafeInteger(r.revision) && r.revision >= 0 && r.runId === id && UUID.test(id)
 		&& ["parentSessionId", "toolCallId", "cwd", "requestedModel", "thinking", "createdAt"].every((k) => typeof r[k] === "string")
-		&& (KINDS as readonly string[]).includes(r.kind)
+		&& (r.kind === "docs" || (KINDS as readonly string[]).includes(r.kind))
 		&& ["queued", "running", "done", "failed"].includes(r.status)
 		&& Array.isArray(r.tools) && r.tools.every((t: unknown) => typeof t === "string")
 		&& Number.isFinite(Date.parse(r.createdAt)) && Number.isFinite(r.durationMs) && r.durationMs >= 0;

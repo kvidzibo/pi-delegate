@@ -419,7 +419,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		label: "Delegate",
 		renderShell: "self",
 		description:
-			"Child agent. recon/implement/review/oracle/docs. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
+			"Child agent. recon/implement/review/oracle. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.",
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; use it for isolated child work only when expected speed or quality gain exceeds coordination and validation cost.",
@@ -429,7 +429,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind implement only for bounded edits and tests. Give parallel children disjoint files and scopes; avoid parent/child write races.",
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
-			"Use kind docs for one tool-free editor of all selected complete documents, with no Git diff. Supply a full base SHA and optional full head SHA (omit head for current worktree). It returns validated JSON proposals, never writes source files. Before applying, inspect docs-proposal.json and files-context.json beside the archived session, recheck source hashes, review the proposed diff, and obtain required approvals.",
 			"Roles can be disabled in configuration; do not retry a disabled role with another model. Role context providers run automatically before dispatch; review defaults to context [git-diff]. git-diff supplies a private whole-checkout diff against the main/master merge base, including untracked non-ignored files. Exclude secrets before calling. Capture failures block launch; outside Git, supply context yourself.",
 			"For delegate, omit model to use the configured role default unless the user explicitly requests another model. Do not guess model IDs or silently substitute a fallback. Overrides keep the kind's tools, prompt and thinking level.",
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Children must not commit, push, merge, publish, release or expand scope.",
@@ -439,7 +438,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"delegate timeoutMs is a wait budget, never a kill. Foreground expiry auto-backgrounds and returns a short check-in.",
 			"With delegate jobId, omit timeoutMs to wait until done or 60s quiet; timeoutMs:0 peeks.",
 			"On a nonterminal delegate check-in, inspect current/recent tools and quietForMs. Wait while useful progress continues; silence or wait expiry alone does not prove a stall.",
-			"For a suspected delegate stall (except docs, which rejects wraps), request wrap:true once, then wait again in a separate call; allow the current turn/tools and final report time to finish.",
+			"For a suspected delegate stall, request wrap:true once, then wait again in a separate call; allow the current turn/tools and final report time to finish.",
 			"Before delegate cancel:true for a suspected stall, fetch and inspect a fresh jobId/timeoutMs:0 snapshot in a separate call. Cancel only if post-wrap checks still show a stall; explicit user stop or unsafe/out-of-scope work may cancel immediately.",
 			"delegate wrap:true is advisory steering, not an interrupt or delivery acknowledgement. cancel:true aborts and kills.",
 			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",
@@ -449,9 +448,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
-			kind: optionalArgument(Type.String({ description: "recon, implement, review, oracle, or docs. Required to spawn." })),
-			base: optionalArgument(Type.String({ description: "Full base commit SHA, required for full-file context." })),
-			head: optionalArgument(Type.String({ description: "Full head commit SHA for full-file context; omit to capture current worktree." })),
+			kind: optionalArgument(Type.String({ description: "recon, implement, review, or oracle. Required to spawn." })),
 			cwd: optionalArgument(
 				Type.String({ description: "Child working directory. Relative paths resolve against parent cwd." }),
 			),
@@ -562,7 +559,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const captureDirectory = snapshotDirectory(agentDir(), captureConfig);
 					let capturedRepository: Repository | undefined;
 					snap = enqueueDelegate({
-						scheduler, accounting, agent: resolved.agent, task: parsed.task, base: parsed.base, head: parsed.head, promptPath,
+						scheduler, accounting, agent: resolved.agent, task: parsed.task, promptPath,
 						identity: {
 							parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 							toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking,

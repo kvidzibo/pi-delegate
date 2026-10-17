@@ -114,8 +114,6 @@ export type ParsedCall =
 			timeoutMs: number;
 			modelOverride?: string;
 			cwd?: string;
-			base?: string;
-			head?: string;
 	  }
 	| {
 			mode: "collect";
@@ -203,7 +201,7 @@ export function parseDelegateCall(
 		if (rec.wrap === true && rec.cancel === true) {
 			throw new Error("delegate refused: wrap cannot combine with cancel.");
 		}
-		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined || rec.base !== undefined || rec.head !== undefined) {
+		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined) {
 			throw new Error("delegate refused: jobId cannot combine with spawn fields.");
 		}
 		const raw = rec.timeoutMs;
@@ -232,12 +230,6 @@ export function parseDelegateCall(
 	if (modelOverride) parsed.modelOverride = modelOverride;
 	const cwd = typeof rec.cwd === "string" ? rec.cwd : undefined;
 	if (cwd !== undefined) parsed.cwd = cwd;
-	for (const key of ["base", "head"] as const) {
-		if (rec[key] !== undefined) {
-			if (typeof rec[key] !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(rec[key])) throw new Error(`${key} must be a full commit SHA.`);
-			parsed[key] = rec[key];
-		}
-	}
 	return parsed;
 }
 
@@ -430,7 +422,6 @@ export class JobScheduler {
 		const job = this.find(id);
 		if (!job) throw new Error(`delegate refused: unknown jobId ${id}.`);
 		if (this.terminal(job) || job.controller.signal.aborted) return this.snapshot(job);
-		if (job.kind === "docs") throw new Error("Docs jobs do not support wrap; wait or cancel instead.");
 		if (job.status === "queued") {
 			this.cancel(id);
 			return this.get(id);
