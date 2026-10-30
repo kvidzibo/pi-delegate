@@ -1,6 +1,6 @@
 # Delegate
 
-The extension provides the `delegate` tool, model picker, job controls and usage reports. Start with the [project README](../README.md) for installation, roles and safety limits.
+The native-only extension provides the `delegate` tool, full Roles editor, model picker, job controls and usage reports. Version 0.28.0 removes the MCP interface; see [migration](../MIGRATION.md). Start with the [project README](../README.md) for installation, roles and safety limits.
 
 ## Configuration
 
@@ -16,7 +16,9 @@ Shipped models use `openai-codex`:
 All role defaults are hosted; local models remain available through overrides.
 Existing user model overrides take precedence over these defaults.
 
-Use **`/pi-delegate`** for the options menu, or **`/pi-delegate models`** to select a role. Its model picker opens immediately; selecting a model continues to reasoning. Enter on the current model skips a model save. If no selectable model is available, reasoning still opens for the current model. Model choices match `/model`: scoped models when a scope is set, otherwise every available model. Reasoning choices come from Pi's supported levels for that model (including `xhigh` and `max` when supported); non-reasoning models offer only `off`. Unknown models cannot have reasoning selected until their metadata is available. Saves go to `~/.pi/agent/delegate.json` and apply to new jobs in this session; running and queued jobs keep their settings. Other sessions need `/reload`. Esc returns to the role list. Declining a save stays on that picker; successful saves are confirmed in the next dialog.
+Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery and the full multiline prompt. Enablement, extensions and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
+
+**`/pi-delegate models`** retains the model-first picker followed by reasoning. Both paths share model selection and persistence. Use Roles to save model and reasoning together; the model-first picker saves them separately. Model choices match `/model`: scoped models when set, otherwise all available models. Reasoning comes from Pi's supported levels (including `xhigh`/`max` when supported); non-reasoning models offer only `off`. Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues. They apply to future jobs in this session; queued/running jobs retain their acceptance-time policy. Other sessions need `/reload`.
 
 Add or override roles in `~/.pi/agent/delegate.json`, not in the installed package. [Shipped defaults](config.json) include the four starter roles and their full prompts. Replace `provider/model` with an available Pi model ID:
 
@@ -43,7 +45,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
 
-Roles appear in the launch schema, model picker, operator settings and history. Only model/reasoning are editable through the picker/operator API; other role fields require manual configuration. Accepted jobs retain their original prompt and policy. Legacy role `offline` and `context` keys are ignored and preserved on saves. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
+Roles appear in the launch schema, native Roles editor, model picker and history. All role fields are editable in the native Roles editor; manual JSON remains optional. Accepted jobs retain their original prompt and policy. Legacy role `offline` and `context` keys are ignored and preserved on saves. Invalid configuration prevents loading. Manual edits require `/reload` or restart; **reload stops outstanding children**.
 
 `docs` can now be defined like any other custom role. Old `agents.docs` entries need a `prompt` or must be removed; they are no longer ignored. Historical runs remain readable. Automatic diff/full-file context preparation and `base`/`head` job arguments remain unsupported. Supply context in the task instead.
 
@@ -118,7 +120,7 @@ Run from the repository root:
 
 ```bash
 node --test --experimental-strip-types delegate/tests/*.test.ts
-xvfb-run -a npm test
+npm run test:load
 ```
 
 The [implementation contract](SPEC.md) covers runtime changes; see [child-runtime](../child-runtime/README.md) for RPC and shared-capacity requirements. Execution/headroom guard APIs are retired; existing archive metadata remains readable.

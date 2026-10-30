@@ -28,6 +28,12 @@ test("installed Pi CLI tool selection preserves exact names and expands wildcard
 	}
 });
 
+test("native Roles edits full policy, creates safe roles and preserves accepted snapshots and overlays", async () => {
+	assert.deepEqual((await runPiProbe("delegate-roles-probe")).result, {
+		editor: true, safeDefaults: true, preservedOverlay: true, acceptedSnapshot: true,
+	});
+});
+
 test("delegate model UI lists roles, searches available models and saves without changing accepted jobs", async () => {
 	assert.deepEqual((await runPiProbe("delegate-models-probe")).result, {
 		roleModels: true, availableOnly: true, scopedOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true,

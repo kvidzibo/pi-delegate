@@ -11,11 +11,6 @@ import { verifyLease, type InheritedLease } from "./lease.ts";
 import { LEASE_ENV, LeaseStartup } from "./lease-startup.ts";
 import type { FinalizationProgress } from "./guard-protocol.ts";
 
-export interface PiInvocation {
-	command: string;
-	args: string[];
-}
-
 export interface ChildDiag {
 	command: string;
 	args: string[];
@@ -90,10 +85,6 @@ export interface RunPiChildInput {
 	resourceLease?: InheritedLease;
 	/** Explicit lease-only handshake. No runtime/tool policy changes. */
 	leaseStartupMs?: number;
-	/** Explicit worker executable and prefix arguments for non-Pi hosts. */
-	invocation?: PiInvocation;
-	/** Packaged lease helper; omitted for the source-based Pi extension. */
-	leaseGuardPath?: string;
 	spawnFn?: SpawnFn;
 	killTree?: (proc: ChildProcess) => void;
 }
@@ -177,7 +168,7 @@ export function summarizeChildRun(input: {
 	].join("\n");
 }
 
-export function getPiInvocation(args: string[]): PiInvocation {
+export function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
 	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
@@ -336,12 +327,10 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
 	if (leaseConfig) {
-		args.push("--extension", input.leaseGuardPath ?? fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
+		args.push("--extension", fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
 		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
 	}
-	const invocation = input.invocation
-		? { command: input.invocation.command, args: [...input.invocation.args, ...args] }
-		: getPiInvocation(args);
+	const invocation = getPiInvocation(args);
 	const started = Date.now();
 	const spawnFn = input.spawnFn ?? spawn;
 	const terminate = input.killTree ?? killChildTree;
