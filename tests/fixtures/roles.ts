@@ -10,13 +10,17 @@ import { enqueueDelegate } from "../../delegate/service.ts";
 /** Drive native settings components without a desktop or provider request. */
 export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const paths = { shippedPath: join(import.meta.dirname, "../../delegate/config.json"), userPath: join(getAgentDir(), "roles-test.json") };
-	const overlay = { unrelated: { keep: true }, agents: { recon: { offline: true, context: ["legacy"], note: "keep" } } };
+	const overlay = { unrelated: { keep: true }, agents: {
+		recon: { offline: true, context: ["legacy"], note: "keep" },
+		review: { tools: Array.from({ length: 40 }, (_, i) => `custom_${i}`) },
+	} };
 	writeFileSync(paths.userPath, JSON.stringify(overlay));
 	const config = loadDelegateConfig(paths);
 	let additions = 0;
 	const command = new ModelCommand(config, paths, () => { additions++; assert.ok(config.agents.writer); });
 	const model = { provider: "test", id: "available", name: "Available", reasoning: false };
 	let picks = 0, screen = 0, edits = 0;
+	let resizedTools = false;
 	const notices: string[] = [];
 	const actions = [
 		[0], // Explicit new-role model selection.
@@ -48,11 +52,27 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 			},
 			custom: async (create: Function) => {
 				let result: string | undefined;
-				const component = create({ terminal: { rows: 30 }, requestRender: () => {} }, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+				const terminal = { rows: 30, columns: 100 };
+				const component = create({ terminal, requestRender: () => {} }, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
 				try {
 					const moves = actions[screen++];
 					assert.ok(moves, `unexpected screen ${screen}`);
 					for (const width of [30, 100]) assert.ok(component.render(width).every((line: string) => visibleWidth(line) <= width));
+					if (!resizedTools && component.render(100).join("\n").includes("Tools · recon")) {
+						for (let i = 0; i < 35; i++) component.handleInput("\x1b[B");
+						for (const [rows, columns] of [[20, 50], [16, 40], [30, 100]]) {
+							terminal.rows = rows; terminal.columns = columns;
+							component.handleInput("\r"); // Stale geometry must not activate a hidden row.
+							const lines = component.render(columns);
+							assert.ok(lines.length <= rows - 6);
+							assert.ok(lines.every((line: string) => visibleWidth(line) <= columns));
+							assert.match(lines.join("\n"), /custom_25/, "Resize preserves the selected tool and scrolling");
+							assert.doesNotMatch(lines.join("\n"), /Enlarge terminal/);
+						}
+						for (let i = 0; i < 35; i++) component.handleInput("\x1b[A");
+						component.render(100);
+						resizedTools = true;
+					}
 					let position = 0;
 					for (const target of moves) {
 						if (target < 0) { component.handleInput("\x1b"); break; }
@@ -82,6 +102,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.deepEqual(notices, []);
 	assert.equal(additions, 1, "New roles refresh the native tool declaration after acceptance");
 	assert.equal(screen, actions.length);
+	assert.equal(resizedTools, true);
 	assert.deepEqual(config.agents.writer, { enabled: true, model: "test/available", thinking: "off", prompt: "Write documents.\nKeep scope.", tools: [], extensions: false });
 	assert.equal(config.agents.recon.enabled, false);
 	assert.equal(config.agents.recon.extensions, true);
