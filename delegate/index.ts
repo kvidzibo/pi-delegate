@@ -279,7 +279,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		const details: CardDetails = { ...saved?.details, ...snapshot };
 		const kind = knownKind(details.kind) ?? knownKind(args.kind);
 		details.kind ??= kind;
-		details.model ??= args.model ?? (kind ? config.agents[kind].model : undefined);
+		details.model ??= args.model ?? (kind && Object.hasOwn(config.agents, kind) ? config.agents[kind].model : undefined);
 		details.task ??= args.task;
 		details.jobId ??= jobId;
 		details.operation ??= args.cancel === true ? "cancel" : args.wrap === true ? "wrap" : args.timeoutMs === 0 ? "peek" : "wait";
