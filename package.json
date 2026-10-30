@@ -1,19 +1,15 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.27.0",
-  "description": "Delegate coding tasks to Pi workers through MCP or the Pi extension",
-  "bin": {
-    "pi-delegate-mcp": "./dist/server.js"
-  },
+  "version": "0.28.0",
+  "description": "Delegate coding tasks to Pi workers through the native Pi extension",
   "engines": {
     "node": ">=22.19.0"
   },
   "files": [
-    "dist",
     "delegate",
     "child-runtime",
-    "mcp/README.md",
     "README.md",
+    "MIGRATION.md",
     "LICENSE"
   ],
   "author": "Tomas Rackauskas",
@@ -39,19 +35,9 @@
     ]
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "prepack": "npm run build",
-    "test": "npm run test:unit && npm run test:mcp && npm run test:load",
+    "test": "npm run test:unit && npm run test:load",
     "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts",
-    "test:mcp": "npm run build && node --test --experimental-strip-types mcp/tests/*.test.ts",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/server": "^2.3.1",
-    "zod": "^4.2.0"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.2"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {

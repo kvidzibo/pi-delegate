@@ -10,8 +10,7 @@ import {
 	mergeDelegateConfig,
 	parseDelegateConfig,
 	resolveAgent,
-	saveDelegateModel,
-	saveDelegateThinking,
+	saveDelegatePatch,
 	type DelegateConfig,
 } from "../config.ts";
 
@@ -141,8 +140,8 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 	const paths = { shippedPath, userPath };
 	try {
 		const current = shipped().agents.recon;
-		const patch = saveDelegateModel(paths, "recon", current, "hosted/first");
-		assert.deepEqual(patch, { model: "hosted/first" });
+		const patch = { model: "hosted/first" };
+		saveDelegatePatch(paths, "recon", current, patch);
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
 			recon: { ...patch, prompt: "Custom recon prompt\nPreserve this text.", thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
@@ -150,28 +149,28 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
 		const live = loadDelegateConfig(paths).agents.recon;
-		const local = saveDelegateModel(paths, "recon", live, "ollama/team/model");
-		assert.deepEqual(local, { model: "ollama/team/model" });
+		const local = { model: "ollama/team/model" };
+		saveDelegatePatch(paths, "recon", live, local);
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { ...overlay, agents: {
 			...overlay.agents, recon: { ...overlay.agents.recon, ...local },
 		} });
 		const before = readFileSync(userPath, "utf8");
-		assert.throws(() => saveDelegateModel(paths, "recon", live, "hosted/stale"), /changed on disk/);
+		assert.throws(() => saveDelegatePatch(paths, "recon", live, { model: "hosted/stale" }), /changed on disk/);
 		assert.equal(readFileSync(userPath, "utf8"), before);
 		for (const bad of ["{broken", '{"agents":{"recon":false}}']) {
 			writeFileSync(userPath, bad);
-			assert.throws(() => saveDelegateModel(paths, "recon", live, "hosted/new"));
+			assert.throws(() => saveDelegatePatch(paths, "recon", live, { model: "hosted/new" }));
 			assert.equal(readFileSync(userPath, "utf8"), bad);
 		}
 		writeFileSync(userPath, before);
 		if (process.platform !== "win32") {
 			const link = join(dir, "linked.json"); symlinkSync(userPath, link);
-			saveDelegateModel({ shippedPath, userPath: link }, "recon", loadDelegateConfig(paths).agents.recon, "hosted/symlink");
+			saveDelegatePatch({ shippedPath, userPath: link }, "recon", loadDelegateConfig(paths).agents.recon, { model: "hosted/symlink" });
 			assert.equal(lstatSync(link).isSymbolicLink(), true);
 			assert.equal(loadDelegateConfig(paths).agents.recon.model, "hosted/symlink");
 			const defaults = join(dir, "defaults.json"), alias = join(dir, "defaults-link.json");
 			writeFileSync(defaults, readFileSync(shippedPath, "utf8")); symlinkSync(defaults, alias);
-			assert.throws(() => saveDelegateModel({ shippedPath: defaults, userPath: alias }, "recon", current, "hosted/new"), /shipped delegate defaults/);
+			assert.throws(() => saveDelegatePatch({ shippedPath: defaults, userPath: alias }, "recon", current, { model: "hosted/new" }), /shipped delegate defaults/);
 			assert.equal(readFileSync(defaults, "utf8"), readFileSync(shippedPath, "utf8"));
 		}
 	} finally { rmSync(dir, { recursive: true, force: true }); }
@@ -184,18 +183,18 @@ test("reasoning saves only thinking and refuses stale reasoning without writing"
 		const overlay = { note: "keep", agents: { recon: { model: "hosted/unchanged", thinking: "low", prompt: "Custom prompt", offline: false, tools: ["read"], context: ["git-diff"] } } };
 		writeFileSync(paths.userPath, JSON.stringify(overlay));
 		const current = loadDelegateConfig(paths).agents.recon;
-		assert.deepEqual(saveDelegateThinking(paths, "recon", current, "xhigh"), { thinking: "xhigh" });
+		saveDelegatePatch(paths, "recon", current, { thinking: "xhigh" });
 		assert.equal(loadDelegateConfig(paths).agents.recon.thinking, "xhigh");
 		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), {
 			...overlay, agents: { recon: { ...overlay.agents.recon, thinking: "xhigh" } },
 		});
 		assert.equal(current.thinking, "low");
 		const before = readFileSync(paths.userPath, "utf8");
-		assert.throws(() => saveDelegateThinking(paths, "recon", current, "off"), /changed on disk/);
+		assert.throws(() => saveDelegatePatch(paths, "recon", current, { thinking: "off" }), /changed on disk/);
 		assert.equal(readFileSync(paths.userPath, "utf8"), before);
 		const changedModel = JSON.stringify({ ...overlay, agents: { recon: { ...overlay.agents.recon, model: "hosted/changed" } } });
 		writeFileSync(paths.userPath, changedModel);
-		assert.throws(() => saveDelegateThinking(paths, "recon", current, "max"), /changed on disk/);
+		assert.throws(() => saveDelegatePatch(paths, "recon", current, { thinking: "max" }), /changed on disk/);
 		assert.equal(readFileSync(paths.userPath, "utf8"), changedModel);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

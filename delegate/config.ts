@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
@@ -274,53 +274,68 @@ export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 	return mergeDelegateConfig(shipped, JSON.parse(readFileSync(input.userPath, "utf8")), input.userPath);
 }
 
-/** Patch only this role's model; never rewrite shipped defaults or other settings. */
-export function saveDelegateModel(paths: ConfigPaths, kind: Kind, current: AgentConfig, model: string): Pick<AgentConfig, "model"> {
-	if (!/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Expected a provider/model ID.");
-	const patch = { model };
-	saveDelegatePatch(paths, kind, current, patch);
-	return patch;
+export function delegateConfigRevision(paths: ConfigPaths): string {
+	return JSON.stringify(readConfigState(paths).identity);
 }
 
-/** Persist reasoning independently; preserve model and tools. */
-export function saveDelegateThinking(paths: ConfigPaths, kind: Kind, current: AgentConfig, thinking: ThinkingLevel): Pick<AgentConfig, "thinking"> {
-	if (!isThinkingLevel(thinking)) throw new Error("Unsupported thinking level.");
-	const patch = { thinking };
-	saveDelegatePatch(paths, kind, current, patch);
-	return patch;
+function readConfigState(paths: ConfigPaths) {
+	const shippedPath = realpathSync(paths.shippedPath);
+	const shippedText = readFileSync(shippedPath, "utf8");
+	let path = paths.userPath;
+	let text: string | undefined;
+	let mode = 0o600;
+	if (path) {
+		let exists = false;
+		try { lstatSync(path); exists = true; }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+		if (exists) {
+			path = realpathSync(path); // Dangling links fail closed.
+			if (path === shippedPath) throw new Error("User config must not point at shipped delegate defaults.");
+			if (!statSync(path).isFile()) throw new Error("User config must be a regular file.");
+			text = readFileSync(path, "utf8");
+			mode = statSync(path).mode & 0o777;
+		}
+	}
+	const shipped = parseDelegateConfig(JSON.parse(shippedText), shippedPath);
+	const overlay = (text === undefined ? {} : JSON.parse(text)) as Record<string, unknown> & { agents?: Record<string, Record<string, unknown>> };
+	const config = mergeDelegateConfig(shipped, overlay, path ?? shippedPath);
+	return { path, mode, shipped, overlay, config, identity: [shippedPath, shippedText, path ?? null, text ?? null] };
 }
 
-function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig, patch: Partial<AgentConfig>): void {
+export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: AgentConfig | undefined, patch: Partial<AgentConfig>, revision?: string): string {
 	if (!paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 	assertKind(kind);
-	let path = paths.userPath;
-	let overlay: Record<string, unknown> & { agents?: Partial<Record<Kind, Record<string, unknown>>> } = {};
-	let mode = 0o600;
-	let exists = false;
-	try { lstatSync(path); exists = true; }
-	catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-	if (exists) {
-		// Preserve symlinks; a dangling link or unreadable/invalid file fails without writes.
-		path = realpathSync(path);
-		overlay = JSON.parse(readFileSync(path, "utf8"));
-		mode = statSync(path).mode & 0o777;
-	}
-	if (path === realpathSync(paths.shippedPath)) throw new Error("User config must not point at shipped delegate defaults.");
-	const shipped = loadDelegateConfig({ shippedPath: paths.shippedPath });
-	const config = mergeDelegateConfig(shipped, overlay, path);
-	if (!Object.hasOwn(config.agents, kind)) throw new Error(`delegate refused: unknown role ${kind}.`);
-	const saved = config.agents[kind];
-	if (saved.model !== current.model || (Object.keys(patch) as (keyof AgentConfig)[]).some(key => saved[key] !== current[key])) {
-		throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
-	}
-	const next = { ...overlay, agents: { ...overlay.agents, [kind]: { ...overlay.agents?.[kind], ...patch } } };
-	mergeDelegateConfig(shipped, next, path);
+	if (["constructor", "prototype", "__proto__"].includes(kind)) throw new Error("Reserved role name.");
+	if (patch.model !== undefined && !/^[^/\s]+\/[^\s]+$/.test(patch.model)) throw new Error("Expected a provider/model ID.");
+	const state = readConfigState(paths);
+	const baseline = JSON.stringify(state.identity);
+	const conflict = () => { throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`); };
+	if (revision !== undefined && revision !== baseline) conflict();
+	const { overlay, shipped, config, mode } = state;
+	const saved = Object.hasOwn(config.agents, kind) ? config.agents[kind] : undefined;
+	if (JSON.stringify(saved) !== JSON.stringify(current)) conflict();
+	if (!current && (!patch.model || !patch.prompt?.trim())) throw new Error("New roles require an explicit model and nonblank prompt.");
+	const next = { ...overlay, agents: { ...overlay.agents, [kind]: {
+		...(current ? overlay.agents?.[kind] : { enabled: true, tools: [], extensions: false, thinking: "off" }), ...patch,
+	} } };
+	mergeDelegateConfig(shipped, next, state.path!);
+	const path = state.path!;
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const lock = `${path}.settings-lock`;
+	try { mkdirSync(lock, { mode: 0o700 }); }
+	catch { throw new Error("Settings are busy or not writable; no changes were made."); }
 	const temp = `${path}.${randomUUID()}.tmp`;
 	try {
-		writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode, flag: "wx" });
+		if (delegateConfigRevision(paths) !== baseline) conflict();
+		const text = `${JSON.stringify(next, null, 2)}\n`;
+		const nextRevision = JSON.stringify([state.identity[0], state.identity[1], join(realpathSync(dirname(path)), basename(path)), text]);
+		writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
+		chmodSync(temp, mode);
+		if (delegateConfigRevision(paths) !== baseline) conflict();
 		renameSync(temp, path);
+		return nextRevision;
 	} finally {
-		try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+		try { unlinkSync(temp); } catch { /* private temporary file only */ }
+		try { rmdirSync(lock); } catch { /* Persistence may already have succeeded. */ }
 	}
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
@@ -13,7 +13,7 @@ import { uxProbe } from "./ux.ts";
 import { savingsProbe } from "./savings.ts";
 import { sharedCapacityProbe } from "./local.ts";
 import { capabilitiesProbe } from "./capabilities.ts";
-import { createCatalogueLoader } from "../../mcp/models.ts";
+import { rolesProbe } from "./roles.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	pi.registerCommand("delegate-reload-probe", {
@@ -41,6 +41,7 @@ export default function probe(pi: ExtensionAPI) {
 			},
 		});
 	};
+	register("delegate-roles-probe", rolesProbe);
 	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
 	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
 	register("delegate-shared-capacity-probe", ctx => sharedCapacityProbe(pi, ctx));
@@ -73,22 +74,6 @@ export default function probe(pi: ExtensionAPI) {
 				models: [{ id: "other", name: "Unscoped Model" }] },
 			"picker-no-auth": { baseUrl: "https://unused.invalid/v1", api: "openai-completions", models: [{ id: "hidden" }] },
 		} }));
-		const loadCatalogue = createCatalogueLoader({ command: "pi", agentDir: getAgentDir() });
-		const catalogue = await loadCatalogue();
-		assert.equal(catalogue.warning, undefined);
-		assert.ok(catalogue.models.find(model => model.id === selected)?.available);
-		const modelsStorePath = join(getAgentDir(), "models-store.json");
-		let savedStore: string | undefined;
-		try { savedStore = readFileSync(modelsStorePath, "utf8"); } catch { /* absent cache */ }
-		try {
-			writeFileSync(modelsStorePath, "{broken models store");
-			const failedCatalogue = await loadCatalogue();
-			assert.deepEqual(failedCatalogue.models, []);
-			assert.ok(failedCatalogue.warning, "refresh errors must disable settings, not offer fallback models");
-		} finally {
-			if (savedStore === undefined) rmSync(modelsStorePath, { force: true });
-			else writeFileSync(modelsStorePath, savedStore);
-		}
 		const userPath = join(getAgentDir(), "delegate.json");
 		const overlay = { maxOutputBytes: 12345, note: "preserve", agents: {
 			recon: { model: oldModel, thinking: "medium", tools: ["read", "bash"] },

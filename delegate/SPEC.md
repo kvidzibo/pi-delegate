@@ -1,6 +1,6 @@
 # delegate — implementation contract
 
-The Pi extension has one routing tool. Config-defined named agents. Child model is config. No nesting. Do not add a second Pi parent tool. The separate stdio MCP adapter exposes start/status/control tools over the shared service; see [MCP](../mcp/README.md).
+The Pi extension has one routing tool. Config-defined named agents. Child model is config. No nesting. Do not add a second Pi parent tool. Version 0.28.0 is extension-only; no standalone host or MCP interface ships. Finish old jobs before [migrating](../MIGRATION.md); running jobs cannot be adopted.
 
 ## Goal
 
@@ -18,9 +18,9 @@ delegate/
   tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
 ```
 
-Repo root has `package.json` (`pi.extensions: ["./delegate"]`) and a compiled `pi-delegate-mcp` executable. This directory has no package.json. `service.ts` shares acceptance/execution between the extension and MCP host; host consent, UI and shutdown remain separate.
+Repo root has `package.json` (`pi.extensions: ["./delegate"]`), with host-provided peer dependencies only and no build step or executable. This directory has no package.json. `service.ts` owns acceptance/execution and snapshots the complete role policy before queue admission.
 
-User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine. Role names match `[a-z][a-z0-9_-]{0,63}`. Each new role requires a nonempty `model` and `prompt`; `thinking` defaults to `off`, `tools` to `["*"]`, and `extensions` to `false`. Prompts live in config, replace the full custom system prompt, and are archived verbatim at admission. Omitted overlay fields inherit the existing role; tool arrays replace. Each role accepts boolean `enabled` (omitted means true). Disabled roles refuse new launches before archive creation/queue admission, regardless of model overrides. Already accepted jobs and MCP retry identities retain their policy. The private MCP operator settings API edits enabled/model/thinking/tools/extensions/prompt and adds roles with explicit model and nonblank prompt; new operator roles default to tools `[]`, extensions `false`, thinking `off`, enabled `true`. Manual configuration keeps the defaults above. Saves preserve unrelated configuration and legacy context/offline keys. New roles immediately update the MCP launch schema and emit tools/list_changed; accepted jobs and retry snapshots remain unchanged. Prompts are returned only through the private operator response, never model-facing tools. Schemas, pickers and archives accept custom role names; no fixed role allowlist. The former `docs` name is an ordinary custom role and needs a prompt.
+User overlay: `~/.pi/agent/delegate.json` merged onto shipped `config.json`. Missing overlay is fine. Role names match `[a-z][a-z0-9_-]{0,63}`. Each new role requires a nonempty `model` and `prompt`; `thinking` defaults to `off`, `tools` to `["*"]`, and `extensions` to `false`. Prompts live in config, replace the full custom system prompt, and are archived verbatim at admission. Omitted overlay fields inherit the existing role; tool arrays replace. Each role accepts boolean `enabled` (omitted means true). Disabled roles refuse new launches before archive creation/queue admission, regardless of model overrides. Already accepted jobs retain their policy. `/pi-delegate roles` edits enabled/model/thinking/tools/extensions/prompt and adds roles with an explicit available model and nonblank prompt; menu-created roles default to tools `[]`, extensions `false`, thinking `off`, enabled `true`. Use native SettingsList inline cycling for short choices, a tools list with all/none, the shared searchable model picker and `ctx.ui.editor` for multiline prompts. Save role validates and commits the draft; Esc discards it and goes back. `/pi-delegate models` retains model-first navigation using the same picker/save implementation. Manual configuration keeps the defaults above. Saves preserve the full overlay, unrelated settings and legacy context/offline keys; validate before atomic replacement under a cooperative lock and reject full-disk revision conflicts, unreadable targets, unavailable models or uncertain catalogues. New roles immediately refresh the native tool declaration and are available without reloading; accepted jobs remain unchanged. Prompts are not exposed through model-facing settings tools. Schemas, pickers and archives accept custom role names; no fixed role allowlist. The former `docs` name is an ordinary custom role and needs a prompt.
 
 ## Tool
 
@@ -148,7 +148,7 @@ Runtime execution/headroom guard APIs have been retired; both runtime entry poin
 
 Env: `PI_DELEGATE_CHILD=1`, `PI_DELEGATE_CHILD_DEPTH=1`.
 
-Child is `pi` (or `node <pi-script>`) plus those flags. Non-Pi hosts supply an explicit executable/prefix invocation; never re-execute the MCP entry point as a worker. The compiled MCP adapter supplies its packaged lease-helper path. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
+Child is the current `pi` CLI (or `node <pi-script>`) plus those flags. Local workers load the source lease helper explicitly; there is no packaged host/helper injection. Never a vendor CLI (`codex`, `claude`, …). On child end, append one JSON line to `~/.pi/agent/delegate.log` (`PI_DELEGATE_LOG=0` off, `PI_DELEGATE_LOG=/path` override). Record cmd/args, pid, hardTimeout/duration, exit, stopReason, JSONL event types, stderr. If assistant text is empty, tool result text is that dump.
 
 ## Durable accounting
 
@@ -164,7 +164,7 @@ Hide the entire usage footer when total tokens are zero. Otherwise use a separat
 
 ## Tests
 
-`xvfb-run -a npm test` (unit + offline CLI load/UI checks on Linux). `npm run test:unit` does not need Pi.
+`npm test` (unit + offline installed-CLI load/component checks on Linux). Desktop screenshot validation uses Xvfb, a private D-Bus and temporary HOME/agent data, never the live desktop. `npm run test:unit` does not need Pi.
 
 Pi unit children and termination are mocked; never send OS signals for fake PIDs. Linux capacity tests may spawn/stop their own offline Node fixtures, never model workers or unrelated processes. CLI smoke uses temporary configuration with no user overlay or credentials, loads the package through the installed CLI, and exercises renderers without model requests. Do not deep-import private unbundled Pi loaders.
 

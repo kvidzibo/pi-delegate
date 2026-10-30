@@ -2,7 +2,7 @@
 
 Helpers for running Pi child processes over RPC. This is an internal library, not a standalone command or automatically loaded extension.
 
-Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract. The [`runChild` adapter](../delegate/spawn.ts) supplies delegate-specific arguments, environment and diagnostics. Callers provide the prompt file and session arguments. Hosts that are not Pi must supply an explicit `invocation` (executable plus prefix arguments); the default invocation reuses the current Pi CLI. Compiled hosts also supply `leaseGuardPath` for their packaged local-worker helper.
+Use [`runPiChild` and its input/result types](spawn.ts) for the runtime contract. The [`runChild` adapter](../delegate/spawn.ts) supplies delegate-specific arguments, environment and diagnostics. Callers provide the prompt file and session arguments. Workers reuse the current Pi CLI and load the source lease helper for local capacity. Version 0.28.0 is extension-only: standalone host invocation/helper injection and the MCP adapter are removed. See [migration](../MIGRATION.md); old running jobs cannot be adopted.
 
 ## Important constraints
 
@@ -24,7 +24,7 @@ Run from the repository root:
 
 ```bash
 node --test --experimental-strip-types child-runtime/tests/*.test.ts
-xvfb-run -a npm test  # includes offline Pi integration checks
+npm test  # includes offline installed-Pi integration checks
 ```
 
 Tests use mocked workers or owned offline processes, never model requests.

@@ -170,7 +170,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				: join(agentDir(), "delegate.json"),
 	};
 	const config = loadDelegateConfig(configPaths);
-	const modelCommand = new ModelCommand(config, configPaths);
+	const modelCommand = new ModelCommand(config, configPaths, () => registerDelegateTool());
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const cards = new JobCards();
 	const origins = new Map<string, string>();
@@ -306,6 +306,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	pi.on("session_tree", (_event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); });
 	const dialogs = new AbortController();
 	registerDelegateCommand(pi, [{
+		name: "roles",
+		description: "Edit roles, models, reasoning, tools, extensions and prompts",
+		handler: (args, ctx) => modelCommand.command(args, ctx, true),
+	}, {
 		name: "models",
 		description: "Choose role models and reasoning levels",
 		handler: (args, ctx) => modelCommand.command(args, ctx),
@@ -360,7 +364,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		lastChecks.clear();
 	});
 
-	pi.registerTool({
+	const registerDelegateTool = () => pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
 		renderShell: "self",
@@ -555,4 +559,5 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				expandHint: keyHint("app.tools.expand", "full result and tool details") });
 		},
 	});
+	registerDelegateTool();
 }
