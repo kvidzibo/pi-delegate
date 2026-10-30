@@ -17,7 +17,8 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	writeFileSync(paths.userPath, JSON.stringify(overlay));
 	const config = loadDelegateConfig(paths);
 	let additions = 0;
-	const command = new ModelCommand(config, paths, () => { additions++; assert.ok(config.agents.writer); });
+	let created: typeof config.agents[string] | undefined;
+	const command = new ModelCommand(config, paths, () => { additions++; created = structuredClone(config.agents.writer); });
 	const model = { provider: "test", id: "available", name: "Available", reasoning: false };
 	let picks = 0, screen = 0, edits = 0;
 	let resizedTools = false;
@@ -25,6 +26,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const actions = [
 		[0], // Explicit new-role model selection.
 		[6], // Save safe defaults.
+		[0, 6], // Reopen and edit the new role without reloading.
 		[0, 4, 5], // Disable recon, enable extensions, edit multiline prompt.
 		[3], // Open tools.
 		[0], // All tools.
@@ -47,7 +49,8 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 			select: async (_title: string, options: string[]) => {
 				picks++;
 				if (picks === 1) return options.at(-1);
-				if (picks === 2) return options.find(item => item.startsWith("recon ·"));
+				if (picks === 2) return options.find(item => item.startsWith("writer ·"));
+				if (picks === 3) return options.find(item => item.startsWith("recon ·"));
 				return undefined;
 			},
 			custom: async (create: Function) => {
@@ -103,7 +106,8 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(additions, 1, "New roles refresh the native tool declaration after acceptance");
 	assert.equal(screen, actions.length);
 	assert.equal(resizedTools, true);
-	assert.deepEqual(config.agents.writer, { enabled: true, model: "test/available", thinking: "off", prompt: "Write documents.\nKeep scope.", tools: [], extensions: false });
+	assert.deepEqual(created, { enabled: true, model: "test/available", thinking: "off", prompt: "Write documents.\nKeep scope.", tools: [], extensions: false });
+	assert.deepEqual(config.agents.writer, { ...created, enabled: false }, "Newly created roles remain editable without reload");
 	assert.equal(config.agents.recon.enabled, false);
 	assert.equal(config.agents.recon.extensions, true);
 	assert.deepEqual(config.agents.recon.tools, ["read"]);
@@ -121,7 +125,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.deepEqual(launched.tools, original.tools);
 	// Unrelated external edits conflict too; no overlay fields may be silently lost.
 	writeFileSync(paths.userPath, JSON.stringify({ ...saved, changedExternally: true }));
-	picks = 1; screen = 9;
+	picks = 2; screen = 10;
 	await command.command("", testCtx, true);
 	assert.ok(notices.some(text => /changed on disk/.test(text)));
 	assert.equal(JSON.parse(readFileSync(paths.userPath, "utf8")).changedExternally, true);

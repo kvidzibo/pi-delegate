@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Alternative } from "./calibration.ts";
@@ -313,7 +314,7 @@ export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: Agent
 	if (revision !== undefined && revision !== baseline) conflict();
 	const { overlay, shipped, config, mode } = state;
 	const saved = Object.hasOwn(config.agents, kind) ? config.agents[kind] : undefined;
-	if (JSON.stringify(saved) !== JSON.stringify(current)) conflict();
+	if (!isDeepStrictEqual(saved, current)) conflict();
 	if (!current && (!patch.model || !patch.prompt?.trim())) throw new Error("New roles require an explicit model and nonblank prompt.");
 	const next = { ...overlay, agents: { ...overlay.agents, [kind]: {
 		...(current ? overlay.agents?.[kind] : { enabled: true, tools: [], extensions: false, thinking: "off" }), ...patch,
