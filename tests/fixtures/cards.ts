@@ -67,6 +67,25 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const api = { render, update, context, invalidations: () => invalidations };
 		rows.set(id, api); return api;
 	};
+	// Unconfigured roles may arrive before validation or survive in saved results.
+	for (const kind of ["verify", "removed-role", "constructor"]) {
+		const args = { kind, task: "Unknown role" };
+		const rejected = row(first.tool, `unknown-${kind}`, args);
+		assert.match(rejected.render(), new RegExp(kind));
+		const error = await first.tool.execute(`unknown-${kind}`, args, undefined, undefined, testCtx);
+		rejected.update(error, false);
+		assert.match(rejected.render(), /unknown role/);
+		const historical = row(first.tool, `saved-${kind}`, {});
+		historical.update({ details: { kind, status: "done", answer: "Archived answer" } }, false);
+		for (const expanded of [false, true]) {
+			historical.context.expanded = expanded;
+			assert.match(historical.render(), /Archived answer/);
+			for (const width of [1, 16, 80]) historical.render(width);
+		}
+		historical.update({ details: { kind, model: "archive/original-model", status: "done" } }, false);
+		assert.match(historical.render(), /archive\/original-model/);
+	}
+	assert.equal(runs.length, 0, "unknown roles must never dispatch a child");
 	const untilRun = async (ready: () => boolean) => {
 		for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10));
 		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
