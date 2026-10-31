@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, CURSOR_MARKER, Spacer, Text, TuiMainScreen, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { JobBoard } from "../../delegate/board.ts";
-import { renderChildResult, renderJobBoard } from "../../delegate/view.ts";
+import { renderChildCall, renderChildResult, renderJobBoard, type RowState } from "../../delegate/view.ts";
 import { projectJobBoard } from "../../delegate/panel.ts";
 import type { JobSnapshot } from "../../delegate/jobs.ts";
 import delegate from "../../delegate/index.ts";
@@ -41,14 +41,32 @@ function checkResourcePresentation() {
 		local: true, failed: false, background: true, activity: [], reason: "resource", resource: { key: "same-server", capacity: 1, state: "waiting" } };
 	const board = projectJobBoard([job], { maxLocalConcurrent: 1 })!;
 	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /Queued — waiting for shared resource same-server/);
-	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /model · effort off/);
-	assert.match(renderJobBoard(board, 100, 12, theme, true, "").join("\n"), /effort off/);
+	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /model · off/);
+	assert.match(renderJobBoard(board, 100, 12, theme, true, "").join("\n"), / · off/);
 	const warning = renderChildResult({ theme, read: () => ({ details: { status: "done", resourceError: "Lease release not confirmed" },
 		collect: false, live: false, isPartial: false, expanded: false }) });
 	assert.match(warning.render(100).join("\n"), /Lease release not confirmed/);
 	for (const width of [1, 2, 8, 16, 80]) {
 		assert.ok(renderJobBoard(board, width, 8, theme, true, "").every(line => visibleWidth(line) <= width));
 		assert.ok(warning.render(width).every(line => visibleWidth(line) <= width));
+	}
+}
+
+function checkHeaderMetadata() {
+	for (const expanded of [false, true]) for (const [timing, expected] of [
+		[{ status: "running", elapsedMs: 83000 }, "1m 23s"],
+		[{ status: "queued", elapsedMs: 12000 }, "queued 12s"],
+		[{ status: "done", elapsedMs: 83000, durationMs: 128000 }, "2m 8s"],
+		[{ status: "failed", durationMs: 0 }, "0s"],
+	] as const) {
+		const state: RowState = { details: { jobId: "d0001", kind: "implement", model: "hosted/luna", reasoning: "high", ...timing },
+			collect: false, live: true, pinned: true, isPartial: false, expanded };
+		const input = { theme, read: () => state };
+		const header = renderChildCall(input).render(200).join("\n");
+		assert.ok(header.endsWith(` · high · ${expected}`));
+		const body = renderChildResult(input).render(200).join("\n");
+		assert.doesNotMatch(header + body, /effort|Duration:|elapsed|queued for/);
+		assert.ok(!body.includes(expected), "timing appears only in the header");
 	}
 }
 
@@ -208,6 +226,7 @@ function checkFullCardAnchoring() {
 
 export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	checkResourcePresentation();
+	checkHeaderMetadata();
 	checkBoardGeometry();
 	checkBottomAnchoring();
 	checkFullCardAnchoring();
@@ -264,7 +283,8 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		assert.match(host.render(300).join("\n"), /Task: Read a file/, "the full active card, not only a status strip, must live in the pinned widget");
 		assert.doesNotMatch(first.render(100).join("\n"), /Task:|local-qwen38/, "the active transcript must not duplicate the pinned card");
 		assert.match(host.render(300).join("\n"), /d0002 · recon · ○ Queued · Qwen/);
-		assert.match(host.render(300).join("\n"), /Queued — queued for \d+s · waiting for GPU/);
+		assert.match(host.render(300).join("\n"), /Qwen · off · queued \d+s/);
+		assert.match(host.render(300).join("\n"), /Queued — waiting for GPU/);
 		assert.equal((host.render(300).join("\n").match(/Qwen/g) ?? []).length, 2, "model alias once per compact pinned card");
 		const frame = () => { writes.length = 0; tui.renderNow(); };
 		const noReset = () => assert.ok(!writes.join("").includes("\x1b[3J"), "live activity must not clear scrollback");
@@ -273,8 +293,8 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		const clockBefore = host.render(300).join("\n"), framesBeforeClock = frames;
 		for (let i = 0; i < 500 && host.render(300).join("\n") === clockBefore; i++) await new Promise(resolve => setTimeout(resolve, 5));
 		assert.notEqual(host.render(300).join("\n"), clockBefore, "quiet children must still advance the live clock");
-		assert.match(host.render(300).join("\n"), /Running — elapsed \d+s ·/);
-		assert.match(host.render(300).join("\n"), /effort off/);
+		assert.match(host.render(300).join("\n"), /Running · Qwen · off · \d+s/);
+		assert.doesNotMatch(host.render(300).join("\n"), /effort|elapsed|queued for/);
 		await afterFrame(framesBeforeClock); noReset();
 		assert.deepEqual(first.render(100), frozenTranscript, "clock ticks must not mutate transcript history");
 		assert.equal(first.invalidations(), invalidationsBeforeClock);
@@ -300,7 +320,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 				noReset();
 			}
 		}
-		assert.match(host.render(300).join("\n"), /Running — elapsed \d+s · executing command/);
+		assert.match(host.render(300).join("\n"), /Running — executing command/);
 		const queuedBefore = queued.render(100); const queuedInvalidations = queued.invalidations();
 		firstRun.resolve({ text: "Done reading", exitCode: 0, stderrTail: "" });
 		for (let i = 0; i < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "first"); i++) await new Promise((r) => setTimeout(r, 5));

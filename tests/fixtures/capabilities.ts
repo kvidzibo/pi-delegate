@@ -64,7 +64,7 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 						const lines = tool.renderResult(result, { expanded: true, isPartial: false }, theme,
 							{ toolCallId: "preview", state: {}, invalidate() {} }).render(width);
 						assert.ok(lines.every((line: string) => visibleWidth(line) <= width));
-						if (width === 80) { const text = lines.join("\n"); assert.equal(text.match(/Configured capabilities only/g)?.length, 1); assert.match(text, /No filesystem sandbox/); assert.equal(text.match(/Duration:/g)?.length, 1); assert.equal(text.match(/Task correctness: not assessed by delegate/g)?.length, 1); }
+						if (width === 80) { const text = lines.join("\n"); assert.equal(text.match(/Configured capabilities only/g)?.length, 1); assert.match(text, /No filesystem sandbox/); assert.doesNotMatch(text, /Duration:/); assert.equal(text.match(/Task correctness: not assessed by delegate/g)?.length, 1); }
 					}
 				}
 				const failedOutcome = describeOutcome({ status: "failed", stopReason: "error" });

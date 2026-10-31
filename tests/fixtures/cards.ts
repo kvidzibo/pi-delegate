@@ -148,7 +148,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const peekArgs = { jobId, timeoutMs: 0, task: null, kind: "", cwd: " ", model: null, background: null, wrap: "", cancel: null };
 	const peekRow = row(first.tool, "peek", peekArgs);
 	const peek = await first.tool.execute("peek", peekArgs, undefined, peekRow.update, testCtx); peekRow.update(peek, false);
-	assert.match(peekRow.render(), /checked · running at check · elapsed \d+s/);
+	assert.match(peekRow.render(), /grok-4\.6 · \w+ · \d+s · checked · running at check/);
 	assert.ok(Number.isFinite(peek.details.elapsedMs));
 	assert.equal(peek.details.sincePreviousCheckMs, undefined, "first check has no previous interval");
 	const frozenCheck = peekRow.render(200);
@@ -156,7 +156,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.equal(secondCheck.details.sincePreviousCheckMs, secondCheck.details.checkedAt - peek.details.checkedAt);
 	const timedRow = row(first.tool, "timed-check", peekArgs);
 	timedRow.update({ ...secondCheck, details: { ...secondCheck.details, elapsedMs: 192000, sincePreviousCheckMs: 60000 } }, false);
-	assert.match(timedRow.render(200), /elapsed 3m 12s · since previous check 1m 0s/);
+	assert.match(timedRow.render(200), /3m 12s · checked · running at check · since previous check 1m 0s/);
 	for (const width of [1, 16, 80, 120]) timedRow.render(width);
 	assert.equal(peekRow.render(200), frozenCheck, "later checks cannot change a frozen receipt");
 	assert.match(peekRow.render(), /review · ● Running · grok-4\.6/);
@@ -169,17 +169,18 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
 	const completed = original.row.render();
 	assert.match(completed, /○ Worker finished — task unverified/); assert.match(completed, /Review complete/);
-	assert.match(completed, /Duration: \d+s/, "completed compact cards keep frozen archive duration");
+	assert.match(completed.split("\n")[0], /grok-4\.6 · \w+ · \d+s$/, "completed compact headers keep frozen archive duration");
+	assert.doesNotMatch(completed, /effort|Duration:/);
 	assert.match(completed, /\+\d+ more lines/);
 	assert.match(completed, /Task: Review timeout and abort handling/);
-	assert.ok(completed.includes(`grok-4.6 · effort ${child.input.thinking}`));
+	assert.ok(completed.includes(`grok-4.6 · ${child.input.thinking}`));
 	assert.doesNotMatch(completed, /xai\//);
 	assert.equal((completed.match(/grok-4.6/g) ?? []).length, 1);
 	assert.doesNotMatch(completed, /Running|\*\*|test.mjs|Last detail/);
 	original.row.context.expanded = true;
 	assert.match(original.row.render(), /Last detail/); assert.match(original.row.render(), /✗ bash/);
 	assert.match(original.row.render(), /Session:/);
-	assert.ok(original.row.render().includes(`effort ${child.input.thinking}`));
+	assert.ok(original.row.render().includes(` · ${child.input.thinking} · `));
 	assert.match(original.row.render(), /xai\/grok-4\.6/);
 	for (const width of [1, 2, 8, 16, 80]) original.row.render(width);
 	const collectArgs = { jobId }; const collectRow = row(first.tool, "collect", collectArgs);
@@ -193,7 +194,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const restored = make(); await restored.handlers.get("session_start")?.({}, testCtx);
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
 	assert.match(oldRow.render(), /○ Worker finished — task unverified/); assert.doesNotMatch(oldRow.render(), /Running/);
-	assert.ok(oldRow.render().includes(`effort ${child.input.thinking}`));
+	assert.ok(oldRow.render().includes(` · ${child.input.thinking} · `));
 	for (const id of ["seed-1", "seed-2", "seed-3", "seed-4", "seed-5"]) {
 		const seed = await launch(restored.tool, id);
 		runs.at(-1)!.resolve(success);
@@ -209,7 +210,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
 	assert.match(next.row.render(), /Cancelled/);
 	const receipt = cancelledRow.render(160);
-	assert.ok(receipt.includes(`${jobId} · recon · ○ Cancelled · Qwen · effort ${next.result.details.reasoning} · cancelled`));
+	assert.ok(receipt.includes(`${jobId} · recon · ○ Cancelled · Qwen · ${next.result.details.reasoning} · `));
+	assert.match(receipt.split("\n")[0], / · \d+s · cancelled$/);
 	assert.doesNotMatch(receipt, /local-qwen38/, "compact receipts omit full model details");
 	assert.match(receipt, /Task: Review timeout and abort handling/);
 	assert.match(receipt, /Last recorded tool: ✓ read\s+delegate\/jobs.ts/);
@@ -237,7 +239,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const stopped = await restored.tool.execute(`${id}-control`, { jobId: queued.result.details.jobId, [action]: true }, undefined, undefined, testCtx);
 		assert.equal(stopped.details.ok, false);
 		assert.match(queued.row.render(), /Cancelled/);
-		assert.match(queued.row.render(), /Duration: 0s/, "cancellation before start has zero runtime");
+		assert.match(queued.row.render().split("\n")[0], / · 0s$/, "cancellation before start has zero runtime");
 		assert.doesNotMatch(queued.row.render(), /no error details/);
 		queued.row.context.expanded = true;
 		assert.match(queued.row.render(), /aborted/);

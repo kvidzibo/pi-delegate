@@ -45,7 +45,7 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 		const beforePolls = widgetUpdates.length;
 		await new Promise(resolve => setTimeout(resolve, 1200));
 		assert.equal(widgetUpdates.length, beforePolls, "unchanged resource-wait polls must not emit time-only RPC widgets");
-		assert.doesNotMatch(widgetUpdates.flat().join("\n"), /elapsed \d|queued for \d/, "RPC cards must not project a live clock");
+		assert.doesNotMatch(widgetUpdates.flat().join("\n"), /elapsed \d|queued for \d| · (?:queued )?\d+(?:s|m|h)\b/, "RPC cards must not project a live clock");
 		release(); await a({ jobId: first.details.jobId });
 		assert.equal((await b({ jobId: second.details.jobId })).details.status, "done");
 		assert.ok(starts[2].resourceLease);
