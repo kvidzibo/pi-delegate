@@ -9,7 +9,7 @@ const job = (extra: Partial<JobSnapshot> = {}): JobSnapshot => ({ id: "d0001", k
 	status: "running", local: false, failed: false, background: true, activity: [], ...extra });
 const limits = { maxLocalConcurrent: 1 };
 
-test("panel projection carries full card identity and task while excluding raw thinking and clocks", () => {
+test("panel projection carries full card identity and task while excluding raw thinking and inactivity clocks", () => {
 	const progress = createProgress();
 	applyProgress(progress, { mark: "…", name: "thinking", args: "PRIVATE first" });
 	const initial = job({ thinking: progress.thinking, quietForMs: 10,
@@ -33,6 +33,19 @@ test("panel preserves active acceptance order, queue/wrap/warnings and local rat
 	assert.equal(state.summary, "delegate  2 run  1 wait  local 1/1");
 	assert.equal(projectJobBoard([job({ status: "done" })], limits), undefined);
 	assert.equal(projectJobBoard([job({ tg: "tg 90/s" })], limits)!.cards[0].tg, undefined);
+});
+
+test("panel clock counts whole seconds from queue/start time and resets when promoted", () => {
+	const queued = job({ status: "queued", queuedAt: 1000, reasoning: "high" });
+	const project = (extra: Partial<JobSnapshot> = {}, now = 3999) => projectJobBoard([{ ...queued, ...extra }], limits, now)!.cards[0];
+	assert.equal(project().elapsedMs, 2000);
+	assert.equal(project({}, 3000).elapsedMs, 2000, "subsecond changes do not repaint");
+	assert.equal(project({ status: "running", startedAt: 3000 }).elapsedMs, 0);
+	assert.equal(project({ status: "running", startedAt: 3000 }, 195000).elapsedMs, 192000);
+	assert.equal(project({}, 0).elapsedMs, 0, "backward clock changes cannot show negative time");
+	assert.equal(project({ queuedAt: undefined }).elapsedMs, undefined);
+	assert.equal(project({ status: "running", startedAt: NaN }).elapsedMs, undefined);
+	assert.equal(project().reasoning, "high");
 });
 
 test("resource waiting projects its group without copying lease handles or unrendered capacity data", () => {

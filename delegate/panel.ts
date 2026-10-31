@@ -8,20 +8,24 @@ export type JobBoardState = { summary: string; cards: CardDetails[] };
 const tool = (item: ActivityItem | undefined): ActivityItem | undefined => !item || item.name === "thinking" ? undefined
 	: { mark: item.mark, name: item.name, ...(item.args ? { args: item.args } : {}) };
 
-/** A stable, display-only projection: clocks/usage/raw thought deltas cannot repaint the panel. */
-export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocalConcurrent: number }): JobBoardState | undefined {
+/** Display-only state: elapsed time is rounded to seconds; usage/raw thought deltas stay private. */
+export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocalConcurrent: number }, now = Date.now()): JobBoardState | undefined {
 	const active = jobs.filter((job) => job.status === "running" || job.status === "queued");
 	if (!active.length) return undefined;
 	return {
 		summary: formatJobBoard(active, limits)[0],
-		cards: active.map((job) => ({
-			jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, task: job.task, status: job.status,
-			reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
-			phase: job.thinking ? "thinking" : undefined,
-			current: tool(job.current), activity: job.activity.map(tool).filter((item) => item !== undefined).slice(-3),
-			tg: job.local ? job.tg : undefined, recordingError: job.recordingError,
-			resource: job.resource ? { key: job.resource.key } : undefined, resourceError: job.resourceError,
-			sessionFile: job.archive?.sessionFile,
-		})),
+		cards: active.map((job) => {
+			const since = job.status === "queued" ? job.queuedAt : job.startedAt;
+			return {
+				elapsedMs: typeof since === "number" && Number.isFinite(since) ? Math.floor(Math.max(0, now - since) / 1000) * 1000 : undefined,
+				jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, task: job.task, status: job.status,
+				reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
+				phase: job.thinking ? "thinking" : undefined,
+				current: tool(job.current), activity: job.activity.map(tool).filter((item) => item !== undefined).slice(-3),
+				tg: job.local ? job.tg : undefined, recordingError: job.recordingError,
+				resource: job.resource ? { key: job.resource.key } : undefined, resourceError: job.resourceError,
+				sessionFile: job.archive?.sessionFile,
+			};
+		}),
 	};
 }

@@ -55,17 +55,19 @@ function statusLine(state: RowState): { color: string; text: string } {
 	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "muted", text: "○ Worker finished — task unverified" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
+	const elapsed = formatDuration(d.elapsedMs);
+	const timing = elapsed === undefined ? "" : `${d.status === "queued" ? "queued for" : "elapsed"} ${elapsed} · `;
 	if (d.status === "queued") {
 		const group = d.resource && typeof d.resource === "object" ? str(d.resource as CardDetails, "key") : "";
 		const waiting = d.reason === "resource" ? `waiting for shared resource${group ? ` ${group}` : ""}` : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
-		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
+		return { color: "muted", text: `○ Queued — ${timing}${waiting}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	if (d.status === "running") {
-		if (d.cancellationRequested) return { color: "muted", text: "● Cancelling — waiting for child cleanup" };
+		if (d.cancellationRequested) return { color: "muted", text: `● Cancelling — ${timing}waiting for child cleanup` };
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
 		const tg = isLocalModel(str(d, "model")) && d.tg ? ` · ${str(d, "tg")}` : "";
-		return { color: "accent", text: `● Running — ${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
+		return { color: "accent", text: `● Running — ${timing}${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	return { color: "muted", text: "○ Preparing" };
 }

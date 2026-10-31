@@ -45,7 +45,7 @@ export class JobBoard<T = string> {
 				}
 				return;
 			}
-			// State is a display-only projection: no raw thinking, usage or clocks.
+			// State is a display-only projection: no raw thinking or usage.
 			const key = JSON.stringify(state), changed = this.stateKey !== key;
 			this.state = state; this.stateKey = key;
 			if (!this.mounted && state !== undefined) {

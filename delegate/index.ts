@@ -200,10 +200,17 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	let shuttingDown = false;
 	let sessionCtx: { isIdle?: () => boolean } | undefined;
 
+	let boardTimer: ReturnType<typeof setInterval> | undefined;
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
-		const rows = scheduler.active();
-		board.paint(ui, mode, projectJobBoard(rows, { maxLocalConcurrent: config.maxLocalConcurrent }));
+		const state = shuttingDown ? undefined : projectJobBoard(scheduler.active(), { maxLocalConcurrent: config.maxLocalConcurrent });
+		board.paint(ui, mode, state);
+		if (state && mode === "tui" && !shuttingDown) {
+			boardTimer ??= setInterval(paintBoard, 1000);
+			boardTimer.unref();
+		} else {
+			clearInterval(boardTimer); boardTimer = undefined;
+		}
 	};
 
 	const gate = new NotifyGate({
@@ -346,6 +353,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		clearInterval(boardTimer); boardTimer = undefined;
 		dialogs.abort();
 		busyUnsubscribe?.();
 		busyUnsubscribe = undefined;
