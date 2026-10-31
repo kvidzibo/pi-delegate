@@ -24,7 +24,13 @@ type CardTheme = ThemeFg & { bg?: (key: CardBackground, text: string) => string 
 type RowInput = { theme: CardTheme; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
 const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
-const effortLabel = (d: CardDetails): string => str(d, "reasoning") ? ` · effort ${displayText(str(d, "reasoning"))}` : "";
+function headerMetadata(d: CardDetails): string {
+	const reasoning = str(d, "reasoning");
+	const pending = d.status === "running" || d.status === "queued";
+	const duration = formatDuration(pending ? (d.historical ? undefined : d.elapsedMs) : d.durationMs);
+	return (reasoning ? ` · ${displayText(reasoning)}` : "")
+		+ (duration === undefined ? "" : ` · ${d.status === "queued" ? "queued " : ""}${duration}`);
+}
 
 function receipt(state: RowState): string {
 	const d = state.details;
@@ -39,10 +45,8 @@ function receipt(state: RowState): string {
 	if (action === "cancel") return "cancellation requested";
 	if (action === "wrap") return "wrap requested";
 	const status = d.status === "queued" ? "checked · queued at check" : d.status === "running" ? "checked · running at check" : "checked";
-	const elapsed = formatDuration(d.elapsedMs);
 	const previous = formatDuration(d.sincePreviousCheckMs);
-	return status + (elapsed ? ` · ${d.status === "queued" ? "queued for" : "elapsed"} ${elapsed}` : "")
-		+ (previous ? ` · since previous check ${previous}` : "");
+	return status + (previous ? ` · since previous check ${previous}` : "");
 }
 
 function statusLine(state: RowState): { color: string; text: string } {
@@ -55,19 +59,17 @@ function statusLine(state: RowState): { color: string; text: string } {
 	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "muted", text: "○ Worker finished — task unverified" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
-	const elapsed = formatDuration(d.elapsedMs);
-	const timing = elapsed === undefined ? "" : `${d.status === "queued" ? "queued for" : "elapsed"} ${elapsed} · `;
 	if (d.status === "queued") {
 		const group = d.resource && typeof d.resource === "object" ? str(d.resource as CardDetails, "key") : "";
 		const waiting = d.reason === "resource" ? `waiting for shared resource${group ? ` ${group}` : ""}` : `waiting for ${d.reason === "gpu" ? "GPU" : "slot"}`;
-		return { color: "muted", text: `○ Queued — ${timing}${waiting}${d.wrapped ? " · wrap requested" : ""}` };
+		return { color: "muted", text: `○ Queued — ${waiting}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	if (d.status === "running") {
-		if (d.cancellationRequested) return { color: "muted", text: `● Cancelling — ${timing}waiting for child cleanup` };
+		if (d.cancellationRequested) return { color: "muted", text: "● Cancelling — waiting for child cleanup" };
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
 		const tg = isLocalModel(str(d, "model")) && d.tg ? ` · ${str(d, "tg")}` : "";
-		return { color: "accent", text: `● Running — ${timing}${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
+		return { color: "accent", text: `● Running — ${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	return { color: "muted", text: "○ Preparing" };
 }
@@ -77,7 +79,7 @@ function compactHeader(theme: ThemeFg, d: CardDetails, state: RowState): string 
 	const label = status.text.includes("Worker finished") ? "○ Finished · unverified" : status.text.split(" — ")[0];
 	return [theme.fg("toolTitle", theme.bold(displayText(str(d, "jobId")) || "delegate")),
 		theme.fg("accent", displayText(str(d, "kind")) || "…"), theme.fg(status.color, label),
-		theme.fg("dim", displayText(aliasForModel(str(d, "model"))) + effortLabel(d))].join(" · ");
+		theme.fg("dim", displayText(aliasForModel(str(d, "model"))) + headerMetadata(d))].join(" · ");
 }
 
 function cardBackground(state: RowState): CardBackground {
@@ -131,7 +133,7 @@ export function renderChildCall(input: RowInput): ChildView {
 		if (state.live && !state.collect && !state.pinned) return wrapTextWithAnsi(
 			`${input.theme.fg("toolTitle", input.theme.bold("delegate"))} · ${displayText(str(d, "jobId"))} · ${input.theme.fg("muted", "accepted — card pinned above editor")}`, width);
 		let header = state.expanded
-			? paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + input.theme.fg("dim", effortLabel(d))
+			? paintHeader(input.theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + input.theme.fg("dim", headerMetadata(d))
 			: compactHeader(input.theme, d, state);
 		if (state.collect) header += ` · ${input.theme.fg(statusLine(state).color === "error" ? "error" : "muted", receipt(state))}`;
 		const lines = wrapTextWithAnsi(header, width);
@@ -154,8 +156,6 @@ export function renderChildResult(input: RowInput): ChildView {
 		if (!state.collect) {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
-		const duration = !pending ? formatDuration(d.durationMs) : undefined;
-		if (duration !== undefined) add(`Duration: ${duration}`, "dim");
 		for (const warning of text.warnings) add(warning);
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
@@ -210,7 +210,7 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 		const status = statusLine({ details: d, collect: false, live: true, pinned: true, isPartial: true, expanded });
 		const row = { details: d, collect: false, live: true, pinned: true, isPartial: true, expanded };
 		const header = expanded
-			? paintHeader(theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + theme.fg("dim", effortLabel(d))
+			? paintHeader(theme, "delegate", displayText(str(d, "kind")), displayText(str(d, "model")), displayText(str(d, "jobId"))) + theme.fg("dim", headerMetadata(d))
 			: compactHeader(theme, d, row);
 		const card = [fit(header)];
 		const statusText = theme.fg(status.color, displayText(status.text));
