@@ -80,6 +80,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		for (const expanded of [false, true]) {
 			historical.context.expanded = expanded;
 			assert.match(historical.render(), /Archived answer/);
+			assert.doesNotMatch(historical.render(), /effort/, "legacy cards must not invent a thinking level");
 			for (const width of [1, 16, 80]) historical.render(width);
 		}
 		historical.update({ details: { kind, model: "archive/original-model", status: "done" } }, false);
@@ -170,7 +171,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.match(completed, /○ Worker finished — task unverified/); assert.match(completed, /Review complete/);
 	assert.match(completed, /\+\d+ more lines/);
 	assert.match(completed, /Task: Review timeout and abort handling/);
-	assert.doesNotMatch(completed, /effort|xai\//);
+	assert.ok(completed.includes(`grok-4.6 · effort ${child.input.thinking}`));
+	assert.doesNotMatch(completed, /xai\//);
 	assert.equal((completed.match(/grok-4.6/g) ?? []).length, 1);
 	assert.doesNotMatch(completed, /Running|\*\*|test.mjs|Last detail/);
 	original.row.context.expanded = true;
@@ -190,7 +192,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const restored = make(); await restored.handlers.get("session_start")?.({}, testCtx);
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
 	assert.match(oldRow.render(), /○ Worker finished — task unverified/); assert.doesNotMatch(oldRow.render(), /Running/);
-	assert.doesNotMatch(oldRow.render(), /effort/);
+	assert.ok(oldRow.render().includes(`effort ${child.input.thinking}`));
 	for (const id of ["seed-1", "seed-2", "seed-3", "seed-4", "seed-5"]) {
 		const seed = await launch(restored.tool, id);
 		runs.at(-1)!.resolve(success);
@@ -206,8 +208,8 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const cancelled = await restored.tool.execute("cancel", cancelledArgs, undefined, cancelledRow.update, testCtx); cancelledRow.update(cancelled, false);
 	assert.match(next.row.render(), /Cancelled/);
 	const receipt = cancelledRow.render(160);
-	assert.ok(receipt.includes(`${jobId} · recon · ○ Cancelled · Qwen · cancelled`));
-	assert.doesNotMatch(receipt, /local-qwen38|effort/, "compact receipts omit full model details");
+	assert.ok(receipt.includes(`${jobId} · recon · ○ Cancelled · Qwen · effort ${next.result.details.reasoning} · cancelled`));
+	assert.doesNotMatch(receipt, /local-qwen38/, "compact receipts omit full model details");
 	assert.match(receipt, /Task: Review timeout and abort handling/);
 	assert.match(receipt, /Last recorded tool: ✓ read\s+delegate\/jobs.ts/);
 	assert.doesNotMatch(receipt, /failure collected|Task response|No assistant text/);

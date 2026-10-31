@@ -118,7 +118,7 @@ Wrap is advisory: it asks the child to finish without interrupting its current t
 
 ## Results and history
 
-Compact job cards and receipts lead with job ID, role and status, followed by a short model alias. Expanded headers show the full model and configured reasoning effort (including `off`); historical cards without recorded effort omit it. Finished/unverified and cancelled cards are neutral; failures remain red. Clipped result previews show how many rendered lines are hidden. `/pi-delegate jobs` opens a live, scrollable view of every active/queued job and its full task. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.
+Compact job cards and receipts lead with job ID, role and status, followed by a short model alias and configured thinking level (including `off`). Expanded headers show the full model. Historical cards without recorded effort omit it. Finished/unverified and cancelled cards are neutral; failures remain red. Clipped result previews show how many rendered lines are hidden. `/pi-delegate jobs` opens a live, scrollable view of every active/queued job and its full task. Failed/cancelled rows also show the task and last recorded tool; cancellation is labelled explicitly. **Ctrl+O** expands full output, recent tools and archive paths, including raw cancellation diagnostics.
 
 Returned answers are capped; inspect the native session for more recorded history. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 

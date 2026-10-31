@@ -41,7 +41,7 @@ function checkResourcePresentation() {
 		local: true, failed: false, background: true, activity: [], reason: "resource", resource: { key: "same-server", capacity: 1, state: "waiting" } };
 	const board = projectJobBoard([job], { maxLocalConcurrent: 1 })!;
 	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /Queued — waiting for shared resource same-server/);
-	assert.doesNotMatch(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /effort off/);
+	assert.match(renderJobBoard(board, 100, 12, theme, false, "").join("\n"), /model · effort off/);
 	assert.match(renderJobBoard(board, 100, 12, theme, true, "").join("\n"), /effort off/);
 	const warning = renderChildResult({ theme, read: () => ({ details: { status: "done", resourceError: "Lease release not confirmed" },
 		collect: false, live: false, isPartial: false, expanded: false }) });
