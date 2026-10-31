@@ -112,7 +112,9 @@ Bound the snapshot to 64 names of at most 128 encoded JSON bytes each, with expl
 
 ## Task context
 
-Pass the supplied task unchanged to every role and archive that exact task. Do not prepare automatic diffs or discover Git state for task context. Legacy role `context` keys are ignored and preserved on configuration saves. Callers supply readable artifacts or file paths and scope; review defaults to `read`, `grep`, `find`, `ls` and `bash`, with read-only behavior specified by prompt policy rather than a sandbox.
+The implementer distinguishes edit ownership from authorized test execution and permits explicitly authorized new directories and reversible local setup. Extra Pi processes are allowed only for explicitly authorized isolated integration tests, never nested delegation or model requests. Its completion checklist reports requirements completed/remaining, changed files, actual check commands/results, unrun checks/reasons, and blocker evidence; it does not change execution outcomes or assess correctness.
+
+Optional handoff headings are conventions inside `task`, not schema fields; see [Task handoff](README.md#task-handoff). Pass the supplied task unchanged to every role and archive that exact task. Do not prepare automatic diffs or discover Git state for task context. Legacy role `context` keys are ignored and preserved on configuration saves. Callers supply readable artifacts or file paths and scope; review defaults to `read`, `grep`, `find`, `ls` and `bash`, with read-only behavior specified by prompt policy rather than a sandbox.
 
 ## Spawn
 

@@ -59,6 +59,24 @@ Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. I
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients are not covered.
 
+## Task handoff
+
+Keep the task self-contained. Optional headings inside the existing `task` string:
+
+```text
+Goal: requested change
+Allowed files: editable paths, including any new files/directories
+Acceptance criteria: observable requirements
+Validation: exact commands; existing tests may be outside the edit list
+Setup/dependencies: permitted reversible setup and prerequisites, or none
+Documentation: relevant instructions and docs to read/update
+Stop rules: scope limits and concrete conditions to report
+```
+
+These are task-text conventions, not additional tool arguments. File ownership limits edits, not execution of authorized tests. Explicitly authorize new directories, setup, and any isolated Pi integration tests; test processes must use temporary configuration and must not delegate work or make model requests. Existing read-only role restrictions still apply.
+
+The implementer reports completed/remaining requirements, changed files, checks actually run with results, unrun checks with reasons, and concrete blocker evidence. Treat this as a child-reported checklist, separate from worker execution and parent-verified correctness. Custom prompt overrides replace the shipped prompt and do not automatically gain this checklist.
+
 ## Reviews
 
 Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
