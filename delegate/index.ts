@@ -203,7 +203,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	let boardTimer: ReturnType<typeof setInterval> | undefined;
 	const paintBoard = (): void => {
 		if (!ui?.setWidget) return;
-		const state = shuttingDown ? undefined : projectJobBoard(scheduler.active(), { maxLocalConcurrent: config.maxLocalConcurrent });
+		const state = shuttingDown ? undefined : projectJobBoard(scheduler.active(), { maxLocalConcurrent: config.maxLocalConcurrent }, mode === "tui" ? Date.now() : undefined);
 		board.paint(ui, mode, state);
 		if (state && mode === "tui" && !shuttingDown) {
 			boardTimer ??= setInterval(paintBoard, 1000);

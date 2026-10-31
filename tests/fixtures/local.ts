@@ -12,7 +12,12 @@ import { LEASE_NOTICE } from "../../child-runtime/lease-startup.ts";
 export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const starts: RunChildInput[] = [], cleanups: Function[] = [];
 	let release!: () => void;
-	const testCtx = { ...ctx, hasUI: false, isIdle: () => false };
+	const widgetUpdates: Array<string[] | undefined> = [];
+	const testCtx = { ...ctx, mode: "rpc", hasUI: false, isIdle: () => false,
+		ui: { ...ctx.ui, setWidget(_key: string, lines: string[] | undefined) {
+			widgetUpdates.push(lines);
+		} },
+	};
 	const factory = () => {
 		let tool: any;
 		const handlers = new Map<string, Function>();
@@ -37,6 +42,10 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 		const hosted = await b({ kind: "recon", model: "hosted/test", task: "hosted" });
 		assert.equal(hosted.details.ok, true); assert.equal(starts.length, 2);
 		assert.equal(starts[1].resourceLease, undefined); assert.equal(starts[1].leaseStartupMs, undefined);
+		const beforePolls = widgetUpdates.length;
+		await new Promise(resolve => setTimeout(resolve, 1200));
+		assert.equal(widgetUpdates.length, beforePolls, "unchanged resource-wait polls must not emit time-only RPC widgets");
+		assert.doesNotMatch(widgetUpdates.flat().join("\n"), /elapsed \d|queued for \d/, "RPC cards must not project a live clock");
 		release(); await a({ jobId: first.details.jobId });
 		assert.equal((await b({ jobId: second.details.jobId })).details.status, "done");
 		assert.ok(starts[2].resourceLease);

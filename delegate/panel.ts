@@ -8,8 +8,8 @@ export type JobBoardState = { summary: string; cards: CardDetails[] };
 const tool = (item: ActivityItem | undefined): ActivityItem | undefined => !item || item.name === "thinking" ? undefined
 	: { mark: item.mark, name: item.name, ...(item.args ? { args: item.args } : {}) };
 
-/** Display-only state: elapsed time is rounded to seconds; usage/raw thought deltas stay private. */
-export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocalConcurrent: number }, now = Date.now()): JobBoardState | undefined {
+/** Display-only state: an optional TUI clock adds whole seconds; usage/raw thought deltas stay private. */
+export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocalConcurrent: number }, now?: number): JobBoardState | undefined {
 	const active = jobs.filter((job) => job.status === "running" || job.status === "queued");
 	if (!active.length) return undefined;
 	return {
@@ -17,7 +17,7 @@ export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocal
 		cards: active.map((job) => {
 			const since = job.status === "queued" ? job.queuedAt : job.startedAt;
 			return {
-				elapsedMs: typeof since === "number" && Number.isFinite(since) ? Math.floor(Math.max(0, now - since) / 1000) * 1000 : undefined,
+				elapsedMs: now !== undefined && typeof since === "number" && Number.isFinite(since) ? Math.floor(Math.max(0, now - since) / 1000) * 1000 : undefined,
 				jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, task: job.task, status: job.status,
 				reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
 				phase: job.thinking ? "thinking" : undefined,
