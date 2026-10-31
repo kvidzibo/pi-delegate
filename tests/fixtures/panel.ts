@@ -264,11 +264,20 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		assert.match(host.render(300).join("\n"), /Task: Read a file/, "the full active card, not only a status strip, must live in the pinned widget");
 		assert.doesNotMatch(first.render(100).join("\n"), /Task:|local-qwen38/, "the active transcript must not duplicate the pinned card");
 		assert.match(host.render(300).join("\n"), /d0002 · recon · ○ Queued · Qwen/);
-		assert.match(host.render(300).join("\n"), /Queued — waiting for GPU/);
+		assert.match(host.render(300).join("\n"), /Queued — queued for \d+s · waiting for GPU/);
 		assert.equal((host.render(300).join("\n").match(/Qwen/g) ?? []).length, 2, "model alias once per compact pinned card");
 		const frame = () => { writes.length = 0; tui.renderNow(); };
 		const noReset = () => assert.ok(!writes.join("").includes("\x1b[3J"), "live activity must not clear scrollback");
 		frame();
+		const frozenTranscript = first.render(100), invalidationsBeforeClock = first.invalidations();
+		const clockBefore = host.render(300).join("\n"), framesBeforeClock = frames;
+		for (let i = 0; i < 500 && host.render(300).join("\n") === clockBefore; i++) await new Promise(resolve => setTimeout(resolve, 5));
+		assert.notEqual(host.render(300).join("\n"), clockBefore, "quiet children must still advance the live clock");
+		assert.match(host.render(300).join("\n"), /Running — elapsed \d+s ·/);
+		assert.match(host.render(300).join("\n"), /effort off/);
+		await afterFrame(framesBeforeClock); noReset();
+		assert.deepEqual(first.render(100), frozenTranscript, "clock ticks must not mutate transcript history");
+		assert.equal(first.invalidations(), invalidationsBeforeClock);
 		const firstRun = runs[0];
 		for (const expanded of [false, true]) {
 			first.context.expanded = expanded; host.setExpanded(expanded); frame(); // User expansion may reflow history.
@@ -291,7 +300,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 				noReset();
 			}
 		}
-		assert.match(host.render(300).join("\n"), /Running — executing command/);
+		assert.match(host.render(300).join("\n"), /Running — elapsed \d+s · executing command/);
 		const queuedBefore = queued.render(100); const queuedInvalidations = queued.invalidations();
 		firstRun.resolve({ text: "Done reading", exitCode: 0, stderrTail: "" });
 		for (let i = 0; i < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "first"); i++) await new Promise((r) => setTimeout(r, 5));
@@ -299,7 +308,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 		assert.doesNotMatch(host.render(300).join("\n"), /d0001|Done reading/, "completed cards leave the dock and stay in the transcript");
 		assert.equal(runs.length, 2, "the queued child starts without collecting its predecessor");
 		assert.deepEqual(queued.render(100), queuedBefore); assert.equal(queued.invalidations(), queuedInvalidations);
-		assert.doesNotMatch(host.render(300).join("\n"), /Queued — waiting for GPU/);
+		assert.doesNotMatch(host.render(300).join("\n"), /Queued —/);
 		frame(); // One terminal finalization may redraw history; subsequent progress must not.
 		writes.length = 0; let beforeFrame = frames;
 		runs[1].input.onEvent?.({ type: "tool_execution_start", toolName: "read", toolCallId: "next-read", args: { path: "two.ts" } });

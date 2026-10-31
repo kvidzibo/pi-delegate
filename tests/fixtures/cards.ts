@@ -169,6 +169,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
 	const completed = original.row.render();
 	assert.match(completed, /○ Worker finished — task unverified/); assert.match(completed, /Review complete/);
+	assert.match(completed, /Duration: \d+s/, "completed compact cards keep frozen archive duration");
 	assert.match(completed, /\+\d+ more lines/);
 	assert.match(completed, /Task: Review timeout and abort handling/);
 	assert.ok(completed.includes(`grok-4.6 · effort ${child.input.thinking}`));
@@ -236,6 +237,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const stopped = await restored.tool.execute(`${id}-control`, { jobId: queued.result.details.jobId, [action]: true }, undefined, undefined, testCtx);
 		assert.equal(stopped.details.ok, false);
 		assert.match(queued.row.render(), /Cancelled/);
+		assert.match(queued.row.render(), /Duration: 0s/, "cancellation before start has zero runtime");
 		assert.doesNotMatch(queued.row.render(), /no error details/);
 		queued.row.context.expanded = true;
 		assert.match(queued.row.render(), /aborted/);
