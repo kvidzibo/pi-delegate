@@ -75,7 +75,7 @@ function compactHeader(theme: ThemeFg, d: CardDetails, state: RowState): string 
 	const label = status.text.includes("Worker finished") ? "○ Finished · unverified" : status.text.split(" — ")[0];
 	return [theme.fg("toolTitle", theme.bold(displayText(str(d, "jobId")) || "delegate")),
 		theme.fg("accent", displayText(str(d, "kind")) || "…"), theme.fg(status.color, label),
-		theme.fg("dim", displayText(aliasForModel(str(d, "model"))))].join(" · ");
+		theme.fg("dim", displayText(aliasForModel(str(d, "model"))) + effortLabel(d))].join(" · ");
 }
 
 function cardBackground(state: RowState): CardBackground {

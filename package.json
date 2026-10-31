@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "description": "Delegate coding tasks to Pi workers through the native Pi extension",
   "engines": {
     "node": ">=22.19.0"
