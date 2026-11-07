@@ -58,6 +58,29 @@ test("role response policy is snapshotted, formats instructions and saves privat
 			}
 		}
 	}
+	const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] };
+	const schemaAgent = { ...agent, responseTemplate: template, responseSchema: schema, responseRepairAttempts: 1, saveToFile: true };
+	let release!: () => void;
+	const blocked = scheduler.enqueue({ kind: "recon", model: agent.model, local: false, task: "block", timeoutMs: 1000,
+		run: () => new Promise(resolve => { release = () => resolve({ text: "done", exitCode: 0, stderrTail: "" }); }) });
+	const expectedSchema = structuredClone(schema);
+	const schemaJob = enqueueDelegate({ scheduler, accounting, agent: schemaAgent,
+		identity: { kind: "review", requestedModel: agent.model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: "schema" },
+		task: "JSON response", timeoutMs: 1000, background: true, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+		childRunner: async input => {
+			assert.deepEqual(JSON.parse(readFileSync(input.responseFormatPath!, "utf8")), { schema: expectedSchema, repairAttempts: 1, maxOutputBytes: 4096 });
+			assert.equal(statSync(input.responseFormatPath!).mode & 0o777, 0o600);
+			const prompt = readFileSync(input.promptSourcePath, "utf8");
+			assert.match(prompt, /draft-07 JSON Schema/); assert.ok(!prompt.includes(template));
+			return { text: '{"summary":"done"}', stopReason: "stop", exitCode: 0, stderrTail: "" };
+		},
+	});
+	schema.properties.summary.type = "number"; schemaAgent.responseRepairAttempts = 0;
+	release(); await scheduler.wait(blocked.id);
+	const schemaDone = await scheduler.wait(schemaJob.id);
+	assert.equal(schemaDone.failed, false); assert.ok(schemaDone.responseFile!.endsWith("response.json"));
+	assert.equal(readFileSync(schemaDone.responseFile!, "utf8"), '{"summary":"done"}');
+	t.after(() => rmSync(dirname(schemaDone.responseFile!), { recursive: true, force: true }));
 	const previous = process.env.TMPDIR;
 	try {
 		process.env.TMPDIR = join(root, "missing");
@@ -70,6 +93,15 @@ test("role response policy is snapshotted, formats instructions and saves privat
 		assert.equal(done.failed, false); assert.equal(done.responseFile, undefined);
 		assert.match(done.answer!, /Could not save response[\s\S]*Preserved answer/);
 		assert.match(done.recordingError!, /Could not save response/);
+		const typedJob = enqueueDelegate({ scheduler, accounting, agent: { ...agent, responseSchema: true, saveToFile: true },
+			identity: { kind: "review", requestedModel: agent.model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: "schema-save-failure" },
+			task: "JSON fallback", timeoutMs: 1000, background: false, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+			childRunner: async () => ({ text: '{"summary":"done"}', stopReason: "stop", exitCode: 0, stderrTail: "" }),
+		});
+		const typedDone = await scheduler.wait(typedJob.id);
+		assert.equal(typedDone.failed, false); assert.equal(typedDone.responseFile, undefined);
+		assert.deepEqual(JSON.parse(typedDone.answer!), { summary: "done" });
+		assert.match(typedDone.recordingError!, /Could not save response/);
 	} finally {
 		if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
 	}

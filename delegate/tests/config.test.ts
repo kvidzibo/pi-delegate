@@ -107,6 +107,14 @@ test("user overlay overrides one model", () => {
 	const off = mergeDelegateConfig(output, { agents: { recon: { saveToFile: false } } }, "off.json");
 	assert.equal(off.agents.recon.saveToFile, false);
 	assert.equal(off.agents.recon.responseTemplate, responseTemplate);
+	const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false };
+	const typed = mergeDelegateConfig(output, { agents: { recon: { responseSchema: schema, responseRepairAttempts: 0 } } }, "schema.json");
+	assert.deepEqual(typed.agents.recon.responseSchema, schema);
+	schema.required.push("mutated");
+	assert.deepEqual((typed.agents.recon.responseSchema as any).required, ["summary"]);
+	assert.deepEqual(mergeDelegateConfig(typed, {}, "inherited.json").agents.recon, typed.agents.recon);
+	assert.equal(mergeDelegateConfig(typed, { agents: { recon: { responseSchema: null } } }, "disabled.json").agents.recon.responseSchema, null);
+	assert.equal(mergeDelegateConfig(typed, { agents: { recon: { responseSchema: false } } }, "false.json").agents.recon.responseSchema, false);
 });
 
 test("legacy context settings are accepted but ignored in defaults and overlays", () => {
@@ -225,6 +233,8 @@ test("broken shipped invariants refused", () => {
 	for (const [field, values, expected] of [
 		["responseTemplate", [null, true, 42, [], {}], /responseTemplate.*string/],
 		["saveToFile", [null, "true", 1, [], {}], /saveToFile.*boolean/],
+		["responseSchema", ["{}", 1, [], { type: "strnig" }, { unknownKeyword: true }, { $async: true }, { $ref: "https://example.com/schema" }], /responseSchema/],
+		["responseRepairAttempts", [null, -1, 3, 1.5, "2"], /responseRepairAttempts/],
 	] as const) {
 		for (const value of values) {
 			assert.throws(() => mergeDelegateConfig(config, { agents: { recon: { [field]: value } } }, "bad"), expected);

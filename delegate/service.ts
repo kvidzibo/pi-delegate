@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { assertRepairAttempts, compileResponseSchema, DEFAULT_REPAIR_ATTEMPTS } from "../child-runtime/response-schema.ts";
+import { isFailedChildResult } from "../child-runtime/policy.ts";
 import { Accounting } from "./accounting.ts";
 import type { ArchivedRun, RunIdentity } from "./archive.ts";
 import { describeCapabilities } from "./capabilities.ts";
@@ -10,7 +12,8 @@ import { runChild } from "./spawn.ts";
 import { isLocalModel } from "./tg.ts";
 
 /** Empty templates preserve the exact existing system prompt. */
-export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplate">): string {
+export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplate" | "responseSchema">): string {
+	if (agent.responseSchema != null) return `${agent.prompt}\n\n## Response format\nReturn exactly one JSON value matching this draft-07 JSON Schema. No Markdown fences or surrounding prose. This schema takes precedence over other response-format instructions. Do not invent facts to fill fields.\n\n${JSON.stringify(agent.responseSchema, null, 2)}`;
 	return agent.responseTemplate?.trim()
 		? `${agent.prompt}\n\n## Response format\nFollow this template for your final response. Treat placeholders as guidance, not facts; do not invent findings, resolutions or commit hashes.\n\n${agent.responseTemplate}`
 		: agent.prompt;
@@ -32,12 +35,21 @@ export function enqueueDelegate(input: {
 	onAccepted?: (archive: ArchivedRun) => void;
 }): JobSnapshot {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
-	const agent = { ...input.agent, tools: [...input.agent.tools] };
+	const agent = structuredClone(input.agent);
+	const config = { ...input.config };
+	if (agent.responseSchema != null) compileResponseSchema(agent.responseSchema);
+	const repairAttempts = agent.responseRepairAttempts ?? DEFAULT_REPAIR_ATTEMPTS;
+	assertRepairAttempts(repairAttempts);
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
 	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, agentPrompt(agent));
 	try {
+		let responseFormatPath: string | undefined;
+		if (agent.responseSchema != null) {
+			responseFormatPath = join(dirname(archive.paths.prompt), "response-format.json");
+			writeFileSync(responseFormatPath, JSON.stringify({ schema: agent.responseSchema, repairAttempts, maxOutputBytes: config.maxOutputBytes }), { mode: 0o600, flag: "wx" });
+		}
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
 			archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
@@ -52,8 +64,8 @@ export function enqueueDelegate(input: {
 						task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
 						thinking: agent.thinking, tools: [...tools], extensions: agent.extensions,
 						...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
-						hardTimeoutMs: input.config.hardTimeoutMs, maxOutputBytes: input.config.maxOutputBytes,
-						promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session,
+						hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
+						promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session, responseFormatPath,
 						signal: childSignal, env: input.env ?? process.env,
 						onEvent: event => { onUsage(event); onEvent(event); }, onControl,
 					});
@@ -64,13 +76,14 @@ export function enqueueDelegate(input: {
 				let directory: string | undefined;
 				try {
 					directory = mkdtempSync(join(tmpdir(), "pi-delegate-result-"));
-					const responseFile = join(directory, "response.md");
+					const responseFile = join(directory, agent.responseSchema != null && !isFailedChildResult(result) ? "response.json" : "response.md");
 					writeFileSync(responseFile, result.text, { encoding: "utf8", mode: 0o600, flag: "wx" });
 					return { ...result, text: `Response saved to: ${responseFile}`, responseFile };
 				} catch (error) {
 					if (directory) { try { rmSync(directory, { recursive: true, force: true }); } catch { /* Best-effort cleanup of this private directory. */ } }
 					const warning = `Could not save response to temporary file: ${error instanceof Error ? error.message : String(error)}`;
-					return { ...result, text: `${warning}\n\n${result.text}`, recordingError: [result.recordingError, warning].filter(Boolean).join("\n") };
+					return { ...result, text: agent.responseSchema != null && !isFailedChildResult(result) ? result.text : `${warning}\n\n${result.text}`,
+						recordingError: [result.recordingError, warning].filter(Boolean).join("\n") };
 				}
 			},
 		});

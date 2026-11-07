@@ -23,6 +23,7 @@ export interface RunChildInput {
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
+	responseFormatPath?: string;
 	sessionFile: string;
 	signal?: AbortSignal;
 	env?: NodeJS.Dict<string>;
@@ -108,6 +109,7 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		hardTimeoutMs: input.hardTimeoutMs,
 		maxOutputBytes: input.maxOutputBytes,
 		promptSourcePath: input.promptSourcePath,
+		responseFormatPath: input.responseFormatPath,
 		env: buildChildEnv(input.env),
 		buildArgs: (promptPath) =>
 			buildChildArgs({

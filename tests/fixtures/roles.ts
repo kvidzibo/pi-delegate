@@ -25,8 +25,8 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const notices: string[] = [];
 	const actions = [
 		[0], // Explicit new-role model selection.
-		[8], // Save safe defaults.
-		[0, 8], // Reopen and edit the new role without reloading.
+		[10], // Save safe defaults.
+		[0, 10], // Reopen and edit the new role without reloading.
 		[0, 4, 5], // Disable recon, enable extensions, edit multiline prompt.
 		[6], // Edit the response template independently of the prompt.
 		[7, 3], // Enable saving to file, then open tools.
@@ -35,7 +35,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 		[2, -1], // Enable read, then Back.
 		[1], // Model picker.
 		[0], // Select available model.
-		[2, 8], // Cycle reasoning to off, save.
+		[2, 10], // Cycle reasoning to off, save.
 	];
 	const testCtx: any = { ...ctx, hasUI: true, mode: "tui", scopedModels: [],
 		modelRegistry: { refresh: async () => {}, getError: () => undefined, getAvailable: () => [model], getAll: () => [model] },
@@ -118,7 +118,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(config.agents.recon.prompt, "New recon prompt.\nSecond line.");
 	assert.equal(config.agents.recon.responseTemplate, "  Summary:\n{{literal}}\n");
 	assert.equal(config.agents.recon.saveToFile, true);
-	const saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
+	let saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	assert.deepEqual(saved.unrelated, overlay.unrelated);
 	assert.equal(saved.agents.recon.offline, true);
 	assert.deepEqual(saved.agents.recon.context, ["legacy"]);
@@ -135,6 +135,54 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(edits, 5);
 	assert.deepEqual(config.agents.recon, savedRole);
 	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), saved);
+	// Paste a whole schema, retry invalid text verbatim, and preserve the template.
+	const schemaText = ' {\n  "$schema": "http://json-schema.org/draft-07/schema#",\n  "type": "object",\n  "properties": {"summary": {"type": "string"}},\n  "required": ["summary"],\n  "additionalProperties": false\n}\n';
+	const schema = JSON.parse(schemaText);
+	let editorSteps: Array<[string, string | undefined]> = [];
+	testCtx.ui.editor = async (_title: string, prefill: string) => {
+		const step = editorSteps.shift();
+		assert.ok(step, "Unexpected schema editor");
+		assert.equal(prefill, step[0], "Invalid text must be retained exactly");
+		return step[1];
+	};
+	const editSchema = async (moves: number[][], steps: Array<[string, string | undefined]>) => {
+		actions.push(...moves);
+		editorSteps = [...steps];
+		picks = 2;
+		await command.command("", testCtx, true);
+		assert.equal(editorSteps.length, 0);
+		assert.equal(screen, actions.length);
+	};
+	await editSchema([[8], [9, 10]], [["", schemaText]]);
+	assert.deepEqual(config.agents.recon.responseSchema, schema);
+	assert.equal(config.agents.recon.responseRepairAttempts, 0);
+	assert.equal(config.agents.recon.responseTemplate, savedRole.responseTemplate);
+	assert.deepEqual(loadDelegateConfig(paths).agents.recon, config.agents.recon);
+	const schemaSaved = JSON.parse(readFileSync(paths.userPath, "utf8"));
+	assert.deepEqual(schemaSaved.agents.recon.responseSchema, schema);
+	assert.equal(schemaSaved.agents.recon.responseRepairAttempts, 0);
+	const prefill = JSON.stringify(schema, null, 2);
+	const invalidJson = ' { "type": ';
+	const invalidSchema = ' {\n "type": "not-a-type"\n} ';
+	const nonDraft07 = '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}';
+	const noticeStart = notices.length;
+	await editSchema([[8], [10]], [
+		[prefill, invalidJson], [invalidJson, invalidSchema], [invalidSchema, nonDraft07], [nonDraft07, undefined],
+	]);
+	assert.equal(notices.length, noticeStart + 3);
+	assert.ok(notices.slice(noticeStart).every(text => /Invalid response schema/.test(text)));
+	assert.deepEqual(config.agents.recon.responseSchema, schema, "Esc after errors preserves the original draft schema");
+	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), schemaSaved);
+	await editSchema([[8], [10]], [[prefill, undefined]]);
+	assert.deepEqual(config.agents.recon.responseSchema, schema, "Cancelled editing preserves the schema");
+	await editSchema([[8], [9, 9, 10]], [[prefill, "  \n"]]);
+	assert.equal(config.agents.recon.responseSchema, null, "Empty editor explicitly disables schema inheritance");
+	assert.equal(config.agents.recon.responseRepairAttempts, 2);
+	assert.equal(config.agents.recon.responseTemplate, savedRole.responseTemplate);
+	saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
+	assert.equal(saved.agents.recon.responseSchema, null);
+	assert.equal(saved.agents.recon.responseRepairAttempts, 2);
+	assert.deepEqual(loadDelegateConfig(paths).agents.recon, config.agents.recon);
 	await accepted.run({ id: "queued" }, new AbortController().signal, () => {}, () => {});
 	assert.equal(archivedPrompt, original.prompt);
 	assert.equal(launched.model, original.model);

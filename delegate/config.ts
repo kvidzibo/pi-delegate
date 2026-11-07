@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
+import { assertRepairAttempts, compileResponseSchema, type ResponseSchema } from "../child-runtime/response-schema.ts";
 
 export type Kind = string;
 export const ROLE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -17,6 +18,8 @@ export interface AgentConfig {
 	model: string;
 	prompt: string;
 	responseTemplate?: string;
+	responseSchema?: ResponseSchema | null;
+	responseRepairAttempts?: number;
 	saveToFile?: boolean;
 	extensions: boolean;
 	tools: string[];
@@ -95,6 +98,10 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
 	if (parsed.responseTemplate !== undefined && typeof parsed.responseTemplate !== "string") errors.push("responseTemplate (string)");
+	try {
+		if (parsed.responseSchema !== undefined && parsed.responseSchema !== null) compileResponseSchema(parsed.responseSchema);
+		if (parsed.responseRepairAttempts !== undefined) assertRepairAttempts(parsed.responseRepairAttempts);
+	} catch (error) { errors.push(`responseSchema/responseRepairAttempts: ${error instanceof Error ? error.message : String(error)}`); }
 	if (parsed.saveToFile !== undefined && typeof parsed.saveToFile !== "boolean") errors.push("saveToFile (boolean)");
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (parsed.extensions !== undefined && typeof parsed.extensions !== "boolean") errors.push("extensions (boolean)");
@@ -107,6 +114,8 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		model,
 		prompt: parsed.prompt as string,
 		...(parsed.responseTemplate !== undefined ? { responseTemplate: parsed.responseTemplate as string } : {}),
+		...(parsed.responseSchema !== undefined ? { responseSchema: structuredClone(parsed.responseSchema) as ResponseSchema | null } : {}),
+		...(parsed.responseRepairAttempts !== undefined ? { responseRepairAttempts: parsed.responseRepairAttempts as number } : {}),
 		...(parsed.saveToFile !== undefined ? { saveToFile: parsed.saveToFile as boolean } : {}),
 		extensions: parsed.extensions === true,
 		tools: tools as string[],
@@ -226,6 +235,8 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 		model: base.model,
 		prompt: base.prompt,
 		responseTemplate: base.responseTemplate,
+		responseSchema: base.responseSchema,
+		responseRepairAttempts: base.responseRepairAttempts,
 		saveToFile: base.saveToFile,
 		extensions: base.extensions,
 		tools: base.tools,
@@ -235,6 +246,8 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.prompt !== undefined) next.prompt = parsed.prompt;
 	if (parsed.responseTemplate !== undefined) next.responseTemplate = parsed.responseTemplate;
+	if (parsed.responseSchema !== undefined) next.responseSchema = parsed.responseSchema;
+	if (parsed.responseRepairAttempts !== undefined) next.responseRepairAttempts = parsed.responseRepairAttempts;
 	if (parsed.saveToFile !== undefined) next.saveToFile = parsed.saveToFile;
 	if (parsed.extensions !== undefined) next.extensions = parsed.extensions;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;

@@ -10,6 +10,8 @@ import type { ResponseEvidence } from "./evidence.ts";
 import { verifyLease, type InheritedLease } from "./lease.ts";
 import { LEASE_ENV, LeaseStartup } from "./lease-startup.ts";
 import type { FinalizationProgress } from "./guard-protocol.ts";
+import { NoticeStartup } from "./startup.ts";
+import { compileResponseSchema, readResponseFormat, RESPONSE_FORMAT_ENV, RESPONSE_FORMAT_READY, responseFormatError } from "./response-schema.ts";
 
 export interface ChildDiag {
 	command: string;
@@ -76,6 +78,8 @@ export interface RunPiChildInput {
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
+	/** Private acceptance-time policy snapshot, also loaded by the child repair extension. */
+	responseFormatPath?: string;
 	env: NodeJS.Dict<string>;
 	buildArgs: (promptPath: string) => string[];
 	signal?: AbortSignal;
@@ -316,6 +320,15 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	if (!Number.isSafeInteger(input.hardTimeoutMs) || input.hardTimeoutMs < 0 || input.hardTimeoutMs > MAX_TIMER_MS) {
 		throw new Error("Invalid hardTimeoutMs: must be a supported timer duration.");
 	}
+	const responseFormat = input.responseFormatPath ? readResponseFormat(input.responseFormatPath) : undefined;
+	const validateResponse = responseFormat ? compileResponseSchema(responseFormat.schema) : undefined;
+	if (responseFormat && responseFormat.maxOutputBytes !== input.maxOutputBytes) throw new Error("Response format output limit changed after acceptance.");
+	const responseNonce = responseFormat ? randomUUID() : undefined;
+	const responseStartup = responseFormat ? new NoticeStartup(notice => {
+		if (notice?.type !== RESPONSE_FORMAT_READY || notice.nonce !== responseNonce) return false;
+		if (notice.version !== 1) throw new Error("Unsupported response validation acknowledgement.");
+		return true;
+	}, "Child response validation", 15000) : undefined;
 	const lease = input.resourceLease !== undefined ? { ...input.resourceLease } : undefined;
 	if (input.leaseStartupMs !== undefined && (!lease || !Number.isSafeInteger(input.leaseStartupMs)
 		|| input.leaseStartupMs < 1 || input.leaseStartupMs > MAX_TIMER_MS)) throw new Error("Invalid lease-only startup policy.");
@@ -328,6 +341,11 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 	const leaseStartup = leaseConfig ? new LeaseStartup(leaseConfig, input.leaseStartupMs!) : undefined;
 	const args = [...input.buildArgs(input.promptSourcePath)];
 	const childEnv = { ...input.env } as NodeJS.ProcessEnv;
+	delete childEnv[RESPONSE_FORMAT_ENV];
+	if (responseFormat) {
+		args.push("--extension", fileURLToPath(new URL("./response-guard.ts", import.meta.url)));
+		childEnv[RESPONSE_FORMAT_ENV] = JSON.stringify({ path: input.responseFormatPath, nonce: responseNonce });
+	}
 	if (leaseConfig) {
 		args.push("--extension", fileURLToPath(new URL("./lease-guard.ts", import.meta.url)));
 		childEnv[LEASE_ENV] = JSON.stringify(leaseConfig);
@@ -339,6 +357,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 
 	let stderr = "";
 	let state: AssistantState = { text: "", model: input.model, sawAssistant: false };
+	let formatError: string | undefined = "No finalized JSON response was received.";
 	const answers = new AnswerHistory(input.maxOutputBytes);
 	// Correlate delivered steering by exact text without retaining arbitrary control messages.
 	const pendingWraps = new Map<string, number>();
@@ -375,8 +394,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const finish = (code: number): void => {
 			if (closed) return;
 			closed = true;
-			if (leaseStartup && !taskDispatched && !failure && !stopKind) {
-				failure = { reason: "error", text: "Child exited before the leased task was dispatched." };
+			if ((leaseStartup || responseStartup) && !taskDispatched && !failure && !stopKind) {
+				failure = { reason: "error", text: "Child exited before the startup handshake completed and the task was dispatched." };
 			}
 			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
@@ -425,6 +444,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					return;
 				}
 				leaseStartup?.accept(parsed);
+				responseStartup?.accept(parsed);
 				if (failure || stopKind || closed) return;
 				const cancel = failure ? undefined : uiCancelResponse(parsed);
 				if (cancel) writeStdin(proc.stdin, cancel);
@@ -445,9 +465,14 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 					if (type === "message_start") openResponse = true;
 					else if (type === "message_end") openResponse = false;
 				}
+				if (validateResponse) {
+					const snapshot = extractAssistantText(parsed);
+					if (snapshot.assistant) formatError = responseFormatError(snapshot.text, validateResponse, input.maxOutputBytes);
+				}
 				const next = applyAssistantSnapshot(state, parsed, input.maxOutputBytes);
 				if (next !== state) { state = next; answers.observe(state); }
 				if (isAgentSettled(parsed) && !settled) {
+					if (validateResponse && parsed.aborted === true) stopKind ??= "aborted";
 					settled = true;
 					closeStdin();
 				}
@@ -475,7 +500,7 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 				wrap: (message) => {
 					if (settled || aborted || timedOut || closed || failure) return false;
 					const text = message && message.trim() ? message : DEFAULT_WRAP_MESSAGE;
-					if (leaseStartup && !taskDispatched) { startupWrap ??= text; return true; }
+					if ((leaseStartup || responseStartup) && !taskDispatched) { startupWrap ??= text; return true; }
 					return steer(text);
 				},
 			});
@@ -537,24 +562,29 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		const startPrompt = () => {
 			if (closed || taskDispatched || stopKind || failure) return;
 			// Recheck after beforePrompt: a later acknowledgement may have invalidated readiness.
-			try { leaseStartup?.assertReady(); }
+			try { leaseStartup?.assertReady(); responseStartup?.assertReady(); }
 			catch (error) { fail("error", String(error)); return; }
 			taskDispatched = send({ id: "p1", type: "prompt", message: `Task: ${input.task}` });
 			if (taskDispatched) {
 				if (startupWrap) { steer(startupWrap); startupWrap = undefined; }
 			}
-			else if (leaseStartup) fail("error", "Could not send the leased child task.");
+			else if (leaseStartup || responseStartup) fail("error", "Could not send the child task after startup.");
 		};
-		if (input.beforePrompt || leaseStartup) {
+		if (input.beforePrompt || leaseStartup || responseStartup) {
 			Promise.resolve().then(async () => {
-				if (leaseStartup) await leaseStartup.wait(startup.signal);
+				await Promise.all([leaseStartup?.wait(startup.signal), responseStartup?.wait(startup.signal)]);
 				if (input.beforePrompt) await input.beforePrompt(startup.signal);
 			}).then(startPrompt, startupFailure);
 		} else startPrompt();
 	});
 
-	const stopReason = !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
+	let stopReason = !stopKind && !failure && answers.awaitingResponse ? "no-assistant-output"
 		: resolveStopReason({ stopKind, failure, state });
+	let formatFailure: string | undefined;
+	if (validateResponse && !stopKind && !failure && exitCode === 0 && !["error", "length", "aborted"].includes(state.stopReason ?? "")) {
+		formatFailure = !settled || openResponse || answers.awaitingResponse ? "Child did not complete its final JSON response." : formatError;
+		if (formatFailure) stopReason = "response-format";
+	}
 	const explanation = answerExplanation({ ...state, stopReason });
 	const assistantText = explanation
 		? state.text ? `${explanation}\n\nPartial assistant output:\n${state.text}` : explanation
@@ -576,9 +606,12 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 		stopReason,
 		stderrTail,
 	});
+	const output = formatFailure
+		? `Response format validation failed: ${formatFailure}\n\nInvalid response (see native session for full history):\n${state.text}`
+		: validateResponse ? failure?.text ?? assistantText : answers.format(failure?.text ?? assistantText, failure?.text ?? explanation);
 	return {
-		text: finalizeChildText(answers.format(failure?.text ?? assistantText, failure?.text ?? explanation), dump, input.maxOutputBytes),
-		exitCode,
+		text: finalizeChildText(output, dump, input.maxOutputBytes),
+		exitCode: formatFailure ? 1 : exitCode,
 		stderrTail,
 		model: state.model,
 		stopReason,
