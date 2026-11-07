@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.33.1",
+  "version": "0.33.2",
   "description": "Delegate coding tasks to Pi workers through the native Pi extension",
   "engines": {
     "node": ">=22.19.0"
@@ -10,6 +10,7 @@
     "child-runtime",
     "README.md",
     "MIGRATION.md",
+    "MODEL-COMPARISON.md",
     "LICENSE"
   ],
   "author": "Tomas Rackauskas",

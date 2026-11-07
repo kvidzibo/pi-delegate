@@ -69,6 +69,8 @@ Check receipts freeze elapsed runtime (or queue time) and the interval since the
 
 See [configuration and job controls](delegate/README.md) for manual settings and tool arguments.
 
+For a dated benchmark reference with intelligence scores and cost per task, see the [model comparison](MODEL-COMPARISON.md). These are not Pi-delegate performance measurements.
+
 ## Important constraints
 
 - Shared local capacity requires Linux and `/usr/bin/flock`. All local providers share one slot per agent directory; hosted jobs bypass it. Reload older sessions to participate.
