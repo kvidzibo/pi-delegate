@@ -63,6 +63,7 @@ export type JobSnapshot = {
 	thinking?: boolean;
 	tg?: string;
 	answer?: string;
+	responseFile?: string;
 	exitCode?: number;
 	stopReason?: string;
 	stderrTail?: string;
@@ -605,6 +606,7 @@ export class JobScheduler {
 		if (tg) snap.tg = tg;
 		if (job.result) {
 			snap.answer = job.result.text;
+			if (job.result.responseFile) snap.responseFile = job.result.responseFile;
 			snap.exitCode = job.result.exitCode;
 			snap.stopReason = job.result.stopReason;
 			snap.stderrTail = job.result.stderrTail;

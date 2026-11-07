@@ -36,6 +36,8 @@ test("shipped config parses four agents", () => {
 	assert.equal(config.maxQueued, 16);
 	assert.equal(config.checkIntervalMs, 60000);
 	assert.equal(config.hardTimeoutMs, 0);
+	assert.equal("responseTemplate" in config.agents.recon, false);
+	assert.equal("saveToFile" in config.agents.recon, false);
 	assert.equal("offline" in config.agents.recon, false);
 	assert.equal("offline" in config.agents.implement, false);
 	assert.ok(config.agents.implement.tools.includes("edit"));
@@ -93,6 +95,18 @@ test("user overlay overrides one model", () => {
 	assert.deepEqual(merged.agents.recon.tools, config.agents.recon.tools);
 	assert.equal("offline" in merged.agents.recon, false);
 	assert.equal(merged.agents.implement.model, config.agents.implement.model);
+	const responseTemplate = "  Summary:\n{{literal}}\n";
+	const output = mergeDelegateConfig(merged, { agents: { recon: { responseTemplate, saveToFile: true } } }, "output.json");
+	assert.equal(output.agents.recon.responseTemplate, responseTemplate);
+	assert.equal(output.agents.recon.saveToFile, true);
+	assert.deepEqual(mergeDelegateConfig(output, { agents: { recon: { model: "hosted/other" } } }, "model.json").agents.recon,
+		{ ...output.agents.recon, model: "hosted/other" });
+	const blank = mergeDelegateConfig(output, { agents: { recon: { responseTemplate: "" } } }, "blank.json");
+	assert.equal(blank.agents.recon.responseTemplate, "");
+	assert.equal(blank.agents.recon.saveToFile, true);
+	const off = mergeDelegateConfig(output, { agents: { recon: { saveToFile: false } } }, "off.json");
+	assert.equal(off.agents.recon.saveToFile, false);
+	assert.equal(off.agents.recon.responseTemplate, responseTemplate);
 });
 
 test("legacy context settings are accepted but ignored in defaults and overlays", () => {
@@ -145,7 +159,7 @@ test("model saves preserve overlays, reject stale/invalid config, and keep symli
 		saveDelegatePatch(paths, "recon", current, patch);
 		assert.deepEqual(JSON.parse(readFileSync(userPath, "utf8")), { agents: { recon: patch } });
 		const overlay = { maxConcurrent: 3, note: "keep", agents: {
-			recon: { ...patch, prompt: "Custom recon prompt\nPreserve this text.", thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
+			recon: { ...patch, prompt: "Custom recon prompt\nPreserve this text.", responseTemplate: "  Summary:\n{{literal}}\n", saveToFile: true, thinking: "medium", tools: ["read"], context: ["git-diff"], note: "keep role", offline: true }, review: { model: "other/review" },
 			docs: { model: "hosted/docs", prompt: "Write documentation.", context: [{ source: "git-changed-files" }] },
 		} };
 		writeFileSync(userPath, JSON.stringify(overlay));
@@ -207,6 +221,15 @@ test("broken shipped invariants refused", () => {
 	}
 	for (const extensions of [null, "true", 1, []]) {
 		assert.throws(() => mergeDelegateConfig(config, { agents: { recon: { extensions } } }, "bad"), /extensions.*boolean/);
+	}
+	for (const [field, values, expected] of [
+		["responseTemplate", [null, true, 42, [], {}], /responseTemplate.*string/],
+		["saveToFile", [null, "true", 1, [], {}], /saveToFile.*boolean/],
+	] as const) {
+		for (const value of values) {
+			assert.throws(() => mergeDelegateConfig(config, { agents: { recon: { [field]: value } } }, "bad"), expected);
+			assert.throws(() => parseDelegateConfig({ ...config, agents: { ...config.agents, recon: { ...config.agents.recon, [field]: value } } }, "bad"), expected);
+		}
 	}
 	const { prompt: _prompt, ...withoutPrompt } = config.agents.recon;
 	assert.throws(() => parseDelegateConfig({ ...config, agents: { ...config.agents, recon: withoutPrompt } }, "bad"), /prompt.*non-empty string/);

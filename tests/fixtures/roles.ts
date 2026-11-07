@@ -25,16 +25,17 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const notices: string[] = [];
 	const actions = [
 		[0], // Explicit new-role model selection.
-		[6], // Save safe defaults.
-		[0, 6], // Reopen and edit the new role without reloading.
+		[8], // Save safe defaults.
+		[0, 8], // Reopen and edit the new role without reloading.
 		[0, 4, 5], // Disable recon, enable extensions, edit multiline prompt.
-		[3], // Open tools.
+		[6], // Edit the response template independently of the prompt.
+		[7, 3], // Enable saving to file, then open tools.
 		[0], // All tools.
 		[1], // No tools.
 		[2, -1], // Enable read, then Back.
 		[1], // Model picker.
 		[0], // Select available model.
-		[2, 6], // Cycle reasoning to off, save.
+		[2, 8], // Cycle reasoning to off, save.
 	];
 	const testCtx: any = { ...ctx, hasUI: true, mode: "tui", scopedModels: [],
 		modelRegistry: { refresh: async () => {}, getError: () => undefined, getAvailable: () => [model], getAll: () => [model] },
@@ -43,8 +44,11 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 			input: async () => "writer",
 			editor: async (_title: string, prefill: string) => {
 				edits++;
-				assert.equal(prefill, edits === 1 ? "" : config.agents.recon.prompt);
-				return edits === 1 ? "Write documents.\nKeep scope." : "New recon prompt.\nSecond line.";
+				if (edits === 1) { assert.equal(prefill, ""); return "Write documents.\nKeep scope."; }
+				if (edits === 2) { assert.equal(prefill, config.agents.recon.prompt); return "New recon prompt.\nSecond line."; }
+				if (edits === 3) { assert.equal(prefill, ""); return "  Summary:\n{{literal}}\n"; }
+				assert.equal(prefill, "  Summary:\n{{literal}}\n");
+				return edits === 4 ? undefined : "";
 			},
 			select: async (_title: string, options: string[]) => {
 				picks++;
@@ -112,11 +116,25 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(config.agents.recon.extensions, true);
 	assert.deepEqual(config.agents.recon.tools, ["read"]);
 	assert.equal(config.agents.recon.prompt, "New recon prompt.\nSecond line.");
+	assert.equal(config.agents.recon.responseTemplate, "  Summary:\n{{literal}}\n");
+	assert.equal(config.agents.recon.saveToFile, true);
 	const saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	assert.deepEqual(saved.unrelated, overlay.unrelated);
 	assert.equal(saved.agents.recon.offline, true);
 	assert.deepEqual(saved.agents.recon.context, ["legacy"]);
 	assert.equal(saved.agents.recon.note, "keep");
+	assert.equal(saved.agents.recon.responseTemplate, config.agents.recon.responseTemplate);
+	assert.equal(saved.agents.recon.saveToFile, true);
+	assert.deepEqual(loadDelegateConfig(paths).agents.recon, config.agents.recon);
+	// Cancelling the editor preserves its prefill; clearing and toggling remain draft-only on Back.
+	const savedRole = structuredClone(config.agents.recon);
+	const discardStart = actions.length;
+	actions.push([6], [6], [7, -1]);
+	picks = 2;
+	await command.command("", testCtx, true);
+	assert.equal(edits, 5);
+	assert.deepEqual(config.agents.recon, savedRole);
+	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), saved);
 	await accepted.run({ id: "queued" }, new AbortController().signal, () => {}, () => {});
 	assert.equal(archivedPrompt, original.prompt);
 	assert.equal(launched.model, original.model);
@@ -125,7 +143,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.deepEqual(launched.tools, original.tools);
 	// Unrelated external edits conflict too; no overlay fields may be silently lost.
 	writeFileSync(paths.userPath, JSON.stringify({ ...saved, changedExternally: true }));
-	picks = 2; screen = 10;
+	picks = 2; screen = discardStart - 1;
 	await command.command("", testCtx, true);
 	assert.ok(notices.some(text => /changed on disk/.test(text)));
 	assert.equal(JSON.parse(readFileSync(paths.userPath, "utf8")).changedExternally, true);

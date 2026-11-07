@@ -16,7 +16,7 @@ import {
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
-import { enqueueDelegate } from "./service.ts";
+import { agentPrompt, enqueueDelegate } from "./service.ts";
 import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
@@ -109,7 +109,7 @@ function formatOutput(input: {
 }) {
 	const body = [
 		delegateTargetLine(input.kind, input.model),
-		truncateOutput(input.text || "(no output)", input.maxBytes),
+		input.details.responseFile ? input.text : truncateOutput(input.text || "(no output)", input.maxBytes),
 	].join("\n\n");
 	return {
 		content: [
@@ -141,6 +141,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.capabilities) details.capabilities = copyCapabilities(snap.capabilities);
 	if (snap.outcome) details.outcome = copyOutcome(snap.outcome);
 	if (snap.recordingError) details.recordingError = snap.recordingError;
+	if (snap.responseFile) details.responseFile = snap.responseFile;
 	if (snap.current) details.current = snap.current;
 	if (snap.thinking) details.phase = "thinking";
 	if (snap.tg) details.tg = snap.tg;
@@ -483,7 +484,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 							const pricedModel = alternative && ctx.modelRegistry.find(alternative.model.slice(0, slash), alternative.model.slice(slash + 1));
 							savingsInfo = alternative && !isLocalModel(alternative.model) ? loadSavingsSnapshot({
 								key: { localModel: resolved.model, alternativeModel: alternative.model, kind, localThinking: resolved.agent.thinking,
-									alternativeThinking: alternative.thinking, tools, promptHash: fingerprint(resolved.agent.prompt) },
+									alternativeThinking: alternative.thinking, tools, promptHash: fingerprint(agentPrompt(resolved.agent)) },
 								files: config.calibrationProfiles, pricing: pricedModel?.cost,
 							}) : { reason: "No hosted alternative configured for this local model" };
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
@@ -529,7 +530,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				const failed = !pending && snap.failed;
 				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
 				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
-				const text = collect || pending ? receiptText(snap)
+				const text = collect || pending || snap.responseFile ? receiptText(snap)
 					: truncateOutput(snap.answer || snap.stderrTail || "(no output)", config.maxOutputBytes);
 				updateCard(snap);
 				if (collect && shouldConsume(snap)) gate.consume(snap.id);

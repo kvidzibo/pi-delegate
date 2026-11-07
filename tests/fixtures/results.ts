@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { withRoleModels } from "./capabilities.ts";
@@ -43,16 +43,22 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	const handlers = new Map<string, Function>();
 	const entries: any[] = [], notices: any[] = [];
 	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void; reject: (error: Error) => void }> = [];
-	withRoleModels({ review: "xai/grok-4.6", recon: "local-qwen38/qwen38-q4km" }, () => delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
-		on: (name: string, handler: Function) => handlers.set(name, handler),
-		appendEntry: (customType: string, data: any) => entries.push({ customType, data }),
-		sendMessage: (message: any) => notices.push(message),
-	} as unknown as ExtensionAPI, (input) => new Promise((resolve, reject) => {
-		runs.push({ input, resolve, reject });
-		input.signal?.addEventListener("abort", () => {
-			if (!deferAbort) resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" });
-		}, { once: true });
-	})));
+	withRoleModels({ review: "xai/grok-4.6", recon: "local-qwen38/qwen38-q4km" }, () => {
+		const path = join(getAgentDir(), "delegate.json");
+		const overlay = JSON.parse(readFileSync(path, "utf8"));
+		overlay.agents.filed = { model: "xai/grok-4.6", prompt: "Offline test.", responseTemplate: "| Finding | Resolution |", saveToFile: true };
+		writeFileSync(path, JSON.stringify(overlay));
+		return delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
+			on: (name: string, handler: Function) => handlers.set(name, handler),
+			appendEntry: (customType: string, data: any) => entries.push({ customType, data }),
+			sendMessage: (message: any) => notices.push(message),
+		} as unknown as ExtensionAPI, (input) => new Promise((resolve, reject) => {
+			runs.push({ input, resolve, reject });
+			input.signal?.addEventListener("abort", () => {
+				if (!deferAbort) resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" });
+			}, { once: true });
+		}));
+	});
 	const testCtx: any = { ...ctx, hasUI: true, isIdle: () => !busy,
 		ui: { ...ctx.ui, setWidget() {}, setStatus() {} },
 		sessionManager: { getSessionId: () => "result-probe", getSessionFile: () => undefined, getBranch: () => [] },
@@ -150,6 +156,27 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				assert.equal(result.details.terminal, true);
 				assert.equal(result.details.answer, outcome.text || (background ? rawText : text));
 				assert.equal(entries.filter(e => e.customType === CARD_STATE_TYPE && e.data.runId === result.details.runId).length, 1);
+			}
+		}
+
+		// File receipts, including failed output, must not leak the response through details or collection.
+		for (const background of [false, true]) {
+			for (const stopReason of ["stop", "error"]) {
+				const beforeRuns = runs.length;
+				const launched = launch({ kind: "filed", background });
+				await untilRun(() => runs.length === beforeRuns + 1);
+				const run = runs.at(-1)!;
+				assert.match(readFileSync(run.input.promptSourcePath, "utf8"), /\| Finding \| Resolution \|/);
+				const accepted = background ? await launched : undefined;
+				run.resolve({ ...success, text: "PRIVATE_RESPONSE_BODY", stopReason });
+				const done = background ? await call({ jobId: accepted.details.jobId }) : await launched;
+				try {
+					assert.equal(readFileSync(done.details.responseFile, "utf8"), "PRIVATE_RESPONSE_BODY");
+					assert.equal(done.isError, stopReason === "error");
+					assert.ok(done.content[0].text.includes(done.details.responseFile));
+					assert.doesNotMatch(JSON.stringify(done), /PRIVATE_RESPONSE_BODY/);
+					assert.equal((await call({ jobId: done.details.jobId })).details.responseFile, done.details.responseFile);
+				} finally { rmSync(dirname(done.details.responseFile), { recursive: true, force: true }); }
 			}
 		}
 

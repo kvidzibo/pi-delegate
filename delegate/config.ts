@@ -16,6 +16,8 @@ export interface AgentConfig {
 	enabled?: boolean;
 	model: string;
 	prompt: string;
+	responseTemplate?: string;
+	saveToFile?: boolean;
 	extensions: boolean;
 	tools: string[];
 	thinking: ThinkingLevel;
@@ -92,6 +94,8 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	} catch (error) {
 		errors.push(error instanceof Error ? error.message : "tools");
 	}
+	if (parsed.responseTemplate !== undefined && typeof parsed.responseTemplate !== "string") errors.push("responseTemplate (string)");
+	if (parsed.saveToFile !== undefined && typeof parsed.saveToFile !== "boolean") errors.push("saveToFile (boolean)");
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (parsed.extensions !== undefined && typeof parsed.extensions !== "boolean") errors.push("extensions (boolean)");
 	if (parsed.thinking !== undefined && !isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
@@ -102,6 +106,8 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		enabled: parsed.enabled === undefined ? true : parsed.enabled as boolean,
 		model,
 		prompt: parsed.prompt as string,
+		...(parsed.responseTemplate !== undefined ? { responseTemplate: parsed.responseTemplate as string } : {}),
+		...(parsed.saveToFile !== undefined ? { saveToFile: parsed.saveToFile as boolean } : {}),
 		extensions: parsed.extensions === true,
 		tools: tools as string[],
 		thinking: (parsed.thinking ?? "off") as ThinkingLevel,
@@ -219,6 +225,8 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 		enabled: base.enabled,
 		model: base.model,
 		prompt: base.prompt,
+		responseTemplate: base.responseTemplate,
+		saveToFile: base.saveToFile,
 		extensions: base.extensions,
 		tools: base.tools,
 		thinking: base.thinking,
@@ -226,6 +234,8 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.prompt !== undefined) next.prompt = parsed.prompt;
+	if (parsed.responseTemplate !== undefined) next.responseTemplate = parsed.responseTemplate;
+	if (parsed.saveToFile !== undefined) next.saveToFile = parsed.saveToFile;
 	if (parsed.extensions !== undefined) next.extensions = parsed.extensions;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;

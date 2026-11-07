@@ -33,7 +33,7 @@ pi install /absolute/path/to/pi-delegate
 
 Pi supplies the peer dependencies; no manual `npm install` is needed. Do not also add `delegate` to Pi's `extensions` setting. Published releases may lag behind this checkout.
 
-Run **`/pi-delegate`** for the menu, or **`/pi-delegate roles`** for the full native Roles editor: enablement, model, supported reasoning, tools (including all/none), extension discovery, multiline prompt and named-role creation. Short choices cycle inline. **Save role** persists changes; Esc discards the draft and goes back. New roles require an explicit available model and nonblank prompt, defaulting to no tools, no extensions and reasoning off.
+Run **`/pi-delegate`** for the menu, or **`/pi-delegate roles`** for the full native Roles editor: enablement, model, supported reasoning, tools (including all/none), extension discovery, multiline prompt, optional response template, save-to-file toggle and named-role creation. Short choices cycle inline. **Save role** persists changes; Esc discards the draft and goes back. New roles require an explicit available model and nonblank prompt, defaulting to no tools, no extensions and reasoning off.
 
 Model choices match `/model` (scoped models when set, otherwise all available models). **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both editors save to `~/.pi/agent/delegate.json`, preserving unrelated and legacy keys; disk conflicts or uncertain catalogues refuse saves. Changes affect future jobs only; queued and running jobs keep their accepted settings. Unavailable models are never automatically replaced.
 
@@ -51,6 +51,8 @@ Ask Pi:
 Delegate a background recon to find this repo's test files and test commands.
 Do not edit files. Collect the result when it finishes.
 ```
+
+A role’s **Response template** guides its final response (including Markdown tables); blank leaves behavior unchanged. **Save to file** independently writes the returned response to a private temporary Markdown file and returns its path instead of the body. The worker responds normally; the harness handles saving. Saved responses retain the configured output limit; copy files elsewhere for long-term retention.
 
 The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor; finished results appear in the transcript. Compact cards show job ID, role, status, model and thinking level, plus live elapsed/queue time and frozen duration when finished; **Ctrl+O** reveals the full model and result. Clipped previews show the hidden line count. Finished/unverified and cancelled runs use neutral styling; failures remain red.
 

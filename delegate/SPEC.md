@@ -115,6 +115,12 @@ The implementer distinguishes edit ownership from authorized test execution and 
 
 Optional handoff headings are conventions inside `task`, not schema fields; see [Task handoff](README.md#task-handoff). Pass the supplied task unchanged to every role and archive that exact task. Do not prepare automatic diffs or discover Git state for task context. Legacy role `context` keys are ignored and preserved on configuration saves. Callers supply readable artifacts or file paths and scope; review defaults to `read`, `grep`, `find`, `ls` and `bash`, with read-only behavior specified by prompt policy rather than a sandbox.
 
+## Response policy
+
+Optional role `responseTemplate` text is appended to the effective system prompt as final-response instructions, without interpolation or schema enforcement. Blank templates leave the prompt byte-for-byte unchanged. Archive and fingerprint the effective prompt, including the template; keep the task unchanged. Snapshot this policy and the independent `saveToFile` toggle at acceptance.
+
+When saving is enabled, the harness writes nonempty returned text once to a unique private OS-temporary directory (`0700`) and `response.md` (`0600`), then replaces the body with a path receipt and exposes `responseFile`. Do not truncate the path receipt with the answer budget. Keep execution status, evidence, timing and empty-output semantics unchanged. On save failure, retain inline output with a warning. Saved text uses the existing output/wrap budget; native archives remain authoritative. Do not remove files on collect/reload or instruct the worker to save them.
+
 ## Spawn
 
 Reuse `../child-runtime/` for process/JSONL/truncate.
