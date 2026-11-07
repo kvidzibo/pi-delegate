@@ -14,6 +14,7 @@ import { savingsProbe } from "./savings.ts";
 import { sharedCapacityProbe } from "./local.ts";
 import { capabilitiesProbe } from "./capabilities.ts";
 import { rolesProbe } from "./roles.ts";
+import { checkpointsProbe } from "./checkpoints.ts";
 import { runPiChild } from "../../child-runtime/spawn.ts";
 import { buildChildArgs } from "../../delegate/spawn.ts";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
@@ -48,6 +49,7 @@ export default function probe(pi: ExtensionAPI) {
 		});
 	};
 	register("delegate-roles-probe", rolesProbe);
+	register("delegate-checkpoints-probe", ctx => checkpointsProbe(pi, ctx));
 	register("delegate-capabilities-probe", ctx => capabilitiesProbe(pi, ctx));
 	register("delegate-allowlist-probe", () => ({ tools: pi.getActiveTools() }));
 	register("delegate-shared-capacity-probe", ctx => sharedCapacityProbe(pi, ctx));
@@ -402,7 +404,7 @@ export default function probe(pi: ExtensionAPI) {
 		} });
 		assert.equal(notices.length, 0);
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");
-		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session" } });
+		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session", getBranch: () => [] } });
 		assert.equal(statuses.at(-1), undefined);
 		await handlers.get("session_start")?.({}, testCtx);
 		assert.equal(statuses.at(-1), "⑂ 155|100%");

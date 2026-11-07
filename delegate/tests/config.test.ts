@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
 	assertKind,
+	delegateConfigRevision,
+	resolveCheckpointAgent,
+	saveCheckpointSettings,
 	loadDelegateConfig,
 	mergeDelegateConfig,
 	parseDelegateConfig,
@@ -260,4 +263,63 @@ test("broken shipped invariants refused", () => {
 			),
 		/model/,
 	);
+});
+
+
+test("checkpoint defaults, field overlays and safe advisor resolution", () => {
+	const base = shipped();
+	assert.deepEqual(base.checkpoints, { enabled: false, role: "goldfish", interval: 10 });
+	assert.throws(() => resolveCheckpointAgent(base), /unknown role goldfish/);
+	const configured = mergeDelegateConfig(base, { checkpoints: { enabled: true, interval: 1000 } }, "checkpoints");
+	assert.deepEqual(configured.checkpoints, { enabled: true, role: "goldfish", interval: 1000 });
+	assert.deepEqual(mergeDelegateConfig(configured, { checkpoints: { interval: 1 } }, "partial").checkpoints,
+		{ enabled: true, role: "goldfish", interval: 1 });
+	for (const checkpoints of [null, [], false, 10, "on", { enabled: null }, { enabled: "true" }, { enabled: 1 },
+		{ role: null }, { role: "../bad" }, { role: 1 }, { interval: null }, { interval: "10" }, { interval: 0 },
+		{ interval: 1001 }, { interval: 1.5 }, { interval: true }]) {
+		assert.throws(() => parseDelegateConfig({ ...base, checkpoints }, "bad"), /checkpoints/);
+		assert.throws(() => mergeDelegateConfig(base, { checkpoints }, "bad"), /checkpoints/);
+	}
+	const safe = mergeDelegateConfig(configured, { agents: { goldfish: { model: "hosted/advisor", prompt: "Advise", tools: [], extensions: false } } }, "safe");
+	assert.deepEqual(resolveCheckpointAgent(safe), resolveAgent("goldfish", safe));
+	for (const patch of [{ enabled: false }, { tools: ["read"] }, { tools: ["*"] }, { extensions: true }]) {
+		const unsafe = mergeDelegateConfig(safe, { agents: { goldfish: patch } }, "unsafe");
+		assert.equal(unsafe.checkpoints.enabled, true); // Loading fails open; launch validation is separate.
+		assert.throws(() => resolveCheckpointAgent(unsafe), /disabled|tools: \[\]/);
+	}
+});
+
+test("checkpoint saves share revisions with roles and preserve unrelated overlay fields", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-checkpoints-"));
+	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
+	try {
+		const overlay = { note: "keep", checkpoints: { interval: 20, note: "keep checkpoint metadata" },
+			agents: { recon: { offline: true, context: ["legacy"], note: "keep role" } } };
+		writeFileSync(paths.userPath, JSON.stringify(overlay));
+		const config = loadDelegateConfig(paths);
+		let revision = delegateConfigRevision(paths);
+		revision = saveCheckpointSettings(paths, config.checkpoints, { enabled: true }, revision);
+		assert.equal(revision, delegateConfigRevision(paths));
+		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), {
+			...overlay, checkpoints: { ...overlay.checkpoints, enabled: true },
+		});
+		revision = saveDelegatePatch(paths, "recon", config.agents.recon, { thinking: "low" }, revision);
+		assert.equal(revision, delegateConfigRevision(paths));
+		const current = loadDelegateConfig(paths).checkpoints;
+		assert.deepEqual(current, { enabled: true, role: "goldfish", interval: 20 });
+		revision = saveCheckpointSettings(paths, current, { enabled: false }, revision);
+		const before = readFileSync(paths.userPath, "utf8");
+		assert.throws(() => saveCheckpointSettings(paths, current, { interval: 10 }), /changed on disk/);
+		for (const patch of [{ interval: 0 }, { enabled: null }, { role: "bad role" }]) {
+			assert.throws(() => saveCheckpointSettings(paths, loadDelegateConfig(paths).checkpoints, patch as any, revision), /checkpoints/);
+		}
+		assert.equal(readFileSync(paths.userPath, "utf8"), before);
+		writeFileSync(paths.userPath, before + " "); // Even unrelated external edits conflict.
+		assert.throws(() => saveCheckpointSettings(paths, loadDelegateConfig(paths).checkpoints, { interval: 10 }, revision), /changed on disk/);
+		assert.equal(readFileSync(paths.userPath, "utf8"), before + " ");
+		const saved = JSON.parse(before);
+		assert.deepEqual(saved.agents, { recon: { ...overlay.agents.recon, thinking: "low" } });
+		assert.equal(saved.note, overlay.note);
+		assert.equal(saved.checkpoints.note, overlay.checkpoints.note);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

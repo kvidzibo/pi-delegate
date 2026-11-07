@@ -17,7 +17,7 @@ export function registerDelegateCommand(pi: ExtensionAPI, defaults: DelegateOpti
 		return result;
 	};
 	pi.registerCommand("pi-delegate", {
-		description: "Delegate jobs, settings and usage: jobs, roles, models, stats.",
+		description: "Delegate jobs, settings and usage: jobs, roles, checkpoints, models, stats.",
 		getArgumentCompletions: (prefix) => {
 			const entries = options();
 			const match = prefix.trimStart().match(/^(\S+)\s+(.*)$/s);

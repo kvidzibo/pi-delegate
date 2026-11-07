@@ -63,6 +63,28 @@ Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. I
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients are not covered.
 
+## Automatic checkpoints
+
+Open **`/pi-delegate checkpoints`** for Automatic checks, Advisor role, Interval, Save and Back. Default: off, role `goldfish`, every 10 main-agent tool-using rounds. The menu offers 10/20; manual `checkpoints.interval` accepts integers 1–1000. A round is one assistant response with tool calls: parallel tools and a `codemode` batch count once. Delegate waits/peeks do not count; mixed or incompletely recorded batches count conservatively. Failed tool attempts count. Checks apply to all tool-using work, not just implementation.
+
+Example user overlay, after creating a suitable role in **Roles**:
+
+```json
+{
+  "checkpoints": { "enabled": true, "role": "goldfish", "interval": 10 }
+}
+```
+
+The role must be enabled with `tools: []` and `extensions: false`; its model, prompt, reasoning and output policy stay in **Roles**. No role/model is created or substituted. Save applies here to future checks and persists globally; other sessions need `/reload`. Esc/Back discards the draft. Existing jobs keep their policy.
+
+At the interval, the main agent waits for the advisor through the existing scheduler. The packet contains recent request/clarification text, recent tool calls/results, assistant statements and previous checkpoint feedback from the current model-visible session projection. It respects context edits/compaction and is capped at 20,000 characters or `maxTaskChars`, whichever is smaller, with labelled omissions. It excludes thinking, images, system prompts and tool-result metadata. It does **not** discover repositories, read referenced files or collect diffs; its evidence can be incomplete, particularly after compaction.
+
+**Privacy/cost:** opting in sends those excerpts to the configured advisor provider and records them in existing private, indefinitely retained delegate archives. Tool excerpts may contain secrets or other sensitive data; there is no guaranteed secret redaction. Each check incurs the role’s normal model cost and latency.
+
+Feedback appears in the transcript and main-agent context before the next step, capped at 6,000 characters. It is unverified advice—not authorization, mandatory acknowledgement, a final review or proof the agent acted on it. Active checks appear in Jobs; usage is included in Stats. Saved-to-file replies are read by the harness for delivery.
+
+The counter resets when the main agent settles and follows the active session branch across reload/resume. An interrupted check is not replayed from history. Parent cancellation/shutdown cancels its advisor without reviving the parent. Missing, disabled or incompatible roles and advisor failures produce an unavailable message and allow normal work to continue. Checks wait up to `defaultTimeoutMs` (including queue time); expiry requests cancellation instead of leaving an advisory job running unattended. There is no automatic checkpoint retry. Child agents never run checkpoints.
+
 ## Response templates and files
 
 `responseTemplate` is free-form text appended to the role’s system prompt as final-response instructions. Markdown headings and tables work; there is no placeholder substitution or schema enforcement. Empty/whitespace-only text disables it. For example:

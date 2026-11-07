@@ -26,7 +26,14 @@ export interface AgentConfig {
 	thinking: ThinkingLevel;
 }
 
+export interface CheckpointConfig {
+	enabled: boolean;
+	role: string;
+	interval: number;
+}
+
 export interface DelegateConfig {
+	checkpoints: CheckpointConfig;
 	maxTaskChars: number;
 	maxConcurrent: number;
 	maxLocalConcurrent: number;
@@ -59,6 +66,24 @@ export function resolveAgent(
 	const model = agent.model;
 	if (!model) throw new Error("delegate refused: model is empty.");
 	return { kind, model, agent };
+}
+
+export function resolveCheckpointAgent(config: DelegateConfig): ReturnType<typeof resolveAgent> {
+	const resolved = resolveAgent(config.checkpoints.role, config);
+	if (resolved.agent.tools.length !== 0 || resolved.agent.extensions) {
+		throw new Error(`Checkpoint advisor ${resolved.kind} must have tools: [] and extensions: false.`);
+	}
+	return resolved;
+}
+
+function parseCheckpoints(value: unknown, base: CheckpointConfig = { enabled: false, role: "goldfish", interval: 10 }): CheckpointConfig {
+	if (value === undefined) return { ...base };
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("checkpoints (object)");
+	const next = { ...base, ...value } as CheckpointConfig;
+	if (typeof next.enabled !== "boolean") throw new Error("checkpoints.enabled (boolean)");
+	if (typeof next.role !== "string" || !ROLE_NAME.test(next.role)) throw new Error("checkpoints.role (role name)");
+	if (!Number.isInteger(next.interval) || next.interval < 1 || next.interval > 1000) throw new Error("checkpoints.interval (integer 1..1000)");
+	return { enabled: next.enabled, role: next.role, interval: next.interval };
 }
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
@@ -189,6 +214,7 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 	const parsed = value as Record<string, unknown>;
 	const errors = collectConfigErrors(parsed);
 	const alternatives = parseAlternatives(parsed.localAlternatives);
+	const checkpoints = parseCheckpoints(parsed.checkpoints);
 	const profiles = parsed.calibrationProfiles ?? [];
 	if (!Array.isArray(profiles) || profiles.length > 100 || !profiles.every(p => typeof p === "string" && isAbsolute(p))) {
 		errors.push("calibrationProfiles (up to 100 absolute file paths)");
@@ -208,6 +234,7 @@ export function parseDelegateConfig(value: unknown, path: string): DelegateConfi
 		throw new Error(`Invalid delegate config: ${path} (${errors.join("; ")})`);
 	}
 	return {
+		checkpoints,
 		maxTaskChars: parsed.maxTaskChars as number,
 		maxConcurrent: parsed.maxConcurrent as number,
 		maxLocalConcurrent: parsed.maxLocalConcurrent as number,
@@ -261,6 +288,7 @@ export function mergeDelegateConfig(base: DelegateConfig, overlay: unknown, path
 	}
 	const extra = overlay as Record<string, unknown>;
 	const merged: Record<string, unknown> = {
+		checkpoints: parseCheckpoints(extra.checkpoints, base.checkpoints),
 		maxTaskChars: extra.maxTaskChars ?? base.maxTaskChars,
 		maxConcurrent: extra.maxConcurrent ?? base.maxConcurrent,
 		maxLocalConcurrent: extra.maxLocalConcurrent ?? base.maxLocalConcurrent,
@@ -330,17 +358,38 @@ export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: Agent
 	assertKind(kind);
 	if (["constructor", "prototype", "__proto__"].includes(kind)) throw new Error("Reserved role name.");
 	if (patch.model !== undefined && !/^[^/\s]+\/[^\s]+$/.test(patch.model)) throw new Error("Expected a provider/model ID.");
+	return saveSettingsPatch(paths, kind, revision, state => {
+		const { overlay, config } = state;
+		const saved = Object.hasOwn(config.agents, kind) ? config.agents[kind] : undefined;
+		if (!isDeepStrictEqual(saved, current)) throw settingsConflict(kind);
+		if (!current && (!patch.model || !patch.prompt?.trim())) throw new Error("New roles require an explicit model and nonblank prompt.");
+		return { ...overlay, agents: { ...overlay.agents, [kind]: {
+			...(current ? overlay.agents?.[kind] : { enabled: true, tools: [], extensions: false, thinking: "off" }), ...patch,
+		} } };
+	});
+}
+
+export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string): string {
+	return saveSettingsPatch(paths, "Checkpoints", revision, state => {
+		if (!isDeepStrictEqual(state.config.checkpoints, current)) throw settingsConflict("Checkpoints");
+		parseCheckpoints(patch, current);
+		return { ...state.overlay, checkpoints: { ...(state.overlay.checkpoints as object | undefined), ...patch } };
+	});
+}
+
+function settingsConflict(label: string): Error {
+	return new Error(`${label} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
+}
+
+function saveSettingsPatch(paths: ConfigPaths, label: string, revision: string | undefined,
+	update: (state: ReturnType<typeof readConfigState>) => Record<string, unknown>): string {
+	if (!paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 	const state = readConfigState(paths);
 	const baseline = JSON.stringify(state.identity);
-	const conflict = () => { throw new Error(`${kind} changed on disk. Run /reload before changing it here (reload stops outstanding children).`); };
+	const conflict = () => { throw settingsConflict(label); };
 	if (revision !== undefined && revision !== baseline) conflict();
-	const { overlay, shipped, config, mode } = state;
-	const saved = Object.hasOwn(config.agents, kind) ? config.agents[kind] : undefined;
-	if (!isDeepStrictEqual(saved, current)) conflict();
-	if (!current && (!patch.model || !patch.prompt?.trim())) throw new Error("New roles require an explicit model and nonblank prompt.");
-	const next = { ...overlay, agents: { ...overlay.agents, [kind]: {
-		...(current ? overlay.agents?.[kind] : { enabled: true, tools: [], extensions: false, thinking: "off" }), ...patch,
-	} } };
+	const { shipped, mode } = state;
+	const next = update(state);
 	mergeDelegateConfig(shipped, next, state.path!);
 	const path = state.path!;
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

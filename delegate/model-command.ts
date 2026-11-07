@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { assertKind, delegateConfigRevision, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { assertKind, delegateConfigRevision, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
 import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
@@ -70,6 +70,82 @@ export class ModelCommand {
 			}
 		} catch (error) {
 			if (!signal.aborted) ctx.ui.notify(`Delegate role settings: ${error instanceof Error ? error.message : String(error)}`, "error");
+		} finally { this.busy = false; }
+	}
+
+	async checkpoints(args: string, ctx: ExtensionCommandContext): Promise<void> {
+		if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate checkpoints", "warning"); return; }
+		if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui.notify("Checkpoints requires native Pi TUI mode.", "warning"); return; }
+		if (this.dialog.signal.aborted) return;
+		if (this.busy) { ctx.ui.notify("Delegate settings are already open.", "warning"); return; }
+		this.busy = true;
+		const signal = this.dialog.signal;
+		const before = this.config.checkpoints;
+		const draft = { ...before };
+		let catalogueReady = false;
+		const refresh = async () => {
+			catalogueReady = false;
+			const refreshed = await ctx.modelRegistry.refresh({ allowNetwork: false, signal });
+			if (signal.aborted) return;
+			if (refreshed?.aborted || refreshed?.errors.size) throw new Error("Model catalogue refresh was incomplete; checkpoints cannot be enabled.");
+			if (ctx.modelRegistry.getError()) throw new Error("Model catalogue is uncertain; checkpoints cannot be enabled.");
+			catalogueReady = true;
+		};
+		const validate = () => {
+			const resolved = resolveCheckpointAgent({ ...this.config, checkpoints: draft });
+			if (!catalogueReady) throw new Error("Model catalogue is uncertain; checkpoints cannot be enabled.");
+			if (!ctx.modelRegistry.getAvailable().some(item => modelId(item) === resolved.model)) {
+				throw new Error(`Advisor model ${resolved.model} is unavailable. Configure model access in Pi (/login or models.json).`);
+			}
+		};
+		try {
+			// Catalogue trouble must not prevent switching checks off.
+			try { await refresh(); }
+			catch (error) { if (!signal.aborted) ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning"); }
+			while (!signal.aborted) {
+				const roles = Object.keys(this.config.agents).filter(role => {
+					try { resolveCheckpointAgent({ ...this.config, checkpoints: { ...draft, role } }); return true; }
+					catch { return false; }
+				});
+				let unavailable = "";
+				try { validate(); } catch (error) { unavailable = error instanceof Error ? error.message : String(error); }
+				const action = await roleMenu(ctx, "Delegate checkpoints", [
+					{ id: "enabled", label: "Automatic checks", description: "Pauses work and sends request/tool excerpts to the advisor provider. Excerpts may contain sensitive data.", currentValue: draft.enabled ? "on" : "off", values: ["off", "on"] },
+					{ id: "role", label: "Advisor role", currentValue: `${draft.role}${unavailable ? " (unavailable)" : ""}`,
+						description: unavailable ? `${unavailable} Configure an enabled role with tools: [] and extensions: false via /pi-delegate roles or delegate.json.` : "Enabled role with no tools or extension discovery." },
+					{ id: "interval", label: "Interval", description: "Main-agent tool-using rounds between checks; a batch counts once.", currentValue: String(draft.interval), values: [...new Set([10, 20, draft.interval])].map(String) },
+					{ id: "save", label: "Save", currentValue: "" },
+					{ id: "back", label: "Back", currentValue: "" },
+				], signal, (id, value) => {
+					if (id === "interval") draft.interval = Number(value);
+					else if (id === "enabled") {
+						draft.enabled = value === "on";
+						if (draft.enabled) {
+							try { validate(); }
+							catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning"); }
+						}
+					}
+				}, "Save for future checks; Esc/Back discards draft.");
+				if (signal.aborted || action === undefined || action === "back") return;
+				if (action === "role") {
+					if (!roles.length) { ctx.ui.notify("No compatible advisor roles. Configure an enabled role with tools: [] and extensions: false in /pi-delegate roles or delegate.json.", "warning"); continue; }
+					const role = await ctx.ui.select("Checkpoint advisor role", roles, { signal });
+					if (signal.aborted) return;
+					if (role !== undefined) draft.role = role;
+				} else if (action === "save") {
+					try {
+						if (draft.enabled) { await refresh(); if (signal.aborted) return; validate(); }
+						this.revision = saveCheckpointSettings(this.paths, before, draft, this.revision);
+						this.config.checkpoints = { ...draft };
+						ctx.ui.notify("Checkpoints saved globally; active here for future checks. Other sessions need /reload. Existing jobs unchanged.", "info");
+						return;
+					} catch (error) {
+						if (!signal.aborted) ctx.ui.notify(`Delegate checkpoints: ${error instanceof Error ? error.message : String(error)}`, "error");
+					}
+				}
+			}
+		} catch (error) {
+			if (!signal.aborted) ctx.ui.notify(`Delegate checkpoints: ${error instanceof Error ? error.message : String(error)}`, "error");
 		} finally { this.busy = false; }
 	}
 
