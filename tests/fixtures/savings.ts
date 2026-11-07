@@ -37,7 +37,7 @@ export async function savingsProbe(pi: ExtensionAPI, ctx: ExtensionCommandContex
 			lookups++; assert.equal(`${provider}/${id}`, s.profile.key.alternativeModel); return { cost: pricing };
 		} }, ui: { ...ctx.ui, setStatus: (_k: string, text: string) => statuses.push(text), notify: (text: string) => notices.push(text), select: async (report: string) => { notices.push(report); return undefined; } } };
 		await handlers.get("session_start")!({}, testCtx);
-		const result = await tool.execute("pricing-probe", { task: "Mock recon", kind: "recon" }, undefined, undefined, testCtx);
+		const result = await tool.execute("pricing-probe", { task: "Mock recon", kind: "recon", background: false }, undefined, undefined, testCtx);
 		assert.equal(result.details.ok, true); assert.equal(lookups, 1);
 		assert.match(statuses.at(-1)!, /^⑂ 220\|100%\|~<\$0.001$/);
 		const entriesBefore = ctx.sessionManager.getEntries().length;

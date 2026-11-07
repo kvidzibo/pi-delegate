@@ -13,6 +13,10 @@ One child per call; no nested delegation. Define custom roles or override prompt
 | `review` | Read-only review with shell access |
 | `oracle` | Last-resort analysis without editing |
 
+## Migration to 0.33.0
+
+New delegates default to `background: true`, returning a job ID immediately. Set `background: false` to wait on spawn. Job-ID collection and controls are unchanged. After updating, finish outstanding jobs before `/reload`.
+
 ## Migration to 0.30.0
 
 The `delegate` tool no longer accepts `model`, including for reviews. Configure each role's model with `/pi-delegate roles` or `~/.pi/agent/delegate.json`; remove `model` from tool calls, then `/reload` after outstanding jobs finish. Accepted jobs and archives are unchanged.

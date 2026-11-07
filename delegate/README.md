@@ -156,10 +156,11 @@ Example tool arguments:
 ```json
 {
   "kind": "recon",
-  "task": "Find test files and test commands; report paths and do not edit.",
-  "background": true
+  "task": "Find test files and test commands; report paths and do not edit."
 }
 ```
+
+Spawns default to `background: true` and return a job ID immediately. Set `background: false` to wait for completion or the initial `timeoutMs` budget. Omit `background` when collecting or controlling an existing job.
 
 Null, empty-string and whitespace-only optional arguments are treated as omitted; `false` and `0` keep their meanings. Spawning still requires non-empty `kind` and `task`.
 

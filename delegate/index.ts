@@ -378,7 +378,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		label: "Delegate",
 		renderShell: "self",
 		description:
-			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
+			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
 		promptSnippet: "Route isolated work to a named delegate agent. Model comes only from role configuration.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; use it for isolated child work only when expected speed or quality gain exceeds coordination and validation cost.",
@@ -394,7 +394,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Children must not commit, push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff, rerun relevant checks and validate the integrated result. Child reports and completion receipts are evidence, not proof of correctness.",
 			"For review loops, use kind review with its configured model; address findings and review again until none important remain. If a requested model differs from the role configuration, report the blocker rather than overriding or substituting a model or claiming a clean review.",
-			"delegate background:true returns jobId immediately; the child keeps running.",
+			"delegate spawns default to background:true and return jobId immediately; the child keeps running. Set background:false to wait on spawn.",
 			"delegate timeoutMs is a wait budget, never a kill. Foreground expiry auto-backgrounds and returns a short check-in.",
 			"With delegate jobId, omit timeoutMs to wait until done or 60s quiet; timeoutMs:0 peeks.",
 			"On a nonterminal delegate check-in, inspect current/recent tools and quietForMs. Wait while useful progress continues; silence or wait expiry alone does not prove a stall.",
@@ -418,7 +418,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				}),
 			),
 			background: optionalArgument(
-				Type.Boolean({ description: "Return jobId now; child runs in the background." }),
+				Type.Boolean({ description: "Spawn default: true, return jobId now. Set false to wait. Omit with jobId." }),
 			),
 			jobId: optionalArgument(Type.String({ description: "Wait, peek, wrap, or cancel an existing job." })),
 			wrap: optionalArgument(

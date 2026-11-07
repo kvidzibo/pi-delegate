@@ -6,7 +6,7 @@ The Pi extension has one routing tool. Config-defined named agents. Child model 
 
 One routing tool. Config-defined named agents with four shipped starters. Child model is config (any Pi model id). No nesting.
 
-Background spawn returns `jobId` immediately. Local/GPU children share `maxLocalConcurrent` (queue, do not overlap). Hosted children use `maxConcurrent` only. Do not start/stop GPU servers.
+Spawns default to background mode and return `jobId` immediately; explicit `background: false` waits. Local/GPU children share `maxLocalConcurrent` (queue, do not overlap). Hosted children use `maxConcurrent` only. Do not start/stop GPU servers.
 
 ## Layout
 
@@ -34,8 +34,8 @@ Description must say: named agents, model from config, no nesting.
 | `kind` | spawn | configured role name |
 | `cwd` | no | existing directory |
 | `timeoutMs` | no | wait budget, never a kill. Spawn/fg: first wait (queue time counts). `jobId`: max wait (omit = until done or quiet). `0` with `jobId` = peek |
-| `background` | no | `true` = return `jobId` now; child keeps running until completion or cancellation, including parent-run interruption. Interactive mode may later inject a short completion notice |
-| `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with `background`. Terminal collect suppresses the notice |
+| `background` | no | Spawn default `true` = return `jobId` now; `false` waits on spawn; child keeps running until completion or cancellation, including parent-run interruption. Interactive mode may later inject a short completion notice |
+| `jobId` | collect | wait, peek, wrap, or cancel. Cannot combine with explicit `background: true`. Terminal collect suppresses the notice |
 | `wrap` | no | with `jobId`: RPC `steer` wrap-up. Does not interrupt the current tool. Queued job → cancel. Cannot combine with `cancel` |
 | `cancel` | no | with `jobId`: abort + kill. Idempotent if already terminal |
 
