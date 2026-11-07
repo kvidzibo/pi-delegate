@@ -81,7 +81,11 @@ The implementer reports completed/remaining requirements, changed files, checks 
 
 Reviews use the configured `review` model, with no per-call override. To use another model, change the role in `/pi-delegate roles` before launching.
 
-Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
+Tasks are dispatched without automatic diffs or extra prepared context. Supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands.
+
+Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, include the prior finding and reproduction, but require independent reassessment. The shipped reviewer prompt treats explanations and claimed results as unverified and checks for counterevidence before reporting defects; no findings remains a valid outcome.
+
+These are prompt conventions, not enforced blindness or proof of unbiased review. Tasks remain free-form and unchanged. Custom review prompt overrides replace the shipped prompt and do not automatically gain its independence guidance.
 
 `review` defaults to `read`, `grep`, `find`, `ls` and `bash`—no `write` or `edit` tools. Read-only behavior relies on its prompt, not shell write protection. Existing user `tools` overrides still replace the defaults.
 
