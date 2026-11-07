@@ -16,7 +16,7 @@ Shipped models use `openai-codex`:
 All role defaults are hosted; configure a role to use a local model.
 User role configuration takes precedence over these defaults. Models come only from role configuration; the `delegate` tool rejects any `model` argument, including null or blank values. This applies to every role, including reviews.
 
-Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery and the full multiline prompt. Enablement, extensions and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
+Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template and Save to file. Enablement, extensions, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
 
 **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both paths share model selection and persistence. Use Roles to save model and reasoning together; the model-first picker saves them separately. Model choices match `/model`: scoped models when set, otherwise all available models. Reasoning comes from Pi's supported levels (including `xhigh`/`max` when supported); non-reasoning models offer only `off`. Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues. They apply to future jobs in this session; queued/running jobs retain their acceptance-time policy. Other sessions need `/reload`.
 
@@ -42,6 +42,8 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `tools` | All Pi tools (`["*"]`); `[]` disables tools |
 | `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
 | `thinking` | `off` |
+| `responseTemplate` | Empty/omitted: unchanged response instructions |
+| `saveToFile` | `false`: return the response inline |
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
 
@@ -58,6 +60,25 @@ Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` enviro
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
 Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coordination fails closed for local work, not hosted work. Private lock files live under `<agent-dir>/delegate-capacity/`; never remove them while clients may be running. The child verifies and retains an inherited lease until it exits, including after parent death. This adds a startup check, not tool restrictions, automatic runtime limits or enforced wrap-up. Reload older participating sessions to coordinate; unrelated server clients are not covered.
+
+## Response templates and files
+
+`responseTemplate` is free-form text appended to the role’s system prompt as final-response instructions. Markdown headings and tables work; there is no placeholder substitution or schema enforcement. Empty/whitespace-only text disables it. For example:
+
+```json
+{
+  "agents": {
+    "review": {
+      "responseTemplate": "Use one row per finding; if none, say No findings. Do not invent resolutions or commits.\n\n| # | Severity | Finding | Resolution |\n|---|---|---|---|\n| 1 | High | <finding> | <actual resolution or unresolved> |",
+      "saveToFile": true
+    }
+  }
+}
+```
+
+`saveToFile` works independently of the template. After a worker finishes, the harness writes its returned text to a unique private `pi-delegate-result-*/response.md` under the OS temporary directory (usually `/tmp`). The parent receives the path instead of the body, also available as `details.responseFile`; repeated collection returns the same path. The worker is not instructed to save anything. Nonempty failure/partial results are saved too, without changing their failure status. Empty results produce no file. A save failure reports a warning and falls back to inline text.
+
+Files contain the returned response, including wrap follow-ups and truncation notices; the existing `maxOutputBytes` limit still applies. Native session archives retain recorded history. Temporary directories are private (`0700`), files are owner-only (`0600`), and the extension does not delete them on collection or reload. OS cleanup may remove them; copy important reports elsewhere. Both settings are captured when the job is accepted.
 
 ## Task handoff
 

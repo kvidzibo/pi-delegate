@@ -108,11 +108,14 @@ export class ModelCommand {
 				{ id: "tools", label: "Tools", currentValue: draft.tools.join(", ") || "none" },
 				{ id: "extensions", label: "Extensions", description: "Allow configured extension/MCP discovery. Not a sandbox.", currentValue: draft.extensions ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "prompt", label: "Prompt (multiline)", currentValue: `${draft.prompt.split("\n").length} lines · ≈${Math.ceil(draft.prompt.length / 4)} tokens` },
+				{ id: "responseTemplate", label: "Response template", description: "Free-form text; empty disables. No placeholder processing.", currentValue: draft.responseTemplate?.trim() ? `${draft.responseTemplate.split("\n").length} lines · ≈${Math.ceil(draft.responseTemplate.length / 4)} tokens` : "disabled" },
+				{ id: "saveToFile", label: "Save to file", description: "Return a private temporary file path instead of response text.", currentValue: draft.saveToFile ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "save", label: "Save role", currentValue: "" },
 			], signal, (id, value) => {
 				if (id === "thinking") draft.thinking = value as AgentConfig["thinking"];
 				else if (id === "enabled") draft.enabled = value === "yes";
 				else if (id === "extensions") draft.extensions = value === "yes";
+				else if (id === "saveToFile") draft.saveToFile = value === "yes";
 			});
 			if (signal.aborted || action === undefined) return;
 			if (action === "model") {
@@ -124,6 +127,9 @@ export class ModelCommand {
 			} else if (action === "prompt") {
 				const prompt = await ctx.ui.editor(`Prompt for ${name}`, draft.prompt);
 				if (prompt !== undefined) draft.prompt = prompt;
+			} else if (action === "responseTemplate") {
+				const template = await ctx.ui.editor(`Response template for ${name} (empty disables)`, draft.responseTemplate ?? "");
+				if (template !== undefined) draft.responseTemplate = template;
 			} else if (action === "tools") {
 				const names = [...new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls",
 					...Object.values(this.config.agents).flatMap(agent => agent.tools), ...draft.tools].filter(tool => tool !== "*"))];

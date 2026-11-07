@@ -24,6 +24,8 @@ export interface ChildDiag {
 
 export interface ChildResult {
 	text: string;
+	/** Optional harness-owned response file; the worker never receives this path. */
+	responseFile?: string;
 	exitCode: number;
 	stderrTail: string;
 	model?: string;
