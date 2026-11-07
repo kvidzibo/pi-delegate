@@ -1,21 +1,23 @@
 # Model intelligence and cost comparison
 
-**Last updated and source-verified:** 2026-11-07 (UTC).
+**Last updated:** 2026-11-07 (UTC).
+
+Kimi K3.1 Pro was source-verified for this update. Other columns retain the earlier 2026-11-07 snapshot and were not reverified.
 
 A reference snapshot for choosing delegate models, not measured Pi-delegate performance or an automatic role configuration. Model availability and supported reasoning levels depend on your provider; select them in `/pi-delegate roles`.
 
 Each cell: **score / USD**. Artificial Analysis Intelligence Index v5.0.1; scores rounded to integers and costs to three decimal places.
 
-| Thinking | Terra 6.1 | Sol 6.1 | Luna 6 | Astra 6 | Grok 4.7 | Opus 5.5 | Fable 5.1 |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| None | 31 / $0.226 | — | 9 / $0.071 | — | — | — | — |
-| Low | 29 / $0.071 | 35 / $0.161 | 10 / $0.005 | 43 / $1.424 | 31 / $2.922 | 35 / $0.976 | 39 / $4.471 |
-| Medium | 38 / $0.169 | 46 / $0.359 | 18 / $0.042 | 52 / $2.732 | — | 48 / $2.451 | 43 / $5.564 |
-| High | 42 / $0.259 | 50 / $0.591 | 21 / $0.073 | 55 / $3.239 | 35 / $6.184 | 52 / $3.465 | 47 / $7.540 |
-| Xhigh | 45 / $0.401 | 52 / $0.764 | 23 / $0.104 | 55 / $3.659 | 35 / $7.772 | 57 / $6.047 | 50 / $10.847 |
-| Max | 51 / $0.961 | 55 / $1.272 | 28 / $0.152 | 57 / $6.245 | — | 59 / $10.036 | 49 / $12.994 |
+| Thinking | Terra 6.1 | Sol 6.1 | Luna 6 | Astra 6 | Grok 4.7 | Opus 5.5 | Fable 5.1 | Kimi K3.1 Pro |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| None | 31 / $0.226 | — | 9 / $0.071 | — | — | — | — | — |
+| Low | 29 / $0.071 | 35 / $0.161 | 10 / $0.005 | 43 / $1.424 | 31 / $2.922 | 35 / $0.976 | 39 / $4.471 | — |
+| Medium | 38 / $0.169 | 46 / $0.359 | 18 / $0.042 | 52 / $2.732 | — | 48 / $2.451 | 43 / $5.564 | — |
+| High | 42 / $0.259 | 50 / $0.591 | 21 / $0.073 | 55 / $3.239 | 35 / $6.184 | 52 / $3.465 | 47 / $7.540 | — |
+| Xhigh | 45 / $0.401 | 52 / $0.764 | 23 / $0.104 | 55 / $3.659 | 35 / $7.772 | 57 / $6.047 | 50 / $10.847 | — |
+| Max | 51 / $0.961 | 55 / $1.272 | 28 / $0.152 | 57 / $6.245 | — | 59 / $10.036 | 49 / $12.994 | 46 / $3.681 |
 
-Costs are weighted averages per Artificial Analysis benchmark task, **not per chat request**. — = no result listed. Claude results use AA’s “Default Fallback” configuration; effort labels aren’t equivalent across providers.
+Costs are weighted averages per Artificial Analysis benchmark task, **not per chat request**. — = no result listed. Claude results use AA’s “Default Fallback” configuration; effort labels aren’t equivalent across providers. Kimi K3.1 Pro’s single listed result uses AA’s Max-effort configuration.
 
 ## Updating this snapshot
 
@@ -30,3 +32,4 @@ Recheck every listed model and thinking level against the source pages below, us
 - [Grok 4.7](https://artificialanalysis.ai/models/releases/grok-4-7)
 - [Opus 5.5](https://artificialanalysis.ai/models/releases/claude-opus-5-5)
 - [Fable 5.1](https://artificialanalysis.ai/models/releases/claude-fable-5-1)
+- [Kimi K3.1 Pro](https://artificialanalysis.ai/models/kimi-k3-1-pro)
