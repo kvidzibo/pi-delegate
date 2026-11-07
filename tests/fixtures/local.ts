@@ -41,7 +41,7 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 		const second = await b({ kind: "implement", task: "wait", background: true });
 		assert.equal(second.details.status, "queued"); assert.equal(second.details.reason, "resource");
 		assert.match(second.content[0].text, /shared resource/);
-		const hosted = await b({ kind: "review", task: "hosted" });
+		const hosted = await b({ kind: "review", task: "hosted", background: false });
 		assert.equal(hosted.details.ok, true); assert.equal(starts.length, 2);
 		assert.equal(starts[1].model, "hosted/test");
 		assert.equal(starts[1].resourceLease, undefined); assert.equal(starts[1].leaseStartupMs, undefined);

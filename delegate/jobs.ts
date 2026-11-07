@@ -225,7 +225,7 @@ export function parseDelegateCall(
 	const timeoutMs = normalizeTimeoutMs(rec.timeoutMs, config, "delegate");
 	const parsed: ParsedCall = {
 		mode: "spawn",
-		background: rec.background === true,
+		background: rec.background !== false,
 		kind,
 		task,
 		timeoutMs,

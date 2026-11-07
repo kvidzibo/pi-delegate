@@ -92,7 +92,7 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 					assert.match(text, /Failure reason/); assert.doesNotMatch(text, /Configured capabilities|Shell tools|filesystem sandbox|Worker execution:|Response lifecycle:/);
 				}
 				// A subsequent default-model launch keeps the same configured tools after all observer/result mutations.
-				const foreground = call({ kind: "recon", task: "Default-model fixture", timeoutMs: 1000 });
+				const foreground = call({ kind: "recon", task: "Default-model fixture", background: false, timeoutMs: 1000 });
 				assert.deepEqual(runs[1].input.tools, tools); assert.equal(runs[1].input.model, "hosted/mock");
 				runs[1].resolve({ text: "Default evidence.", exitCode: 0, stderrTail: "" }); check(await foreground);
 				assert.equal(runs.length, 2);

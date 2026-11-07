@@ -67,7 +67,7 @@ function hosted(input: Pick<EnqueueInput, "task" | "run"> & Partial<Omit<Enqueue
 }
 
 test("parse spawn and collect modes", () => {
-	const fg = parseDelegateCall({ kind: "recon", task: "map files" }, callConfig);
+	const fg = parseDelegateCall({ kind: "recon", task: "map files", background: false }, callConfig);
 	assert.equal(fg.mode, "spawn");
 	if (fg.mode !== "spawn") return;
 	assert.equal(fg.background, false);
@@ -116,6 +116,17 @@ test("parse spawn and collect modes", () => {
 		/spawn fields/,
 	);
 	assert.throws(() => parseDelegateCall({ kind: "recon" }, callConfig), /task is required/);
+});
+
+test("spawn defaults to background after optional placeholders are normalized", () => {
+	for (const options of [{}, ...[undefined, null, "", " \t\n"].map(background => ({ background }))]) {
+		const spawn = parseDelegateCall({ kind: "recon", task: "map files", ...options }, callConfig);
+		assert.equal(spawn.mode, "spawn");
+		if (spawn.mode !== "spawn") assert.fail("expected spawn");
+		assert.equal(spawn.background, true);
+		assert.deepEqual(parseDelegateCall({ jobId: "d0001", ...options }, callConfig),
+			{ mode: "collect", jobId: "d0001", peek: false });
+	}
 });
 
 test("model parameters are rejected for every role and job control", () => {

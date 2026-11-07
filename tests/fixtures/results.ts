@@ -89,7 +89,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
 	};
 	const launch = async (options: object = {}, signal?: AbortSignal) => {
-		const result = await call({ kind: "review", task: "Mock result contract", background: true, ...options }, signal);
+		const result = await call({ kind: "review", task: "Mock result contract", ...options }, signal);
 		if (result.details.status === "running" && !result.details.cancellationRequested) {
 			await untilRun(() => runs.some(run => run.input.sessionFile === result.details.sessionFile));
 		}
