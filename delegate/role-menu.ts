@@ -5,13 +5,14 @@ import { SettingsList, Text, truncateToWidth, type SettingItem } from "@earendil
 export async function roleMenu(
 	ctx: ExtensionCommandContext, title: string, items: SettingItem[], signal: AbortSignal,
 	onChange: (id: string, value: string) => void,
+	footerText = "Save role applies to future jobs; Back discards the draft.",
 ): Promise<string | undefined> {
 	if (signal.aborted) return undefined;
 	return ctx.ui.custom<string | undefined>((tui, theme, keys, done) => {
 		const cancel = () => done(undefined);
 		const border = new DynamicBorder();
 		const heading = new Text(theme.fg("accent", theme.bold(title)), 0, 0);
-		const footer = new Text(theme.fg("dim", "Save role applies to future jobs; Back discards the draft."), 0, 0);
+		const footer = new Text(theme.fg("dim", footerText), 0, 0);
 		const rows = items.map(item => item.values ? item : { ...item, submenu: () => { done(item.id); return new Text("", 0, 0); } });
 		let selected = 0, capacity = 0;
 		let list: SettingsList;

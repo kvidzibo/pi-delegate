@@ -28,6 +28,12 @@ test("installed Pi CLI tool selection preserves exact names and expands wildcard
 	}
 });
 
+test("automatic checkpoints deliver saved advice, fail open, cancel and use native settings", async () => {
+	assert.deepEqual((await runPiProbe("delegate-checkpoints-probe")).result, {
+		automatic: true, savedFeedback: true, failure: true, cancellation: true, menu: true, noModelCalls: true,
+	});
+});
+
 test("native Roles edits full policy, creates safe roles and preserves accepted snapshots and overlays", async () => {
 	assert.deepEqual((await runPiProbe("delegate-roles-probe")).result, {
 		editor: true, safeDefaults: true, preservedOverlay: true, acceptedSnapshot: true,

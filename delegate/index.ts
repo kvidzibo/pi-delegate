@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +8,8 @@ import { Type, type TSchema } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
-import { loadDelegateConfig, resolveAgent, type Kind } from "./config.ts";
+import { loadDelegateConfig, resolveAgent, resolveCheckpointAgent, type Kind } from "./config.ts";
+import { createCheckpointHooks } from "./checkpoints.ts";
 import {
 	delegateTargetLine,
 	durationContent,
@@ -261,7 +263,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		if (parentSignal?.aborted) onParentAbort();
 		else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 	});
-	pi.on("agent_settled", () => detachParentAbort());
+	pi.on("agent_settled", () => { detachParentAbort(); checkpoints.settled(); });
 
 	const bindUi = (ctx: { ui?: BoardUi; mode?: string; hasUI?: boolean; isIdle?: () => boolean }): void => {
 		if (ctx.ui && typeof ctx.ui.setWidget === "function") ui = ctx.ui;
@@ -310,13 +312,41 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		bindUi(ctx);
 		cards.restore(ctx.sessionManager.getBranch?.() ?? []);
 		await accounting.activate(ctx.sessionManager.getSessionId(), ctx.hasUI ? ctx.ui : undefined);
+		checkpoints.restore(_event, ctx);
 	});
-	pi.on("session_tree", (_event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); });
+	pi.on("session_tree", (event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); checkpoints.restore(event, ctx); });
+	const checkpoints = createCheckpointHooks(pi, config, async (task, origin, ctx) => {
+		bindUi(ctx);
+		const { kind, agent, model } = resolveCheckpointAgent(config);
+		ctx.signal?.throwIfAborted();
+		const accepted = enqueueDelegate({
+			scheduler, accounting, agent, task, config, childRunner, background: false,
+			timeoutMs: config.defaultTimeoutMs, signal: ctx.signal,
+			identity: {
+				parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
+				toolCallId: origin, kind, cwd: ctx.cwd, requestedModel: model, thinking: agent.thinking,
+			},
+		});
+		// Checkpoints deliver their own result at this boundary, never a follow-up notice.
+		gate.consume(accepted.id);
+		const snap = await scheduler.wait(accepted.id, { timeoutMs: config.defaultTimeoutMs, signal: ctx.signal });
+		if (snap.status === "queued" || snap.status === "running") {
+			scheduler.cancel(snap.id);
+			return { failed: true, text: "Advisor wait ended before completion; cancellation requested.", jobId: snap.id, model };
+		}
+		const text = snap.responseFile ? readFileSync(snap.responseFile, "utf8") : receiptText(snap);
+		return { failed: snap.failed || !text.trim(), text, jobId: snap.id, model, durationMs: accounting.durationMs(snap.archive?.runId) };
+	});
+	pi.on("turn_end", checkpoints.turnEnd);
 	const dialogs = new AbortController();
 	registerDelegateCommand(pi, [{
 		name: "roles",
 		description: "Edit roles, models, reasoning, tools, extensions and prompts",
 		handler: (args, ctx) => modelCommand.command(args, ctx, true),
+	}, {
+		name: "checkpoints",
+		description: "Automatic advisory checks during main-agent work (opt-in)",
+		handler: (args, ctx) => modelCommand.checkpoints(args, ctx),
 	}, {
 		name: "models",
 		description: "Choose role models and reasoning levels",
@@ -354,6 +384,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	});
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
+		checkpoints.stop();
 		clearInterval(boardTimer); boardTimer = undefined;
 		dialogs.abort();
 		busyUnsubscribe?.();

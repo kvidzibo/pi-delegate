@@ -48,6 +48,12 @@ Jobs and stats use framed, opaque panels so live transcript output stays visuall
 
 Manual configuration edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**
 
+## Automatic checkpoints
+
+`/pi-delegate checkpoints` enables periodic, text-only progress advice during main-agent work. **Off by default.** Choose an existing advisor role (default name `goldfish`) and an interval of 10 or 20 action rounds. Configure the role’s model/prompt in **Roles**; it must have no tools or extensions. No advisor role is created automatically.
+
+Checks pause the next main-agent step and send bounded conversation/tool excerpts to the advisor’s provider. Excerpts may contain sensitive data. Feedback is advisory, not a code review or approval gate. See [checkpoint behaviour and limits](delegate/README.md#automatic-checkpoints).
+
 ## Use
 
 Ask Pi:
