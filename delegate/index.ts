@@ -378,7 +378,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		renderShell: "self",
 		description:
 			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. background returns jobId. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
-		promptSnippet: "Route isolated work to a named delegate agent. Model comes from config or the model argument.",
+		promptSnippet: "Route isolated work to a named delegate agent. Model comes only from role configuration.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; use it for isolated child work only when expected speed or quality gain exceeds coordination and validation cost.",
 			"Use delegate as the only parent-child tool. One child per call. No nesting.",
@@ -388,10 +388,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
 			"Roles can be disabled in configuration; do not retry a disabled role with another model. No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review remains read-only by prompt policy.",
-			"For delegate, omit model to use the configured role default unless the user explicitly requests another model. Do not guess model IDs or silently substitute a fallback. Overrides keep the kind's tools, prompt and thinking level.",
+			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model.",
 			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Children must not commit, push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff, rerun relevant checks and validate the integrated result. Child reports and completion receipts are evidence, not proof of correctness.",
-			"For 'review loop <model>', call delegate with kind review and the requested model; address findings and review again until none important remain. If blocked, report it rather than substituting a model or claiming a clean review.",
+			"For review loops, use kind review with its configured model; address findings and review again until none important remain. If a requested model differs from the role configuration, report the blocker rather than overriding or substituting a model or claiming a clean review.",
 			"delegate background:true returns jobId immediately; the child keeps running.",
 			"delegate timeoutMs is a wait budget, never a kill. Foreground expiry auto-backgrounds and returns a short check-in.",
 			"With delegate jobId, omit timeoutMs to wait until done or 60s quiet; timeoutMs:0 peeks.",
@@ -413,11 +413,6 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				Type.Integer({
 					description:
 						"Wait budget, never a kill. Spawn/fg: first wait. jobId: max wait (omit = until done or quiet). 0 with jobId = peek.",
-				}),
-			),
-			model: optionalArgument(
-				Type.String({
-					description: "Override child model. Any Pi model id (provider/id).",
 				}),
 			),
 			background: optionalArgument(
@@ -470,7 +465,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				} else {
 					const kind = parsed.kind;
 					const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
-					const resolved = resolveAgent(kind, parsed.modelOverride, config);
+					const resolved = resolveAgent(kind, config);
 					const tools = [...resolved.agent.tools];
 					capabilities = describeCapabilities(tools);
 					const local = isLocalModel(resolved.model);

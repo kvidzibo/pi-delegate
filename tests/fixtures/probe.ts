@@ -54,6 +54,8 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-load-probe", () => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
+		assert.equal(Object.hasOwn(tools[0].parameters.properties, "model"), false);
+		assert.ok(tools[0].promptGuidelines?.some(rule => rule.includes("per-call model overrides are not supported")));
 		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
 		return { tools: tools.map((tool) => tool.name) };
 	});

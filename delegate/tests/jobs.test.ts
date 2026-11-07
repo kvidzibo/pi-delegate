@@ -118,6 +118,15 @@ test("parse spawn and collect modes", () => {
 	assert.throws(() => parseDelegateCall({ kind: "recon" }, callConfig), /task is required/);
 });
 
+test("model parameters are rejected for every role and job control", () => {
+	const calls = ["recon", "implement", "review", "oracle", "custom"].map(kind => ({ kind, task: "fixture" }));
+	for (const call of [...calls, { jobId: "d0001" }, { jobId: "d0001", wrap: true }, { jobId: "d0001", cancel: true }]) {
+		for (const model of ["hosted/override", " ", "", null, undefined, 42]) {
+			assert.throws(() => parseDelegateCall({ ...call, model }, callConfig), /model is not a supported parameter.*\/pi-delegate roles/);
+		}
+	}
+});
+
 test("activity snapshots are detached from the scheduler and other wait observers", async () => {
 	const finish = deferred();
 	let emit!: (event: unknown) => void;

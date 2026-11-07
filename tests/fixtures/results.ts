@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
+import { withRoleModels } from "./capabilities.ts";
 import { delegateTargetLine, formatDuration } from "../../delegate/display.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import { NOTIFY_HOLD_MS } from "../../delegate/notify.ts";
@@ -42,7 +43,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	const handlers = new Map<string, Function>();
 	const entries: any[] = [], notices: any[] = [];
 	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void; reject: (error: Error) => void }> = [];
-	delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
+	withRoleModels({ review: "xai/grok-4.6", recon: "local-qwen38/qwen38-q4km" }, () => delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
 		on: (name: string, handler: Function) => handlers.set(name, handler),
 		appendEntry: (customType: string, data: any) => entries.push({ customType, data }),
 		sendMessage: (message: any) => notices.push(message),
@@ -51,7 +52,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		input.signal?.addEventListener("abort", () => {
 			if (!deferAbort) resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" });
 		}, { once: true });
-	}));
+	})));
 	const testCtx: any = { ...ctx, hasUI: true, isIdle: () => !busy,
 		ui: { ...ctx.ui, setWidget() {}, setStatus() {} },
 		sessionManager: { getSessionId: () => "result-probe", getSessionFile: () => undefined, getBranch: () => [] },
@@ -82,7 +83,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
 	};
 	const launch = async (options: object = {}, signal?: AbortSignal) => {
-		const result = await call({ kind: "review", model, task: "Mock result contract", background: true, ...options }, signal);
+		const result = await call({ kind: "review", task: "Mock result contract", background: true, ...options }, signal);
 		if (result.details.status === "running" && !result.details.cancellationRequested) {
 			await untilRun(() => runs.some(run => run.input.sessionFile === result.details.sessionFile));
 		}
@@ -214,7 +215,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		pending(timed, "running", "spawn");
 		foregroundSignal.abort(); assert.equal(timedRun.input.signal?.aborted, false);
 		timedRun.resolve(success); await call({ jobId: timed.details.jobId });
-		const local = { kind: "recon", model: "local-qwen38/qwen38-q4km" };
+		const local = { kind: "recon" };
 		const blocker = await launch(local);
 		for (const background of [true, false]) {
 			const queued = await launch({ ...local, background, timeoutMs: 1000 });

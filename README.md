@@ -13,6 +13,10 @@ One child per call; no nested delegation. Define custom roles or override prompt
 | `review` | Read-only review with shell access |
 | `oracle` | Last-resort analysis without editing |
 
+## Migration to 0.30.0
+
+The `delegate` tool no longer accepts `model`, including for reviews. Configure each role's model with `/pi-delegate roles` or `~/.pi/agent/delegate.json`; remove `model` from tool calls, then `/reload` after outstanding jobs finish. Accepted jobs and archives are unchanged.
+
 ## Migration to 0.28.0
 
 This breaking release is extension-only: the MCP server, executable and operator API are removed. Finish and collect existing MCP jobs before removing the old service/client or gateway configuration. Install/load the native package below, then run `/reload`. Do not load both interfaces. Running MCP jobs cannot be adopted; keep `~/.pi/agent/delegate.json` and the existing archives unchanged. See [migration details](MIGRATION.md).
