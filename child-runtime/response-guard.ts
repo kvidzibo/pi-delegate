@@ -16,6 +16,15 @@ export default function responseGuard(pi: ExtensionAPI): void {
 		ctx.ui.notify(JSON.stringify({ type: RESPONSE_FORMAT_READY, version: 1, nonce: startup.nonce }), "info");
 	});
 	pi.on("message_end", event => {
+		// Inactive/unknown tools bypass tool_call and otherwise cause automatic extra turns.
+		// Pi applies this replacement before tool lookup, so even those calls fail closed.
+		if (repairs && event.message.role === "assistant" && !["error", "aborted", "length"].includes(event.message.stopReason)
+			&& event.message.content.some(part => part.type === "toolCall")) {
+			const message = { ...event.message, stopReason: "error" as const,
+				errorMessage: "Response-format repair attempted a tool call. Tools are disabled; repair stopped." };
+			latest = extractAssistantText({ type: "message_end", message });
+			return { message };
+		}
 		const response = extractAssistantText(event);
 		if (response.assistant) latest = response;
 	});

@@ -21,7 +21,7 @@ test("schema responses repair in-session without tools and fail closed without c
 	assert.equal(responseFormatError('null', compileResponseSchema(true), 256), undefined);
 	assert.throws(() => compileResponseSchema({ $schema: "https://json-schema.org/draft/2020-12/schema" }));
 
-	for (const mode of ["valid", "repair", "exhausted", "zero", "oversize", "wrap", "error", "length", "abort", "native-abort", "unsettled", "no-helper"] as const) {
+	for (const mode of ["valid", "repair", "repair-tool", "exhausted", "zero", "oversize", "wrap", "error", "length", "abort", "native-abort", "unsettled", "no-helper"] as const) {
 		const path = join(root, `${mode}.json`);
 		writeFileSync(path, JSON.stringify({ schema, repairAttempts: mode === "zero" ? 0 : 2, maxOutputBytes: 256 }));
 		const proc = mockChild(), controller = new AbortController();
@@ -67,7 +67,10 @@ test("schema responses repair in-session without tools and fail closed without c
 					: mode === "oversize" ? ` ${" ".repeat(300)}${valid}` : '{"count":"wrong"}';
 				const event = { type: "message_end", message: { role: "assistant", content: [{ type: "text", text }],
 					stopReason: mode === "error" || mode === "length" ? mode : "stop" } };
-				handlers.get("message_end")!(event); emit(event); turns++;
+				if (mode === "repair-tool" && turns > 0) (event.message.content as any[]).push({ type: "toolCall", id: "call", name: "bash", arguments: { command: "must not run" } });
+				const replacement = handlers.get("message_end")!(event);
+				if (replacement) Object.assign(event.message, replacement.message);
+				emit(event); turns++;
 				if (mode === "abort") { controller.abort(); break; }
 				if (mode === "unsettled") { proc.close(0); break; }
 				const boundary = handlers.get("agent_before_settle")!({ entries: [] }, ctx);
@@ -84,7 +87,8 @@ test("schema responses repair in-session without tools and fail closed without c
 			assert.equal(observed.filter(event => event.type === "message_end" && event.message.role === "assistant").length, turns + (mode === "wrap" ? 1 : 0));
 			if (success) { assert.equal(result.text, valid); assert.deepEqual(JSON.parse(result.text), { count: 2 }); }
 			if (["exhausted", "oversize"].includes(mode)) { assert.equal(turns, 3); assert.equal(toolResets, 2); }
-			if (mode === "repair") { assert.equal(turns, 2); assert.equal(toolResets, 1); }
+			if (mode === "repair" || mode === "repair-tool") { assert.equal(turns, 2); assert.equal(toolResets, 1); }
+			if (mode === "repair-tool") { assert.equal(result.stopReason, "error"); assert.match(result.text, /repair attempted a tool call/); }
 			if (["zero", "error", "length", "abort"].includes(mode)) assert.equal(toolResets, 0);
 			if (["zero", "exhausted", "oversize", "unsettled"].includes(mode)) {
 				assert.equal(result.stopReason, "response-format"); assert.match(result.text, /Response format validation failed/);
