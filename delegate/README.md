@@ -16,7 +16,7 @@ Shipped models use `openai-codex`:
 All role defaults are hosted; configure a role to use a local model.
 User role configuration takes precedence over these defaults. Models come only from role configuration; the `delegate` tool rejects any `model` argument, including null or blank values. This applies to every role, including reviews.
 
-Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template and Save to file. Enablement, extensions, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
+Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template, raw JSON Schema, repair attempts and Save to file. Enablement, extensions, repair attempts, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
 
 **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both paths share model selection and persistence. Use Roles to save model and reasoning together; the model-first picker saves them separately. Model choices match `/model`: scoped models when set, otherwise all available models. Reasoning comes from Pi's supported levels (including `xhigh`/`max` when supported); non-reasoning models offer only `off`. Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues. They apply to future jobs in this session; queued/running jobs retain their acceptance-time policy. Other sessions need `/reload`.
 
@@ -43,6 +43,8 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
 | `thinking` | `off` |
 | `responseTemplate` | Empty/omitted: unchanged response instructions |
+| `responseSchema` | Omitted/`null`: no validation; a draft-07 object or boolean enables JSON validation |
+| `responseRepairAttempts` | `2`; integer `0`–`2`, additional attempts after the initial response |
 | `saveToFile` | `false`: return the response inline |
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
@@ -76,9 +78,42 @@ Shared capacity requires Linux and `/usr/bin/flock`; unavailable or unsafe coord
 }
 ```
 
-`saveToFile` works independently of the template. After a worker finishes, the harness writes its returned text to a unique private `pi-delegate-result-*/response.md` under the OS temporary directory (usually `/tmp`). The parent receives the path instead of the body, also available as `details.responseFile`; repeated collection returns the same path. The worker is not instructed to save anything. Nonempty failure/partial results are saved too, without changing their failure status. Empty results produce no file. A save failure reports a warning and falls back to inline text.
+`saveToFile` works independently of the template or schema. After a worker finishes, the harness writes its returned text to a unique private `pi-delegate-result-*` directory (`response.json` for validated JSON, otherwise `response.md`) under the OS temporary directory (usually `/tmp`). The parent receives the path instead of the body, also available as `details.responseFile`; repeated collection returns the same path. The worker is not instructed to save anything. Nonempty failure/partial results are saved too, without changing their failure status. Empty results produce no file. A save failure reports a warning and falls back to inline text.
 
-Files contain the returned response, including wrap follow-ups and truncation notices; the existing `maxOutputBytes` limit still applies. Native session archives retain recorded history. Temporary directories are private (`0700`), files are owner-only (`0600`), and the extension does not delete them on collection or reload. OS cleanup may remove them; copy important reports elsewhere. Both settings are captured when the job is accepted.
+Without a schema, files include wrap follow-ups and truncation notices; the existing `maxOutputBytes` limit still applies. Native session archives retain recorded history. Temporary directories are private (`0700`), files are owner-only (`0600`), and the extension does not delete them on collection or reload. OS cleanup may remove them; copy important reports elsewhere. All response settings are captured when the job is accepted.
+
+## JSON Schema validation
+
+In **Roles → Response schema**, paste a complete JSON Schema into Pi's multiline editor. JSON syntax and Ajv schema errors keep the editor text for correction; Esc cancels. Empty text disables validation (`responseSchema: null`); **Save role** persists the draft. **Repair attempts** cycles through 0, 1 and 2.
+
+For manual configuration:
+
+```json
+{
+  "agents": {
+    "review": {
+      "responseSchema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" },
+          "issues": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["summary", "issues"],
+        "additionalProperties": false
+      },
+      "responseRepairAttempts": 2
+    }
+  }
+}
+```
+
+Requires Pi 1.5.0+. Ajv uses strict draft-07 validation, all errors and standard `ajv-formats` formats, without coercion, defaults or property removal. Self-contained `$ref` references work; unresolved external references, async schemas and unsupported keywords/drafts are rejected. `false` is a schema that rejects everything, not the disable switch; use `null` to disable an inherited schema.
+
+The schema replaces template instructions while enabled; it does not delete the saved template or render Markdown. The model must return one JSON value without fences or prose. Validation runs before truncation/saving. Invalid or oversized output gets precise feedback in the same child/session, with tools disabled and calls blocked during format repairs. Repairs share the original time limit, capacity slot and usage accounting; no task restart or model substitution occurs. Cancellation, provider errors and token-limit failures are not retried as format errors.
+
+The parent independently checks the final response. Only the latest validated JSON is returned, including after a wrap request; earlier attempts remain in the native session, not concatenated into the JSON. If repairs are exhausted or settlement is missing, the job fails with `response-format` and bounded diagnostics. JSON above `maxOutputBytes` fails rather than returning truncated JSON as successful. Successful saved JSON uses `response.json`; failure diagnostics use `response.md`. If saving fails, validated JSON stays intact inline and the file warning is reported separately. Schema, retry count and output limit are privately snapshotted at acceptance in `response-format.json` beside the archived prompt.
+
+Validation establishes structure, not truth or successful task completion. Schemas are trusted user configuration, not a sandbox; enabled third-party extensions still execute with normal permissions.
 
 ## Task handoff
 

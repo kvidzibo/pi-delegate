@@ -14,6 +14,8 @@ import { savingsProbe } from "./savings.ts";
 import { sharedCapacityProbe } from "./local.ts";
 import { capabilitiesProbe } from "./capabilities.ts";
 import { rolesProbe } from "./roles.ts";
+import { runPiChild } from "../../child-runtime/spawn.ts";
+import { buildChildArgs } from "../../delegate/spawn.ts";
 
 export default function probe(pi: ExtensionAPI) {
 	pi.registerCommand("delegate-reload-probe", {
@@ -51,12 +53,23 @@ export default function probe(pi: ExtensionAPI) {
 	register("delegate-panel-probe", (ctx) => panelProbe(pi, ctx));
 	register("delegate-background-probe", backgroundProbe);
 	register("delegate-ux-probe", uxProbe);
-	register("delegate-load-probe", () => {
+	register("delegate-load-probe", async ctx => {
 		const tools = pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin");
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
 		assert.equal(Object.hasOwn(tools[0].parameters.properties, "model"), false);
 		assert.ok(tools[0].promptGuidelines?.some(rule => rule.includes("per-call model overrides are not supported")));
 		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
+		const policyPath = join(getAgentDir(), "response-format.json");
+		writeFileSync(policyPath, JSON.stringify({ schema: { type: "object" }, repairAttempts: 2, maxOutputBytes: 1024 }));
+		let acknowledged = false;
+		const child = await runPiChild({ cwd: ctx.cwd, model: "openai/gpt-4.1", task: "must never be dispatched", hardTimeoutMs: 10000,
+			maxOutputBytes: 1024, promptSourcePath: policyPath, responseFormatPath: policyPath, env: { ...process.env, PI_DELEGATE_CHILD: "1" },
+			buildArgs: promptPath => [...buildChildArgs({ model: "openai/gpt-4.1", thinking: "off", tools: [], promptPath, sessionFile: join(getAgentDir(), "schema-child.jsonl") }), "--offline", "--no-approve"],
+			beforePrompt: async () => { acknowledged = true; throw new Error("Schema helper loaded; stop before any model request."); },
+		});
+		assert.equal(acknowledged, true, child.text);
+		assert.equal(child.evidence?.taskSent, false);
+		assert.match(child.text, /Schema helper loaded/);
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {

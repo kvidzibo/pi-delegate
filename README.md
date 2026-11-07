@@ -23,17 +23,18 @@ This breaking release is extension-only: the MCP server, executable and operator
 
 ## Pi extension setup
 
-Requires Node.js 22.19+, `pi` on PATH and configured model access. Choose one installation source:
+Requires Node.js 22.19+, Pi 1.5.0+ on PATH and configured model access. Choose one installation source:
 
 ```bash
 pi install npm:@kvidzibo/pi-delegate
 # Or a local checkout:
+(cd /absolute/path/to/pi-delegate && npm ci --omit=peer)
 pi install /absolute/path/to/pi-delegate
 ```
 
-Pi supplies the peer dependencies; no manual `npm install` is needed. Do not also add `delegate` to Pi's `extensions` setting. Published releases may lag behind this checkout.
+Pi supplies peer dependencies and installs runtime dependencies for npm/git sources. Local checkouts need the `npm ci` step above. Do not also add `delegate` to Pi's `extensions` setting. Published releases may lag behind this checkout.
 
-Run **`/pi-delegate`** for the menu, or **`/pi-delegate roles`** for the full native Roles editor: enablement, model, supported reasoning, tools (including all/none), extension discovery, multiline prompt, optional response template, save-to-file toggle and named-role creation. Short choices cycle inline. **Save role** persists changes; Esc discards the draft and goes back. New roles require an explicit available model and nonblank prompt, defaulting to no tools, no extensions and reasoning off.
+Run **`/pi-delegate`** for the menu, or **`/pi-delegate roles`** for the full native Roles editor: enablement, model, supported reasoning, tools (including all/none), extension discovery, multiline prompt, optional response template, raw JSON Schema editor, repair attempts, save-to-file toggle and named-role creation. Short choices cycle inline. **Save role** persists changes; Esc discards the draft and goes back. New roles require an explicit available model and nonblank prompt, defaulting to no tools, no extensions and reasoning off.
 
 Model choices match `/model` (scoped models when set, otherwise all available models). **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both editors save to `~/.pi/agent/delegate.json`, preserving unrelated and legacy keys; disk conflicts or uncertain catalogues refuse saves. Changes affect future jobs only; queued and running jobs keep their accepted settings. Unavailable models are never automatically replaced.
 
@@ -52,7 +53,9 @@ Delegate a background recon to find this repo's test files and test commands.
 Do not edit files. Collect the result when it finishes.
 ```
 
-A role’s **Response template** guides its final response (including Markdown tables); blank leaves behavior unchanged. **Save to file** independently writes the returned response to a private temporary Markdown file and returns its path instead of the body. The worker responds normally; the harness handles saving. Saved responses retain the configured output limit; copy files elsewhere for long-term retention.
+A role’s **Response template** guides its final response (including Markdown tables); blank leaves behavior unchanged. For enforced JSON output, open **Response schema**, paste a draft-07 JSON Schema and **Save role**. Invalid schemas are rejected; empty disables validation. Ajv validates locally and asks the same model to repair invalid output, with tools disabled, up to **Repair attempts** (0–2; default 2). The schema takes precedence over the template. Exhausted repairs fail explicitly; validation checks structure, not factual correctness.
+
+**Save to file** independently writes the response to a private temporary file (`response.json` for validated JSON; otherwise `response.md`) and returns its path. Saved responses retain the output limit; copy files elsewhere for long-term retention. [Schema configuration and limits](delegate/README.md#json-schema-validation).
 
 The parent can wait, peek, request wrap-up or cancel using the returned job ID. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor; finished results appear in the transcript. Compact cards show job ID, role, status, model and thinking level, plus live elapsed/queue time and frozen duration when finished; **Ctrl+O** reveals the full model and result. Clipped previews show the hidden line count. Finished/unverified and cancelled runs use neutral styling; failures remain red.
 

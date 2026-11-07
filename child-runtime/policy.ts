@@ -85,6 +85,7 @@ export function isFailedChildResult(result: { exitCode: number; stopReason?: str
 		stop === "timeout" ||
 		stop === "hard_timeout" ||
 		stop === "protocol-error" ||
+		stop === "response-format" ||
 		stop === "guard-error" ||
 		stop === "finalization_timeout" ||
 		stop === "execution_budget" ||

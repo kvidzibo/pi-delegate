@@ -2,6 +2,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { assertKind, delegateConfigRevision, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
+import { compileResponseSchema } from "../child-runtime/response-schema.ts";
 import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
@@ -87,7 +88,7 @@ export class ModelCommand {
 		}
 		const name = kind!;
 		const before = adding ? undefined : this.config.agents[name];
-		const draft: AgentConfig = before ? { ...before, tools: [...before.tools] }
+		const draft: AgentConfig = before ? structuredClone(before)
 			: { enabled: true, model: "", thinking: "off", prompt: "", tools: [], extensions: false };
 		if (adding) {
 			const selected = await pickDelegateModel(ctx, name, "", models, signal, scoped);
@@ -108,14 +109,17 @@ export class ModelCommand {
 				{ id: "tools", label: "Tools", currentValue: draft.tools.join(", ") || "none" },
 				{ id: "extensions", label: "Extensions", description: "Allow configured extension/MCP discovery. Not a sandbox.", currentValue: draft.extensions ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "prompt", label: "Prompt (multiline)", currentValue: `${draft.prompt.split("\n").length} lines · ≈${Math.ceil(draft.prompt.length / 4)} tokens` },
-				{ id: "responseTemplate", label: "Response template", description: "Free-form text; empty disables. No placeholder processing.", currentValue: draft.responseTemplate?.trim() ? `${draft.responseTemplate.split("\n").length} lines · ≈${Math.ceil(draft.responseTemplate.length / 4)} tokens` : "disabled" },
+				{ id: "responseTemplate", label: "Response template", description: "Free-form text; inactive when a response schema is set. Empty disables. No placeholder processing.", currentValue: draft.responseTemplate?.trim() ? `${draft.responseTemplate.split("\n").length} lines · ≈${Math.ceil(draft.responseTemplate.length / 4)} tokens` : "disabled" },
 				{ id: "saveToFile", label: "Save to file", description: "Return a private temporary file path instead of response text.", currentValue: draft.saveToFile ? "yes" : "no", values: ["no", "yes"] },
+				{ id: "responseSchema", label: "Response schema", description: "Paste an entire JSON Schema (draft-07), not an example. Takes precedence over the template; empty disables.", currentValue: draft.responseSchema == null ? "disabled" : "configured" },
+				{ id: "responseRepairAttempts", label: "Repair attempts", description: "Retries for schema-invalid responses.", currentValue: String(draft.responseRepairAttempts ?? 2), values: ["0", "1", "2"] },
 				{ id: "save", label: "Save role", currentValue: "" },
 			], signal, (id, value) => {
 				if (id === "thinking") draft.thinking = value as AgentConfig["thinking"];
 				else if (id === "enabled") draft.enabled = value === "yes";
 				else if (id === "extensions") draft.extensions = value === "yes";
 				else if (id === "saveToFile") draft.saveToFile = value === "yes";
+				else if (id === "responseRepairAttempts") draft.responseRepairAttempts = Number(value);
 			});
 			if (signal.aborted || action === undefined) return;
 			if (action === "model") {
@@ -126,10 +130,29 @@ export class ModelCommand {
 				if (selected) draft.thinking = selected as AgentConfig["thinking"];
 			} else if (action === "prompt") {
 				const prompt = await ctx.ui.editor(`Prompt for ${name}`, draft.prompt);
+				if (signal.aborted) return;
 				if (prompt !== undefined) draft.prompt = prompt;
 			} else if (action === "responseTemplate") {
 				const template = await ctx.ui.editor(`Response template for ${name} (empty disables)`, draft.responseTemplate ?? "");
+				if (signal.aborted) return;
 				if (template !== undefined) draft.responseTemplate = template;
+			} else if (action === "responseSchema") {
+				let text = draft.responseSchema == null ? "" : JSON.stringify(draft.responseSchema, null, 2);
+				while (!signal.aborted) {
+					const edited = await ctx.ui.editor(`Response schema for ${name} (JSON Schema draft-07; empty disables)`, text);
+					if (signal.aborted) return;
+					if (edited === undefined) break;
+					text = edited;
+					if (!text.trim()) { draft.responseSchema = null; break; }
+					try {
+						const schema: unknown = JSON.parse(text);
+						compileResponseSchema(schema);
+						draft.responseSchema = schema as Record<string, unknown> | boolean;
+						break;
+					} catch (error) {
+						ctx.ui.notify(`Invalid response schema: ${error instanceof Error ? error.message : String(error)}`, "error");
+					}
+				}
 			} else if (action === "tools") {
 				const names = [...new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls",
 					...Object.values(this.config.agents).flatMap(agent => agent.tools), ...draft.tools].filter(tool => tool !== "*"))];
