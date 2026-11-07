@@ -386,6 +386,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate kind recon for read-only repo mapping, file lookup, failure reproduction notes and narrow review evidence; never edits or broad judgment. Do not send recon images or long inherited context.",
 			"Use delegate kind implement only for bounded edits and tests. Give parallel children disjoint files and scopes; avoid parent/child write races.",
 			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
+			"For delegate reviews, supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands. Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, supply the prior finding and reproduction, and require independent reassessment rather than agreement.",
 			"Use delegate kind oracle only as a last resort, without parallel delegates.",
 			"Roles can be disabled in configuration; do not retry a disabled role with another model. No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review remains read-only by prompt policy.",
 			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model.",
