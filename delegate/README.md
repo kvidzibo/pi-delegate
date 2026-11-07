@@ -129,7 +129,7 @@ Documentation: relevant instructions and docs to read/update
 Stop rules: scope limits and concrete conditions to report
 ```
 
-These are task-text conventions, not additional tool arguments. File ownership limits edits, not execution of authorized tests. Explicitly authorize new directories, setup, and any isolated Pi integration tests; test processes must use temporary configuration and must not delegate work or make model requests. Existing read-only role restrictions still apply.
+These are task-text conventions, not additional tool arguments. File ownership limits edits, not execution of authorized tests. Explicitly authorize new directories, setup, and any isolated Pi integration tests; test processes must use temporary configuration and must not delegate work or make model requests. The shipped implementer and reviewer permit these tests; recon and oracle still prohibit extra Pi processes.
 
 The implementer reports completed/remaining requirements, changed files, checks actually run with results, unrun checks with reasons, and concrete blocker evidence. Treat this as a child-reported checklist, separate from worker execution and parent-verified correctness. Custom prompt overrides replace the shipped prompt and do not automatically gain this checklist.
 
@@ -143,7 +143,7 @@ Keep independent first-pass handoffs neutral: omit requests for approval, implem
 
 These are prompt conventions, not enforced blindness or proof of unbiased review. Tasks remain free-form and unchanged. Custom review prompt overrides replace the shipped prompt and do not automatically gain its independence guidance.
 
-`review` defaults to `read`, `grep`, `find`, `ls` and `bash`—no `write` or `edit` tools. Read-only behavior relies on its prompt, not shell write protection. Existing user `tools` overrides still replace the defaults.
+`review` defaults to `read`, `grep`, `find`, `ls` and `bash`—no `write` or `edit` tools. Read-only behavior relies on its prompt, not shell write protection. Explicitly authorized checks may create and clean up temporary test files, but must leave project files unchanged. This includes isolated Pi integration tests, never delegated work or model requests; `--offline` alone does not prevent model requests. Existing user `tools` overrides still replace the defaults. Custom `prompt` overrides do not inherit this permission; after updating, finish outstanding jobs and `/reload` to use the new shipped prompt.
 
 ## Cross-extension busy query
 
