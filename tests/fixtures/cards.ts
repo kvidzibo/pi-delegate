@@ -4,6 +4,7 @@ import { parseDelegateCall } from "../../delegate/jobs.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
+import { withRoleModels } from "./capabilities.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
@@ -19,14 +20,14 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	let failPersistence = false;
 	const make = () => {
 		let tool: any; const handlers = new Map<string, Function>();
-		delegate({ ...pi, registerTool: (t: any) => { tool = t; }, registerCommand: () => {}, registerMessageRenderer: () => {},
+		withRoleModels({ review: "xai/grok-4.6", recon: "local-qwen38/qwen38-q4km" }, () => delegate({ ...pi, registerTool: (t: any) => { tool = t; }, registerCommand: () => {}, registerMessageRenderer: () => {},
 			on: (name: string, fn: Function) => handlers.set(name, fn),
 			appendEntry: (customType: string, data: any) => { if (failPersistence) throw new Error("disk error"); entries.push({ type: "custom", customType, data }); },
 			sendMessage: () => { throw new Error("busy parent should not notify"); },
 		} as unknown as ExtensionAPI, (input) => new Promise((resolve) => {
 			runs.push({ input, resolve });
 			input.signal?.addEventListener("abort", () => resolve({ text: cancelledOutput, exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
-		}));
+		})));
 		return { tool, handlers };
 	};
 	const testCtx: any = { ...ctx, isIdle: () => false, hasUI: true,
@@ -38,10 +39,10 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const callConfig = { maxTaskChars: 20000, defaultTimeoutMs: 1000, maxTimeoutMs: 60000 };
 	const validate = (args: any) => validateToolArguments(first.tool, { type: "toolCall", id: "empty-args", name: "delegate", arguments: args });
 	for (const empty of [null, "", " \t\n"]) {
-		const spawn = { kind: "review", task: "Review", cwd: empty, model: empty, timeoutMs: empty,
+		const spawn = { kind: "review", task: "Review", cwd: empty, timeoutMs: empty,
 			background: empty, jobId: empty, wrap: empty, cancel: empty };
 		assert.deepEqual(parseDelegateCall(validate(spawn), callConfig), parseDelegateCall({ kind: "review", task: "Review" }, callConfig));
-		const collect = { jobId: "d0001", kind: empty, task: empty, cwd: empty, model: empty,
+		const collect = { jobId: "d0001", kind: empty, task: empty, cwd: empty,
 			timeoutMs: empty, background: empty, wrap: empty, cancel: empty };
 		assert.deepEqual(parseDelegateCall(validate(collect), callConfig), { mode: "collect", jobId: "d0001", peek: false });
 		assert.throws(() => parseDelegateCall(validate({ kind: "review", task: empty }), callConfig), /task is required/);
@@ -87,12 +88,20 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		assert.match(historical.render(), /archive\/original-model/);
 	}
 	assert.equal(runs.length, 0, "unknown roles must never dispatch a child");
+	for (const model of [undefined, null, "", " \t\n", "hosted/override"]) {
+		for (const args of [{ kind: "review", task: "Review" }, { jobId: "dffff", timeoutMs: 0 }]) {
+			const rejected = await first.tool.execute("removed-model", { ...args, model }, undefined, undefined, testCtx);
+			assert.equal(rejected.details.ok, false);
+			assert.match(rejected.content[0].text, /model/);
+		}
+	}
+	assert.equal(runs.length, 0, "own model properties must be rejected before child dispatch");
 	const untilRun = async (ready: () => boolean) => {
 		for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 10));
 		assert.ok(ready(), "expected child dispatch after asynchronous review preparation");
 	};
 	const launch = async (tool: any, id: string, options: object = {}) => {
-		const args = { kind: "review", model: "xai/grok-4.6", task: "Review timeout and abort handling", background: true, ...options };
+		const args = { kind: "review", task: "Review timeout and abort handling", background: true, ...options };
 		const r = row(tool, id, args);
 		const result = await tool.execute(id, args, undefined, (r: any) => rows.get(id).update(r), testCtx);
 		r.update(result, false);
@@ -105,7 +114,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		let updates = 0;
 		const beforeRuns = runs.length;
 		const accepted = await first.tool.execute(`throwing-${throwAt}`, {
-			kind: "review", task: "mock observer", model: "xai/grok-4.6", background: true,
+			kind: "review", task: "mock observer", background: true,
 		}, undefined, () => { if (++updates === throwAt) throw new Error("dead observer"); }, testCtx);
 		assert.equal(accepted.details.ok, true);
 		assert.ok(accepted.details.jobId);
@@ -145,7 +154,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.doesNotMatch(original.row.render(), /executing command/, "live activity must not mutate transcript history");
 	child.input.onEvent?.({ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: true });
 	assert.doesNotMatch(original.row.render(), /test.mjs/);
-	const peekArgs = { jobId, timeoutMs: 0, task: null, kind: "", cwd: " ", model: null, background: null, wrap: "", cancel: null };
+	const peekArgs = { jobId, timeoutMs: 0, task: null, kind: "", cwd: " ", background: null, wrap: "", cancel: null };
 	const peekRow = row(first.tool, "peek", peekArgs);
 	const peek = await first.tool.execute("peek", peekArgs, undefined, peekRow.update, testCtx); peekRow.update(peek, false);
 	assert.match(peekRow.render(), /grok-4\.6 · \w+ · \d+s · checked · running at check/);
@@ -200,7 +209,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		runs.at(-1)!.resolve(success);
 		await restored.tool.execute(`${id}-collect`, { jobId: seed.result.details.jobId }, undefined, undefined, testCtx);
 	}
-	const local = { kind: "recon", model: "local-qwen38/qwen38-q4km" };
+	const local = { kind: "recon" };
 	const next = await launch(restored.tool, "new-origin", local);
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
 	assert.match(oldRow.render(), /○ Worker finished — task unverified/); assert.match(next.row.render(), /accepted — card pinned above editor/);

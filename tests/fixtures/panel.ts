@@ -6,6 +6,7 @@ import { renderChildCall, renderChildResult, renderJobBoard, type RowState } fro
 import { projectJobBoard } from "../../delegate/panel.ts";
 import type { JobSnapshot } from "../../delegate/jobs.ts";
 import delegate from "../../delegate/index.ts";
+import { withRoleModels } from "./capabilities.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
@@ -243,14 +244,14 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 	const host = widgetHost(() => tui.requestRender(), tui); const entries: any[] = [];
 	const handlers = new Map<string, Function>(); let tool: any;
 	const runs: Array<{ input: RunChildInput; resolve: (result: ChildResult) => void }> = [];
-	delegate({ ...pi, registerTool: (t: any) => { tool = t; }, registerCommand() {}, registerMessageRenderer() {},
+	withRoleModels({ recon: "local-qwen38/qwen38-q4km" }, () => delegate({ ...pi, registerTool: (t: any) => { tool = t; }, registerCommand() {}, registerMessageRenderer() {},
 		on: (name: string, fn: Function) => handlers.set(name, fn),
 		appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }),
 		sendMessage() { throw new Error("busy parent must not notify"); },
 	} as unknown as ExtensionAPI, (input) => new Promise((resolve) => {
 		runs.push({ input, resolve });
 		input.signal?.addEventListener("abort", () => resolve({ text: "Cancelled", exitCode: 1, stopReason: "aborted", stderrTail: "" }), { once: true });
-	}));
+	})));
 	const testCtx: any = { ...ctx, mode: "tui", hasUI: true, isIdle: () => false,
 		ui: { ...ctx.ui, ...host.ui, setStatus() {}, notify() {} },
 		sessionManager: { getSessionId: () => "panel-probe", getSessionFile: () => undefined, getBranch: () => entries },
@@ -264,7 +265,7 @@ export async function panelProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext)
 	tui.addChild(transcript); tui.addChild(host.container);
 	tui.addChild(new Text("> editor", 0, 0)); tui.addChild(new Text("footer", 0, 0));
 	const launch = async (id: string, options: object = {}) => {
-		const args = { kind: "recon", model: "local-qwen38/qwen38-q4km", task: "Read a file", background: true, ...options };
+		const args = { kind: "recon", task: "Read a file", background: true, ...options };
 		let result: any; let invalidations = 0;
 		const context: any = { toolCallId: id, args, state: {}, expanded: false, isPartial: true, isError: false,
 			invalidate: () => { invalidations++; tui.requestRender(); } };

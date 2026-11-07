@@ -45,14 +45,13 @@ export function assertKind(value: unknown): Kind {
 
 export function resolveAgent(
 	kind: Kind,
-	override: string | undefined,
 	config: DelegateConfig,
 ): { kind: Kind; model: string; agent: AgentConfig } {
 	assertKind(kind);
 	if (!Object.hasOwn(config.agents, kind)) throw new Error(`delegate refused: unknown role ${kind}.`);
 	const agent = config.agents[kind];
 	if (agent.enabled === false) throw new Error(`delegate refused: ${kind} is disabled in configuration.`);
-	const model = override?.trim() ? override.trim() : agent.model;
+	const model = agent.model;
 	if (!model) throw new Error("delegate refused: model is empty.");
 	return { kind, model, agent };
 }

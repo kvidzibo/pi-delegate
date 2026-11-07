@@ -10,9 +10,9 @@ test("package manifest loads only delegate through the installed Pi CLI", async 
 	assert.deepEqual((await runPiProbe("delegate-load-probe")).result, { tools: ["delegate"] });
 });
 
-test("configured capabilities survive overlays, model overrides, observers, collection, archive and rendering", async () => {
+test("configured capabilities survive overlays, observers, collection, archive and rendering", async () => {
 	assert.deepEqual((await runPiProbe("delegate-capabilities-probe")).result, {
-		configuredOnly: true, overlays: true, overridesKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true,
+		configuredOnly: true, overlays: true, roleModelsKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true,
 	});
 });
 

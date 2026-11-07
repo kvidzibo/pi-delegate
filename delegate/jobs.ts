@@ -112,7 +112,6 @@ export type ParsedCall =
 			kind: Kind;
 			task: string;
 			timeoutMs: number;
-			modelOverride?: string;
 			cwd?: string;
 	  }
 	| {
@@ -179,8 +178,12 @@ export function parseDelegateCall(
 	params: unknown,
 	config: { maxTaskChars: number; defaultTimeoutMs: number; maxTimeoutMs: number },
 ): ParsedCall {
+	const input = asRecord(params);
+	if (Object.hasOwn(input, "model")) {
+		throw new Error("delegate refused: model is not a supported parameter. Configure the role model with /pi-delegate roles.");
+	}
 	// Some providers fill unused optional fields with null or blank strings.
-	const rec = Object.fromEntries(Object.entries(asRecord(params)).filter(([, value]) =>
+	const rec = Object.fromEntries(Object.entries(input).filter(([, value]) =>
 		value !== null && !(typeof value === "string" && value.trim() === "")));
 
 	if (rec.background !== undefined && rec.background !== true && rec.background !== false) {
@@ -201,7 +204,7 @@ export function parseDelegateCall(
 		if (rec.wrap === true && rec.cancel === true) {
 			throw new Error("delegate refused: wrap cannot combine with cancel.");
 		}
-		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined || rec.model !== undefined) {
+		if (rec.kind !== undefined || rec.task !== undefined || rec.cwd !== undefined) {
 			throw new Error("delegate refused: jobId cannot combine with spawn fields.");
 		}
 		const raw = rec.timeoutMs;
@@ -226,8 +229,6 @@ export function parseDelegateCall(
 		task,
 		timeoutMs,
 	};
-	const modelOverride = optionalString(rec.model);
-	if (modelOverride) parsed.modelOverride = modelOverride;
 	const cwd = typeof rec.cwd === "string" ? rec.cwd : undefined;
 	if (cwd !== undefined) parsed.cwd = cwd;
 	return parsed;

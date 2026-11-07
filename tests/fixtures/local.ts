@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import delegate from "../../delegate/index.ts";
+import { withRoleModels } from "./capabilities.ts";
 import { FileCapacityBroker } from "../../delegate/capacity.ts";
 import { runPiChild } from "../../child-runtime/spawn.ts";
 import { buildChildArgs, buildChildEnv, type RunChildInput } from "../../delegate/spawn.ts";
@@ -21,26 +22,28 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 	const factory = () => {
 		let tool: any;
 		const handlers = new Map<string, Function>();
-		delegate({ ...pi, registerTool: (value: unknown) => { tool = value; }, registerCommand: () => {}, registerMessageRenderer: () => {},
+		withRoleModels({ recon: "local-qwen38/qwen38-q4km", implement: "ollama/other", review: "hosted/test" }, () => delegate({ ...pi, registerTool: (value: unknown) => { tool = value; }, registerCommand: () => {}, registerMessageRenderer: () => {},
 			on: (event: string, handler: Function) => { handlers.set(event, handler); },
 		} as ExtensionAPI, async input => {
 			starts.push(input);
 			if (input.task === "hold") await new Promise<void>(resolve => { release = resolve; input.signal?.addEventListener("abort", () => resolve(), { once: true }); });
 			return { text: "mock evidence", exitCode: 0, stopReason: "stop", stderrTail: "" };
-		});
+		}));
 		cleanups.push(() => handlers.get("session_shutdown")?.());
 		return (params: unknown) => tool.execute(`capacity-${Math.random()}`, params, undefined, undefined, testCtx);
 	};
 	const a = factory(), b = factory();
 	try {
-		const first = await a({ kind: "recon", model: "local-qwen38/qwen38-q4km", task: "hold", background: true });
+		const first = await a({ kind: "recon", task: "hold", background: true });
+		assert.equal(starts[0].model, "local-qwen38/qwen38-q4km");
 		assert.ok(starts[0].resourceLease); assert.equal(starts[0].leaseStartupMs, 15000);
 		assert.equal(starts[0].execution, undefined, "shared capacity must not enable finalization deadlines");
-		const second = await b({ kind: "recon", model: "ollama/other", task: "wait", background: true });
+		const second = await b({ kind: "implement", task: "wait", background: true });
 		assert.equal(second.details.status, "queued"); assert.equal(second.details.reason, "resource");
 		assert.match(second.content[0].text, /shared resource/);
-		const hosted = await b({ kind: "recon", model: "hosted/test", task: "hosted" });
+		const hosted = await b({ kind: "review", task: "hosted" });
 		assert.equal(hosted.details.ok, true); assert.equal(starts.length, 2);
+		assert.equal(starts[1].model, "hosted/test");
 		assert.equal(starts[1].resourceLease, undefined); assert.equal(starts[1].leaseStartupMs, undefined);
 		const beforePolls = widgetUpdates.length;
 		await new Promise(resolve => setTimeout(resolve, 1200));
@@ -48,6 +51,7 @@ export async function sharedCapacityProbe(pi: ExtensionAPI, ctx: ExtensionComman
 		assert.doesNotMatch(widgetUpdates.flat().join("\n"), /elapsed \d|queued for \d| · (?:queued )?\d+(?:s|m|h)\b/, "RPC cards must not project a live clock");
 		release(); await a({ jobId: first.details.jobId });
 		assert.equal((await b({ jobId: second.details.jobId })).details.status, "done");
+		assert.equal(starts[2].model, "ollama/other");
 		assert.ok(starts[2].resourceLease);
 	} finally { release?.(); await Promise.all(cleanups.map(fn => fn())); }
 

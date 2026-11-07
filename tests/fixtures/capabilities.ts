@@ -10,6 +10,22 @@ import { durationContent } from "../../delegate/display.ts";
 import type { RunChildInput } from "../../delegate/spawn.ts";
 import type { ChildResult } from "../../child-runtime/spawn.ts";
 
+/** Apply role models only while a fixture factory reads its isolated configuration. */
+export function withRoleModels<T>(models: Record<string, string>, create: () => T): T {
+	const configPath = join(getAgentDir(), "delegate.json"), previous = process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+	assert.equal(existsSync(configPath), false, "fixture owns a fresh isolated agent directory");
+	writeFileSync(configPath, JSON.stringify({ agents: Object.fromEntries(
+		Object.entries(models).map(([kind, model]) => [kind, { model }]),
+	) }), { flag: "wx", mode: 0o600 });
+	process.env.PI_DELEGATE_SKIP_USER_CONFIG = "0";
+	try { return create(); }
+	finally {
+		unlinkSync(configPath);
+		if (previous === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
+		else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previous;
+	}
+}
+
 /** Real factory, overlays, archive and renderer. Mock workers; no model requests. */
 export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	assert.equal(getAgentDir(), join(ctx.cwd, "agent")); assert.equal(process.env.HOME, ctx.cwd);
@@ -19,8 +35,8 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 	const theme: any = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 	try {
 		for (const [index, overlay] of [undefined, ["read"], ["read, bash, BASH", "unknown"]].entries()) {
-			if (overlay) { writeFileSync(configPath, JSON.stringify({ agents: { recon: { tools: overlay } } }), { flag: "wx", mode: 0o600 }); process.env.PI_DELEGATE_SKIP_USER_CONFIG = "0"; }
-			else process.env.PI_DELEGATE_SKIP_USER_CONFIG = "1";
+			writeFileSync(configPath, JSON.stringify({ agents: { recon: { model: "hosted/mock", ...(overlay ? { tools: overlay } : {}) } } }), { flag: "wx", mode: 0o600 });
+			process.env.PI_DELEGATE_SKIP_USER_CONFIG = "0";
 			const tools = overlay ?? shipped, expected = describeCapabilities(tools);
 			let tool: any, seq = 0;
 			const handlers = new Map<string, Function>();
@@ -42,7 +58,7 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 			};
 			await handlers.get("session_start")?.({}, testCtx);
 			try {
-				const accepted = await call({ kind: "recon", model: "hosted/mock", task: "Offline capability fixture", background: true }, update => {
+				const accepted = await call({ kind: "recon", task: "Offline capability fixture", background: true }, update => {
 					if (update.details.capabilities) update.details.capabilities.tools.length = 0;
 					throw new Error("Owned observer failure");
 				});
@@ -77,11 +93,11 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 				}
 				// A subsequent default-model launch keeps the same configured tools after all observer/result mutations.
 				const foreground = call({ kind: "recon", task: "Default-model fixture", timeoutMs: 1000 });
-				assert.deepEqual(runs[1].input.tools, tools);
+				assert.deepEqual(runs[1].input.tools, tools); assert.equal(runs[1].input.model, "hosted/mock");
 				runs[1].resolve({ text: "Default evidence.", exitCode: 0, stderrTail: "" }); check(await foreground);
 				assert.equal(runs.length, 2);
-			} finally { await handlers.get("session_shutdown")?.(); if (overlay) unlinkSync(configPath); }
+			} finally { await handlers.get("session_shutdown")?.(); unlinkSync(configPath); }
 		}
 	} finally { if (previous === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previous; }
-	return { configuredOnly: true, overlays: true, overridesKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true };
+	return { configuredOnly: true, overlays: true, roleModelsKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true };
 }

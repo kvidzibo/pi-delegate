@@ -13,8 +13,8 @@ Shipped models use `openai-codex`:
 | `review` | `gpt-6.1-sol` | `high` |
 | `oracle` | `gpt-6-astra` | `high` |
 
-All role defaults are hosted; local models remain available through overrides.
-Existing user model overrides take precedence over these defaults.
+All role defaults are hosted; configure a role to use a local model.
+User role configuration takes precedence over these defaults. Models come only from role configuration; the `delegate` tool rejects any `model` argument, including null or blank values. This applies to every role, including reviews.
 
 Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery and the full multiline prompt. Enablement, extensions and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
 
@@ -38,7 +38,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 
 | Field | Default for a new role |
 |---|---|
-| `enabled` | `true`; `false` refuses new jobs, including model overrides |
+| `enabled` | `true`; `false` refuses new jobs |
 | `tools` | All Pi tools (`["*"]`); `[]` disables tools |
 | `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
 | `thinking` | `off` |
@@ -53,7 +53,7 @@ Repository snapshot capture and safety audits have been removed. Legacy `snapsho
 configuration is ignored and preserved on settings saves. Existing stored snapshots
 are not deleted; remove them manually if no longer needed.
 
-Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. A per-call `model` override keeps the role's tools and thinking. Providers available only through parent extensions need separate child configuration or explicit role `extensions: true`; extensions are disabled by default.
+Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` environment setting. Set `PI_OFFLINE=1` explicitly to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access. Without it, startup may perform automatic networking. Providers available only through parent extensions need separate child configuration or explicit role `extensions: true`; extensions are disabled by default.
 
 Defaults are **8 running jobs, 1 local worker and 16 queued jobs per parent**. In addition, participating sessions sharing an agent directory share **one local worker across all local providers**, independent of model ID and archive path. Raising `maxLocalConcurrent` does not raise this shared limit. Hosted work can proceed while local work waits. Per-parent limits are configurable; local providers are `local-qwen*`, `llama.cpp` and `ollama`.
 
@@ -78,6 +78,8 @@ These are task-text conventions, not additional tool arguments. File ownership l
 The implementer reports completed/remaining requirements, changed files, checks actually run with results, unrun checks with reasons, and concrete blocker evidence. Treat this as a child-reported checklist, separate from worker execution and parent-verified correctness. Custom prompt overrides replace the shipped prompt and do not automatically gain this checklist.
 
 ## Reviews
+
+Reviews use the configured `review` model, with no per-call override. To use another model, change the role in `/pi-delegate roles` before launching.
 
 Tasks are dispatched without automatic diffs or extra prepared context. Supply a readable diff or file paths and review scope in the task.
 
