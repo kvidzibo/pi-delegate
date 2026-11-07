@@ -85,27 +85,29 @@ export default function probe(pi: ExtensionAPI) {
 		}
 		handlers.get("message_end")!({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "invalid JSON" }], stopReason: "stop" } });
 		assert.equal(handlers.get("agent_before_settle")!({ entries: [] }, {}).continue, true);
-		let requests = 0, toolStarts = 0;
-		const messages = await runAgentLoop([{ role: "user", content: "repair", timestamp: 0 }], { messages: [], tools: [] },
-			{ model: { provider: "offline", id: "synthetic", api: "openai-completions" }, convertToLlm: (messages: any[]) => messages,
-				beforeToolCall: () => assert.fail("No tool may execute during repair") } as any,
-			async event => {
-				if (event.type === "tool_execution_start") toolStarts++;
-				if (event.type === "message_end") {
-					const replacement = handlers.get("message_end")!(event);
-					if (replacement) Object.assign(event.message, replacement.message); // AgentSession's replacement contract.
-				}
-			}, undefined, () => {
-				requests++;
-				const message: any = { role: "assistant", provider: "offline", model: "synthetic", api: "openai-completions", timestamp: Date.now(),
-					content: requests <= 5 ? [{ type: "toolCall", id: `call-${requests}`, name: "unavailable", arguments: {} }] : [{ type: "text", text: "{}" }],
-					stopReason: requests <= 5 ? "toolUse" : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
-				const stream = createAssistantMessageEventStream();
-				stream.push({ type: "done", reason: message.stopReason, message });
-				return stream;
-			});
-		assert.equal(requests, 1); assert.equal(toolStarts, 0);
-		assert.equal((messages.at(-1) as any).stopReason, "error");
+		for (const reason of ["toolUse", "length"] as const) {
+			let requests = 0, toolStarts = 0;
+			const messages = await runAgentLoop([{ role: "user", content: "repair", timestamp: 0 }], { messages: [], tools: [] },
+				{ model: { provider: "offline", id: "synthetic", api: "openai-completions" }, convertToLlm: (messages: any[]) => messages,
+					beforeToolCall: () => assert.fail("No tool may execute during repair") } as any,
+				async event => {
+					if (event.type === "tool_execution_start") toolStarts++;
+					if (event.type === "message_end") {
+						const replacement = handlers.get("message_end")!(event);
+						if (replacement) Object.assign(event.message, replacement.message); // AgentSession's replacement contract.
+					}
+				}, undefined, () => {
+					requests++;
+					const message: any = { role: "assistant", provider: "offline", model: "synthetic", api: "openai-completions", timestamp: Date.now(),
+						content: requests <= 5 ? [{ type: "toolCall", id: `call-${requests}`, name: "unavailable", arguments: {} }] : [{ type: "text", text: "{}" }],
+						stopReason: requests <= 5 ? reason : "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+					const stream = createAssistantMessageEventStream();
+					stream.push({ type: "done", reason: message.stopReason, message });
+					return stream;
+				});
+			assert.equal(requests, 1); assert.equal(toolStarts, 0);
+			assert.equal((messages.at(-1) as any).stopReason, reason === "length" ? "length" : "error");
+		}
 		return { tools: tools.map((tool) => tool.name) };
 	});
 	register("delegate-models-probe", async (ctx) => {

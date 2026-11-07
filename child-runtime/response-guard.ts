@@ -18,10 +18,14 @@ export default function responseGuard(pi: ExtensionAPI): void {
 	pi.on("message_end", event => {
 		// Inactive/unknown tools bypass tool_call and otherwise cause automatic extra turns.
 		// Pi applies this replacement before tool lookup, so even those calls fail closed.
-		if (repairs && event.message.role === "assistant" && !["error", "aborted", "length"].includes(event.message.stopReason)
+		if (repairs && event.message.role === "assistant" && !["error", "aborted"].includes(event.message.stopReason)
 			&& event.message.content.some(part => part.type === "toolCall")) {
-			const message = { ...event.message, stopReason: "error" as const,
-				errorMessage: "Response-format repair attempted a tool call. Tools are disabled; repair stopped." };
+			// Pi also continues after truncated tool calls. Discard those unexecutable
+			// calls, but retain the original length failure, text/thinking and usage.
+			const message = event.message.stopReason === "length"
+				? { ...event.message, content: event.message.content.filter(part => part.type !== "toolCall") }
+				: { ...event.message, stopReason: "error" as const,
+					errorMessage: "Response-format repair attempted a tool call. Tools are disabled; repair stopped." };
 			latest = extractAssistantText({ type: "message_end", message });
 			return { message };
 		}
