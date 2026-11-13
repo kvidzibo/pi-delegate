@@ -68,6 +68,38 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 		const api = { render, update, context, invalidations: () => invalidations };
 		rows.set(id, api); return api;
 	};
+	// Saved-response cards wrap a bounded task preview without duplicating completion or exposing paths.
+	const savedTask = "Read-only test mapping for Electron inline task-row actions implementation. Scope /tmp/pinote-inline-actions/electron/tests/e2e.mjs and related tests. Include 界面 checks.";
+	const responseFile = "/tmp/pi-delegate-result-example/response.json";
+	const savedAnswer = `Response saved to: ${responseFile}`;
+	const saved = row(first.tool, "saved-response", { kind: "recon", task: savedTask });
+	const savedResult = { details: { ok: true, status: "done", kind: "recon", jobId: "d0000", task: savedTask,
+		model: "openai-codex/gpt-6.1-terra", reasoning: "low", durationMs: 22000, responseFile, answer: savedAnswer },
+		content: [{ type: "text", text: savedAnswer }] };
+	saved.update(savedResult, false);
+	const compact = saved.render(80);
+	assert.equal((compact.match(/Finished/g) ?? []).length, 1);
+	assert.match(compact, /Finished · needs validation/);
+	assert.doesNotMatch(compact, /Worker finished|task unverified|Response saved to:|pi-delegate-result-example/);
+	assert.match(compact, /Response saved to file/);
+	const taskStart = compact.split("\n").findIndex(line => line.startsWith("Task:"));
+	assert.ok(compact.split("\n")[taskStart + 1].endsWith("…"), "two-line task preview must signal omitted text");
+	assert.ok(compact.split("\n")[taskStart + 1].includes("Scope"), "task must wrap beyond the first line");
+	for (const expanded of [false, true]) {
+		saved.context.expanded = expanded;
+		for (const width of [1, 2, 8, 16, 40, 80, 160]) saved.render(width);
+	}
+	const full = saved.render(300);
+	assert.ok(full.includes(savedTask));
+	assert.ok(full.includes(savedAnswer));
+	assert.match(full, /Worker finished — parent must validate result/);
+	assert.equal(savedResult.details.answer, savedAnswer, "rendering must not rewrite collected evidence");
+	saved.context.expanded = false;
+	saved.update({ ...savedResult, details: { ...savedResult.details, answer: "A report with additional evidence" } }, false);
+	assert.match(saved.render(80), /A report with additional evidence/, "responseFile must not hide other report text");
+	saved.update({ ...savedResult, details: { ...savedResult.details, ok: false, status: "failed", stopReason: "error", answer: "Could not save response" } }, false);
+	assert.match(saved.render(80), /Could not save response/);
+
 	// Unconfigured roles may arrive before validation or survive in saved results.
 	for (const kind of ["verify", "removed-role", "constructor"]) {
 		const args = { kind, task: "Unknown role" };
@@ -177,7 +209,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1);
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
 	const completed = original.row.render();
-	assert.match(completed, /○ Worker finished — task unverified/); assert.match(completed, /Review complete/);
+	assert.match(completed, /○ Finished · needs validation/); assert.match(completed, /Review complete/);
 	assert.match(completed.split("\n")[0], /grok-4\.6 · \w+ · \d+s$/, "completed compact headers keep frozen archive duration");
 	assert.doesNotMatch(completed, /effort|Duration:/);
 	assert.match(completed, /\+\d+ more lines/);
@@ -194,7 +226,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	for (const width of [1, 2, 8, 16, 80]) original.row.render(width);
 	const collectArgs = { jobId }; const collectRow = row(first.tool, "collect", collectArgs);
 	const collected = await first.tool.execute("collect", collectArgs, undefined, collectRow.update, testCtx); collectRow.update(collected, false);
-	assert.match(collectRow.render(), /review · ○ Finished · unverified · grok-4\.6/);
+	assert.match(collectRow.render(), /review · ○ Finished · needs validation · grok-4\.6/);
 	assert.match(collectRow.render(), /result collected/); assert.doesNotMatch(collectRow.render(), /Review complete|test.mjs/);
 	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1, "collect must not persist a duplicate card");
 	assert.match(collected.content[0].text, /Last detail/, "parent still receives the full result");
@@ -202,7 +234,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 
 	const restored = make(); await restored.handlers.get("session_start")?.({}, testCtx);
 	const oldRow = row(restored.tool, "origin", { kind: "review", task: "Review timeout and abort handling" }); oldRow.update(original.result, false);
-	assert.match(oldRow.render(), /○ Worker finished — task unverified/); assert.doesNotMatch(oldRow.render(), /Running/);
+	assert.match(oldRow.render(), /○ Finished · needs validation/); assert.doesNotMatch(oldRow.render(), /Running/);
 	assert.ok(oldRow.render().includes(` · ${child.input.thinking} · `));
 	for (const id of ["seed-1", "seed-2", "seed-3", "seed-4", "seed-5"]) {
 		const seed = await launch(restored.tool, id);
@@ -212,7 +244,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const local = { kind: "recon" };
 	const next = await launch(restored.tool, "new-origin", local);
 	assert.equal(next.result.details.jobId, jobId, "fixture must exercise reused short job IDs");
-	assert.match(oldRow.render(), /○ Worker finished — task unverified/); assert.match(next.row.render(), /accepted — card pinned above editor/);
+	assert.match(oldRow.render(), /○ Finished · needs validation/); assert.match(next.row.render(), /accepted — card pinned above editor/);
 	runs.at(-1)!.input.onEvent?.({ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "delegate/jobs.ts" } });
 	runs.at(-1)!.input.onEvent?.({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read" });
 	const cancelledArgs = { jobId, cancel: true }; const cancelledRow = row(restored.tool, "cancel", cancelledArgs);
@@ -287,7 +319,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const noSave = await launch(restored.tool, "no-save"); runs.at(-1)!.resolve(success);
 	const noSaveResult = await restored.tool.execute("no-save-collect", { jobId: noSave.result.details.jobId }, undefined, undefined, testCtx);
 	assert.equal(noSaveResult.details.ok, true);
-	assert.match(noSave.row.render(), /○ Worker finished — task unverified/);
+	assert.match(noSave.row.render(), /○ Finished · needs validation/);
 	assert.match(noSave.row.render(), /Could not save delegate display state/);
 	failPersistence = false;
 	await restored.handlers.get("session_shutdown")?.();
@@ -311,7 +343,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	await reloaded.handlers.get("session_tree")?.({}, { ...testCtx, sessionManager: { ...testCtx.sessionManager, getBranch: () => [] } });
 	assert.match(branchRow.render(), /Historical job — live status unavailable/);
 	await reloaded.handlers.get("session_tree")?.({}, testCtx);
-	assert.match(branchRow.render(), /○ Worker finished — task unverified/);
+	assert.match(branchRow.render(), /○ Finished · needs validation/);
 	await reloaded.handlers.get("session_shutdown")?.();
 	return { liveCard: true, receipts: true, previews: true, restoration: true, cancellation: true, emptyFailures: true, noModelCalls: true };
 }
