@@ -98,6 +98,47 @@ export async function capabilitiesProbe(pi: ExtensionAPI, ctx: ExtensionCommandC
 				assert.equal(runs.length, 2);
 			} finally { await handlers.get("session_shutdown")?.(); unlinkSync(configPath); }
 		}
+		// A foreground failure can settle before renderCall registers its observer.
+		// Exercise the real readRow/renderer boundary, not only the card store.
+		const release = join(ctx.cwd, "release-hook");
+		writeFileSync(configPath, JSON.stringify({ agents: { recon: { model: "hosted/mock", completionHook: {
+			command: [process.execPath, "-e", "process.stdin.resume(); const timer=setInterval(()=>{if(require('node:fs').existsSync(process.argv[1])) clearInterval(timer)},10)", release], timeoutMs: 5000,
+		} } } }), { flag: "wx", mode: 0o600 });
+		let tool: any;
+		const handlers = new Map<string, Function>();
+		delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
+			on: (event: string, handler: Function) => handlers.set(event, handler), appendEntry() {}, sendMessage() {},
+		} as unknown as ExtensionAPI, async () => ({ text: "Original worker failure.", exitCode: 1, stopReason: "error", stderrTail: "" }));
+		const testCtx: any = { ...ctx, hasUI: false, sessionManager: { getSessionId: () => "failed-hook-row", getSessionFile: () => undefined, getBranch: () => [] } };
+		await handlers.get("session_start")?.({}, testCtx);
+		try {
+			const args = { kind: "recon", task: "Offline failed hook row", background: false };
+			const result = await tool.execute("failed-hook-origin", args, undefined, undefined, testCtx);
+			assert.equal(result.isError, true); assert.equal(result.details.status, "failed");
+			assert.equal(result.details.completionHook.status, "running");
+			let invalidations = 0;
+			const row = { toolCallId: "failed-hook-origin", state: {}, isError: true, invalidate() { invalidations++; } };
+			tool.renderCall(args, theme, row);
+			const view = tool.renderResult(result, { expanded: false, isPartial: false }, theme, row);
+			assert.match(view.render(100).join("\n"), /Completion hook: running/);
+			writeFileSync(release, "finish", { flag: "wx" });
+			let collected: any;
+			for (let i = 0; i < 500; i++) {
+				collected = await tool.execute("hook-collect", { jobId: result.details.jobId, timeoutMs: 0 }, undefined, undefined, testCtx);
+				if (collected.details.completionHook.status !== "running") break;
+				await new Promise(resolve => setTimeout(resolve, 10));
+			}
+			assert.equal(collected.details.completionHook.status, "succeeded");
+			assert.equal(collected.isError, true); assert.ok(invalidations > 0);
+			const text = view.render(100).join("\n");
+			assert.match(text, /Completion hook: succeeded/); assert.doesNotMatch(text, /Completion hook: running/);
+			assert.match(text, /Original worker failure/);
+			const unrelated = { isError: true, details: { ok: false }, content: [{ type: "text", text: "Unrelated tool error." }] };
+			assert.match(tool.renderResult(unrelated, { expanded: false, isPartial: false }, theme, row).render(100).join("\n"), /Unrelated tool error/);
+		} finally {
+			await handlers.get("session_shutdown")?.(); unlinkSync(configPath);
+			if (existsSync(release)) unlinkSync(release);
+		}
 	} finally { if (previous === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = previous; }
 	return { configuredOnly: true, overlays: true, roleModelsKeepTools: true, detached: true, archived: true, rendered: true, noModelCalls: true };
 }

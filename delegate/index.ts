@@ -290,7 +290,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		const saved = context.state.delegateResult as { details?: CardDetails; content?: RowState["content"] } | undefined;
 		const jobId = typeof args.jobId === "string" ? args.jobId.trim() || undefined : undefined;
 		const collect = saved?.details?.callType === "collect" || (saved?.details?.callType !== "spawn" && jobId !== undefined);
-		const snapshot = !collect && !context.isError && saved?.details?.ok !== false ? cards.get(context.toolCallId) : undefined;
+		const current = !collect ? cards.get(context.toolCallId) : undefined;
+		// Accepted failed jobs still receive hook updates; unrelated tool errors stay immutable.
+		const failedOrigin = current?.status === "failed" && saved?.details?.status === "failed"
+			&& saved.details.callType === "spawn" && saved.details.jobId === current.jobId;
+		const snapshot = failedOrigin || (!context.isError && saved?.details?.ok !== false) ? current : undefined;
 		const details: CardDetails = { ...saved?.details, ...snapshot };
 		const kind = knownKind(details.kind) ?? knownKind(args.kind);
 		details.kind ??= kind;
