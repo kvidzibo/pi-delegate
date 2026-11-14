@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scope", "findings", "checks", "verification_limits", "verdict"],
+  "properties": {
+    "scope": { "$ref": "#/definitions/text" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "path", "start_line", "end_line", "finding", "evidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "path": {
+            "type": "string",
+            "description": "Repository-relative path without traversal, backslashes or control characters.",
+            "allOf": [
+              { "$ref": "#/definitions/text" },
+              { "pattern": "^(?!/)(?![a-zA-Z]:)(?!\\s)(?!.*\\\\)(?!.*[\\r\\n\\t])(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$" }
+            ]
+          },
+          "start_line": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "Must be greater than or equal to start_line; the hook checks this relationship."
+          },
+          "finding": { "$ref": "#/definitions/text", "description": "Concise finding headline; put supporting explanation in evidence." },
+          "evidence": { "$ref": "#/definitions/text" }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "result", "details"],
+        "properties": {
+          "check": { "$ref": "#/definitions/text" },
+          "result": { "type": "string", "enum": ["passed", "failed", "inconclusive"] },
+          "details": { "type": "string", "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$" }
+        }
+      }
+    },
+    "verification_limits": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+    "verdict": { "type": "string", "enum": ["ship", "fix_first", "blocked"] }
+  },
+  "definitions": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+    }
+  }
+}

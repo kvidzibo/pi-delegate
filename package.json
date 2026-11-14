@@ -1,6 +1,6 @@
 {
   "name": "@kvidzibo/pi-delegate",
-  "version": "0.35.1",
+  "version": "0.35.2",
   "description": "Delegate coding tasks to Pi workers through the native Pi extension",
   "engines": {
     "node": ">=22.19.0"
@@ -8,6 +8,7 @@
   "files": [
     "delegate",
     "child-runtime",
+    "examples",
     "README.md",
     "MIGRATION.md",
     "MODEL-COMPARISON.md",
@@ -36,8 +37,9 @@
     ]
   },
   "scripts": {
-    "test": "npm run test:unit && npm run test:load",
+    "test": "npm run test:unit && npm run test:examples && npm run test:load",
     "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts",
+    "test:examples": "node --test examples/review-comment/tests/*.test.mjs",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"
   },
   "peerDependenciesMeta": {

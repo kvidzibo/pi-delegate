@@ -14,3 +14,4 @@ jobs:
       # Factory load (npm run test:load) needs `pi` on PATH; not available here.
       - run: npm ci --omit=peer --ignore-scripts
       - run: npm run test:unit
+      - run: npm run test:examples
