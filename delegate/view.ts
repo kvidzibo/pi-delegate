@@ -8,6 +8,7 @@ import type { CardDetails } from "./cards.ts";
 import type { JobBoardState } from "./panel.ts";
 import { capabilityContent } from "./capabilities.ts";
 import { outcomeContent } from "./outcomes.ts";
+import { completionHookContent } from "./completion-hook.ts";
 
 export type RowState = {
 	details: CardDetails;
@@ -161,10 +162,12 @@ export function renderChildResult(input: RowInput): ChildView {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
 		for (const warning of text.warnings) add(warning);
+		const hookBlocks = completionHookContent(d.completionHook);
+		for (const block of hookBlocks) add(block.text, "muted");
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
 		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
-		const footers = new Set([...durationContent(d.durationMs), ...dataBlocks].map(block => block.text));
+		const footers = new Set([...durationContent(d.durationMs), ...dataBlocks, ...hookBlocks].map(block => block.text));
 		while (textParts.length > 1 && footers.delete(textParts.at(-1)!)) textParts.pop();
 		const contentText = textParts.join("\n");
 		const answer = failed

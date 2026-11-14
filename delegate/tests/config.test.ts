@@ -12,6 +12,7 @@ import {
 	loadDelegateConfig,
 	mergeDelegateConfig,
 	parseDelegateConfig,
+	parseCompletionHook,
 	resolveAgent,
 	saveDelegatePatch,
 	type DelegateConfig,
@@ -321,5 +322,60 @@ test("checkpoint saves share revisions with roles and preserve unrelated overlay
 		assert.deepEqual(saved.agents, { recon: { ...overlay.agents.recon, thinking: "low" } });
 		assert.equal(saved.note, overlay.note);
 		assert.equal(saved.checkpoints.note, overlay.checkpoints.note);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test("completion hooks validate bounded argv without shell parsing or filesystem checks", () => {
+	assert.equal(parseCompletionHook(null), null);
+	const command = ["/nonexistent executable", "", "  ", "$(touch nope); | >", "line\narg"];
+	assert.deepEqual(parseCompletionHook({ command }), { command, timeoutMs: 10000 });
+	for (const timeoutMs of [1, 300000]) assert.deepEqual(parseCompletionHook({ command, timeoutMs }), { command, timeoutMs });
+	const malformed = [undefined, false, 1, "shell command", [], {}, { command: [] },
+		{ command: [""] }, { command: ["  "] }, { command: ["relative/path"] }, { command: ["./hook"] },
+		{ command: ["/bin/hook\0"] }, { command: ["/bin/hook", "bad\0arg"] },
+		{ command: ["/bin/hook", 1] }, { command: ["/bin/hook", null] }, { command: new Array(1) },
+		{ command, shell: true }, { command, extra: undefined },
+		...[null, false, "10000", 0, -1, 300001, 1.5, NaN, Infinity].map(timeoutMs => ({ command, timeoutMs }))];
+	for (const value of malformed) assert.throws(() => parseCompletionHook(value), /completionHook/);
+	const parsed = parseCompletionHook({ command })!;
+	command.push("mutated");
+	assert.equal(parsed.command.length, 5);
+});
+
+test("completion hooks inherit, disable, snapshot and save for every named role across model changes", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-hooks-"));
+	const paths = { shippedPath, userPath: join(dir, "delegate.json") };
+	try {
+		let config = shipped();
+		assert.equal(Object.hasOwn(config.agents.recon, "completionHook"), false);
+		saveDelegatePatch(paths, "writer", undefined, { model: "hosted/writer", prompt: "Write.", tools: [] });
+		config = loadDelegateConfig(paths);
+		for (const kind of Object.keys(config.agents)) {
+			const hook = { command: ["/nonexistent hook", "", kind], timeoutMs: 300000 };
+			saveDelegatePatch(paths, kind, config.agents[kind], { completionHook: hook });
+			config = loadDelegateConfig(paths);
+			assert.deepEqual(config.agents[kind].completionHook, hook);
+			const snapshot = structuredClone(config.agents[kind]);
+			config.agents[kind].completionHook!.command.push("mutation");
+			assert.deepEqual(snapshot.completionHook, hook);
+			config = loadDelegateConfig(paths);
+			const inherited = mergeDelegateConfig(config, { agents: { [kind]: { model: "hosted/changed", completionHook: undefined } } }, "inherit");
+			assert.deepEqual(inherited.agents[kind].completionHook, hook);
+			saveDelegatePatch(paths, kind, config.agents[kind], { model: "hosted/changed" });
+			config = loadDelegateConfig(paths);
+			assert.deepEqual(config.agents[kind].completionHook, hook);
+			const before = readFileSync(paths.userPath, "utf8");
+			for (const completionHook of [{ command: ["relative"] }, { command: ["/hook"], timeoutMs: 300001 }, { command: ["/hook"], shell: true }]) {
+				assert.throws(() => mergeDelegateConfig(config, { agents: { [kind]: { completionHook } } }, "bad"), /completionHook/);
+				assert.throws(() => parseDelegateConfig({ ...config, agents: { ...config.agents, [kind]: { ...config.agents[kind], completionHook } } }, "bad"), /completionHook/);
+				assert.throws(() => saveDelegatePatch(paths, kind, config.agents[kind], { completionHook } as any), /completionHook/);
+			}
+			assert.equal(readFileSync(paths.userPath, "utf8"), before);
+			saveDelegatePatch(paths, kind, config.agents[kind], { completionHook: null });
+			config = loadDelegateConfig(paths);
+			assert.equal(config.agents[kind].completionHook, null);
+			assert.equal(mergeDelegateConfig(config, { agents: { [kind]: { thinking: "off" } } }, "disabled").agents[kind].completionHook, null);
+		}
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

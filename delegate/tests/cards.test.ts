@@ -21,6 +21,20 @@ test("origin card updates without collection and releases its UI observer at ter
 	assert.equal(cards.get("spawn")?.status, "done", "late pending receipt cannot downgrade completion");
 });
 
+test("late origin watchers observe pending hook completion and then release", () => {
+	const cards = new JobCards(); let renders = 0;
+	cards.begin("spawn", running);
+	cards.update("spawn", { ...done, completionHook: { status: "running", durationMs: 0 } });
+	assert.equal(cards.isLive("spawn"), false, "hooks do not keep workers live");
+	const observe = () => { renders++; cards.watch("spawn", observe); };
+	cards.watch("spawn", observe);
+	const complete = { ...done, completionHook: { status: "succeeded", durationMs: 10 } };
+	cards.update("spawn", complete);
+	assert.equal(renders, 1, "watching after worker termination still refreshes hook completion");
+	cards.update("spawn", complete);
+	assert.equal(renders, 1, "finished hooks release observers even if repaint watches again");
+});
+
 test("accepted live transcript snapshots stay unchanged until terminal, even on unrelated repaints", () => {
 	const cards = new JobCards(); let invalidations = 0;
 	cards.begin("spawn", { ...running, status: "queued" });

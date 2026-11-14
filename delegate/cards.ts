@@ -20,6 +20,7 @@ function copyDetails(details: CardDetails): CardDetails {
 		const finalization = copyFinalizationProgress(copy.finalization);
 		if (finalization) copy.finalization = finalization; else delete copy.finalization;
 	}
+	if (copy.completionHook && typeof copy.completionHook === "object") copy.completionHook = { ...copy.completionHook };
 	if (copy.resource && typeof copy.resource === "object") copy.resource = { ...copy.resource };
 	if (copy.current && typeof copy.current === "object") copy.current = { ...copy.current };
 	if (Array.isArray(copy.activity)) copy.activity = copy.activity.map(item =>
@@ -51,7 +52,10 @@ export class JobCards {
 	}
 
 	watch(origin: string, invalidate: (() => void) | undefined): void {
-		if (this.live.has(origin) && invalidate) this.observers.set(origin, invalidate);
+		const hook = this.snapshots.get(origin)?.completionHook as { status?: string } | undefined;
+		if (invalidate && (this.live.has(origin) || (this.owned.has(origin) && hook?.status === "running"))) {
+			this.observers.set(origin, invalidate);
+		}
 	}
 
 	update(origin: string, details: CardDetails): void {
@@ -67,7 +71,7 @@ export class JobCards {
 		const invalidate = this.observers.get(origin);
 		if (isTerminal(details)) {
 			this.live.delete(origin);
-			this.observers.delete(origin);
+			if ((details.completionHook as { status?: string } | undefined)?.status !== "running") this.observers.delete(origin);
 		}
 		try { invalidate?.(); } catch { /* A dead row must not affect the child. */ }
 	}

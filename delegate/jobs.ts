@@ -16,6 +16,8 @@ import {
 } from "./display.ts";
 import { applyTgEvent, createTgMeter, visibleChildTg, type TgMeter } from "./tg.ts";
 
+import type { CompletionHookResult } from "./completion-hook.ts";
+
 export type JobStatus = "queued" | "running" | "done" | "failed";
 export type QueueReason = "gpu" | "slot" | "resource";
 export type ResourceProgress = ResourceGroup & {
@@ -44,6 +46,7 @@ export type JobRun = (
 export type ArchiveRef = { runId: string; sessionFile: string };
 
 export type JobSnapshot = {
+	completionHook?: CompletionHookResult;
 	resource?: ResourceProgress;
 	resourceError?: string;
 	archive?: ArchiveRef;
@@ -89,6 +92,8 @@ export type EnqueueInput = {
 	task: string;
 	timeoutMs: number;
 	run: JobRun;
+	/** Runs once after terminal accounting; independent of notifications and worker status. */
+	onComplete?: (snap: JobSnapshot) => Promise<CompletionHookResult>;
 	background?: boolean;
 	cancelOnAbort?: AbortSignal;
 };
@@ -125,6 +130,8 @@ export type ParsedCall =
 	  };
 
 type InternalJob = {
+	onComplete?: EnqueueInput["onComplete"];
+	completionHook?: CompletionHookResult;
 	resourceGroup?: ResourceGroup;
 	resourceSlot?: number;
 	resourceError?: string;
@@ -242,6 +249,7 @@ export class JobScheduler {
 	private pumping = false;
 	private pumpAgain = false;
 	private readonly jobs: InternalJob[] = [];
+	private readonly hooks = new Set<Promise<void>>();
 	private readonly limits: SchedulerLimits;
 	private readonly capacity?: CapacityBroker;
 	private readonly resourcePollMs: number;
@@ -290,6 +298,7 @@ export class JobScheduler {
 			task: input.task,
 			timeoutMs: input.timeoutMs,
 			run: input.run,
+			onComplete: input.onComplete,
 			status: "queued",
 			controller: new AbortController(),
 			progress: createProgress(),
@@ -320,6 +329,7 @@ export class JobScheduler {
 		// Refuse excess waiters without spawning, retaining runners, or bypassing the queue bound.
 		if (job.status === "queued" && this.queuedCount() > this.limits.maxQueued) {
 			this.jobs.splice(this.jobs.indexOf(job), 1);
+			job.onComplete = undefined;
 			this.releaseRuntime(job);
 			this.armResourcePoll();
 			this.notify();
@@ -488,6 +498,8 @@ export class JobScheduler {
 		}
 	}
 
+	hasPendingHooks(): boolean { return this.hooks.size > 0; }
+
 	async shutdown(): Promise<void> {
 		this.closed = true;
 		this.clearResourcePoll();
@@ -515,6 +527,7 @@ export class JobScheduler {
 			}
 		}
 		await Promise.all(running);
+		await Promise.all(this.hooks);
 		this.notify();
 	}
 
@@ -594,6 +607,7 @@ export class JobScheduler {
 		};
 		if (job.resourceError) snap.resourceError = job.resourceError;
 		if (job.recordingError) snap.recordingError = job.recordingError;
+		if (job.completionHook) snap.completionHook = { ...job.completionHook };
 		if (job.wrapped) snap.wrapped = true;
 		if (job.finalization) snap.finalization = copyFinalizationProgress(job.finalization);
 		if (job.status === "running" || job.status === "queued") {
@@ -636,12 +650,29 @@ export class JobScheduler {
 			try { job.recordingError = [job.recordingError, this.onSettled?.(this.snapshot(job))].filter(Boolean).join("\n") || undefined; }
 			catch { job.recordingError = [job.recordingError, "Delegate recording incomplete: terminal accounting callback failed."].filter(Boolean).join("\n"); }
 		}
+		if (job && this.terminal(job) && job.onComplete) this.startCompletionHook(job);
 		if (job) this.emit(job);
 		try {
 			this.onChange?.(job ? this.snapshot(job) : undefined);
 		} catch {
 			/* widget errors must not break the scheduler */
 		}
+	}
+
+	private startCompletionHook(job: InternalJob): void {
+		const complete = job.onComplete!;
+		job.onComplete = undefined; // Claim before invoking any code; peeks/cancel/shutdown cannot replay it.
+		job.completionHook = { status: "running", durationMs: 0 };
+		const snapshot = this.snapshot(job);
+		const pending = Promise.resolve().then(() => complete(snapshot)).then(result => {
+			job.completionHook = { ...result };
+		}, error => {
+			job.completionHook = { status: "failed", durationMs: 0, error: error instanceof Error ? error.message : String(error) };
+		}).finally(() => {
+			this.hooks.delete(pending);
+			this.notify(job);
+		});
+		this.hooks.add(pending);
 	}
 
 	private safeSnapshot(onSnapshot: ((snap: JobSnapshot) => void) | undefined, snap: JobSnapshot): void {

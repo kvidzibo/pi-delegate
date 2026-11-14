@@ -33,6 +33,7 @@ import { ModelCommand } from "./model-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
+import { completionHookContent } from "./completion-hook.ts";
 import { FileCapacityBroker } from "./capacity.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -122,6 +123,7 @@ function formatOutput(input: {
 			...durationContent(input.details.durationMs),
 			...capabilityContent(input.details.capabilities),
 			...outcomeContent(input.details.outcome),
+			...completionHookContent(input.details.completionHook),
 		],
 		details: { ok: !input.failed, ...input.details },
 		isError: input.failed,
@@ -144,6 +146,7 @@ function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {})
 	if (snap.outcome) details.outcome = copyOutcome(snap.outcome);
 	if (snap.recordingError) details.recordingError = snap.recordingError;
 	if (snap.responseFile) details.responseFile = snap.responseFile;
+	if (snap.completionHook) details.completionHook = { ...snap.completionHook };
 	if (snap.current) details.current = snap.current;
 	if (snap.thinking) details.phase = "thinking";
 	if (snap.tg) details.tg = snap.tg;
@@ -186,12 +189,14 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	const updateCard = (snap: JobSnapshot): void => {
 		const origin = snap.archive ? origins.get(snap.archive.runId) : undefined;
 		if (!origin) return;
-		const wasTerminal = isTerminal(cards.get(origin) ?? {});
+		const previous = cards.get(origin);
+		const wasTerminal = isTerminal(previous ?? {});
+		const previousHook = (previous?.completionHook as { status?: string } | undefined)?.status;
 		const terminal = snap.status === "done" || snap.status === "failed";
 		const details = uiDetails(snap, { ok: !snap.failed, displayWarning: cards.get(origin)?.displayWarning,
 			answer: terminal ? receiptText(snap) : undefined });
 		cards.update(origin, details);
-		if (isTerminal(details) && !wasTerminal) {
+		if (isTerminal(details) && (!wasTerminal || previousHook !== snap.completionHook?.status)) {
 			try { pi.appendEntry(CARD_STATE_TYPE, details); }
 			catch { cards.update(origin, { ...details, displayWarning: "Could not save delegate display state; the child archive is separate." }); }
 		}
@@ -285,7 +290,11 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		const saved = context.state.delegateResult as { details?: CardDetails; content?: RowState["content"] } | undefined;
 		const jobId = typeof args.jobId === "string" ? args.jobId.trim() || undefined : undefined;
 		const collect = saved?.details?.callType === "collect" || (saved?.details?.callType !== "spawn" && jobId !== undefined);
-		const snapshot = !collect && !context.isError && saved?.details?.ok !== false ? cards.get(context.toolCallId) : undefined;
+		const current = !collect ? cards.get(context.toolCallId) : undefined;
+		// Accepted failed jobs still receive hook updates; unrelated tool errors stay immutable.
+		const failedOrigin = current?.status === "failed" && saved?.details?.status === "failed"
+			&& saved.details.callType === "spawn" && saved.details.jobId === current.jobId;
+		const snapshot = failedOrigin || (!context.isError && saved?.details?.ok !== false) ? current : undefined;
 		const details: CardDetails = { ...saved?.details, ...snapshot };
 		const kind = knownKind(details.kind) ?? knownKind(args.kind);
 		details.kind ??= kind;
@@ -306,7 +315,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		const events = pi.events;
 		if (events?.on) {
 			busyUnsubscribe = events.on("delegate:query-busy", (payload) => {
-				respondToBusyQuery(payload, shuttingDown || scheduler.active().length > 0);
+				respondToBusyQuery(payload, shuttingDown || scheduler.active().length > 0 || scheduler.hasPendingHooks());
 			});
 		}
 		bindUi(ctx);
