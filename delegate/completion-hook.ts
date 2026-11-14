@@ -18,7 +18,13 @@ export async function runCompletionHook(config: CompletionHookConfig, payload: u
 		let timedOut = false;
 		let error: string | undefined;
 		let stderr = Buffer.alloc(0);
-		const child = spawn(config.command[0], config.command.slice(1), {
+		// libuv's POSIX spawn falls back to /bin/sh on ENOEXEC, even with shell:false.
+		// Node 22.19+ execve preserves the kernel error instead; argv stays literal.
+		const direct = process.platform === "win32";
+		const executable = direct ? config.command[0] : process.execPath;
+		const args = direct ? config.command.slice(1) : ["--no-warnings", "-e",
+			"process.execve(process.argv[1], process.argv.slice(1), process.env)", "--", ...config.command];
+		const child = spawn(executable, args, {
 			cwd, shell: false, detached: process.platform !== "win32", stdio: ["pipe", "ignore", "pipe"],
 		});
 		const timer = setTimeout(() => {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -80,7 +80,14 @@ process.stdin.on('end', () => {
 	const timeout = await finishHook(spawn("custom", { ...agent, completionHook: { command: [process.execPath, script, log, "timeout"], timeoutMs: 250 } }).id);
 	assert.equal(timeout.status, "done"); assert.equal(timeout.completionHook?.status, "timed_out");
 	const missing = await runCompletionHook({ command: [join(root, "missing")], timeoutMs: 1000 }, {}, root);
-	assert.equal(missing.status, "failed"); assert.match(missing.error!, /ENOENT/);
+	assert.equal(missing.status, "failed"); assert.match(missing.error ?? missing.stderrTail ?? "", /ENOENT|no such file/i);
+	if (process.platform !== "win32") {
+		const shellText = join(root, "no-shebang"), marker = join(root, "implicit-shell");
+		writeFileSync(shellText, 'printf unexpected > "$1"\n', { mode: 0o700 });
+		const refused = await runCompletionHook({ command: [shellText, marker], timeoutMs: 1000 }, {}, root);
+		assert.equal(refused.status, "failed");
+		assert.equal(existsSync(marker), false, "ENOEXEC must not fall back to a shell");
+	}
 
 	const failure = await finishHook(spawn("review", agent, async () => ({ text: "partial, not JSON", exitCode: 1, stderrTail: "", stopReason: "error" })).id);
 	assert.equal(failure.status, "failed"); assert.equal(failure.completionHook?.status, "succeeded");
