@@ -40,6 +40,7 @@
     "test": "npm run test:unit && npm run test:examples && npm run test:load",
     "test:unit": "node --test --experimental-strip-types delegate/tests/*.test.ts child-runtime/tests/*.test.ts",
     "test:examples": "node --test examples/review-comment/tests/*.test.mjs",
+    "test:review-integration": "node --test --experimental-strip-types examples/review-comment/tests/integration.test.ts",
     "test:load": "node --test --experimental-strip-types tests/load.test.ts"
   },
   "peerDependenciesMeta": {

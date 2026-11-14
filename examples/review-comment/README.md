@@ -88,6 +88,24 @@ Empty findings, schema validity and worker completion do not prove approval.
 Reviewer limits and recording warnings prevent automatic clean output; the parent
 must not silently dismiss them or invent verification.
 
+## Reviewer validation
+
+Inspect the CI workflow and current exact-head check status first. Do not rerun
+CI-covered checks by default or claim pending checks passed. Independently discover
+and run relevant non-CI checks, including `npm run test:review-integration` from
+the repository root. Record provenance: exact commands, working directory, reviewed
+SHA, observed results and any checks not run with reasons. Report material gaps
+only. The CLI tests (`test:examples`) are covered by CI; `test:load` is non-CI
+and requires `pi`.
+
+The integration check uses a temporary Git repository, the shipped response-schema
+compiler and the actual completion-hook runner; no model, network, delegation or
+publication is involved. From this example directory, run it with:
+
+```bash
+npm --prefix ../.. run test:review-integration
+```
+
 ## Corrections and recovery
 
 From this example directory, substitute actual artifact paths and run ID:
