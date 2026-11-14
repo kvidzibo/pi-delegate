@@ -142,6 +142,17 @@ Validation establishes structure, not truth or successful task completion. Schem
 
 Each role, including custom and checkpoint roles, can configure its own **Completion hook** in Roles. Paste a JSON object into the native editor; **Save role** applies it to future jobs. Empty text or `null` disables it. Invalid input stays editable; Esc cancels.
 
+In the Roles editor, paste only the hook object:
+
+```json
+{
+  "command": ["/absolute/path/to/review-script", "--configured-argument"],
+  "timeoutMs": 10000
+}
+```
+
+For manual configuration in `~/.pi/agent/delegate.json`, use the settings wrapper:
+
 ```json
 {
   "agents": {
@@ -186,6 +197,8 @@ Worker capacity is released before the hook starts. Shutdown/reload waits for pe
 The accepted configuration and stdin payload are saved privately as `completion-hook-config.json` and `completion-hook-input.json` beside `metadata.json`. Hooks run at most once per accepted job in the current process, with no retries or replay on reload. Rejected jobs do not run hooks. Crashes can prevent delivery or leave an uncertain external outcome: this is not a durable queue or exactly-once publishing guarantee. Use `runId` for script-side deduplication.
 
 GitHub targeting, comment rendering and publication belong in the script; pi-delegate does not discover PRs or publish comments.
+
+For an opt-in script that saves review history and a Markdown comment draft without publishing, see the [review-comment example](../examples/review-comment/README.md).
 
 ## Task handoff
 
