@@ -56,7 +56,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 		return reason === "aborted" ? { color: "muted", text: "○ Cancelled" }
 			: { color: "error", text: `✗ Failed${reason ? ` — ${reason}` : ""}` };
 	}
-	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "muted", text: "○ Worker finished — task unverified" };
+	if (d.status === "done" || (!state.isPartial && !d.status)) return { color: "muted", text: "○ Worker finished — parent must validate result" };
 	if (d.historical) return { color: "muted", text: "○ Historical job — live status unavailable" };
 	if (state.live && !state.pinned) return { color: "muted", text: "○ Accepted — card pinned above editor" };
 	if (d.status === "queued") {
@@ -76,7 +76,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 
 function compactHeader(theme: ThemeFg, d: CardDetails, state: RowState): string {
 	const status = statusLine(state);
-	const label = status.text.includes("Worker finished") ? "○ Finished · unverified" : status.text.split(" — ")[0];
+	const label = status.text.includes("Worker finished") ? "○ Finished · needs validation" : status.text.split(" — ")[0];
 	return [theme.fg("toolTitle", theme.bold(displayText(str(d, "jobId")) || "delegate")),
 		theme.fg("accent", displayText(str(d, "kind")) || "…"), theme.fg(status.color, label),
 		theme.fg("dim", displayText(aliasForModel(str(d, "model"))) + headerMetadata(d))].join(" · ");
@@ -107,7 +107,7 @@ function cardText(theme: ThemeFg, d: CardDetails, expanded: boolean, width: numb
 	const current = asActivityItem(d.current);
 	const task = theme.fg("muted", `Task: ${expanded ? cleanBlock(str(d, "task")) : displayText(str(d, "task")).replace(/\s+/g, " ").trim()}`);
 	return {
-		task: expanded ? wrapTextWithAnsi(task, width) : [truncateToWidth(task, width, "…")],
+		task: wrapTextWithAnsi(task, width),
 		warnings: ["recordingError", "displayWarning", "resourceError"].filter(key => d[key]).map(key => theme.fg("warning", displayText(str(d, key)))),
 		activity: asActivityList(d.activity).filter(item => item.name !== "thinking").map(item => paintActivity(theme, item)),
 		current: current && current.name !== "thinking" ? paintActivity(theme, current) : undefined,
@@ -152,8 +152,12 @@ export function renderChildResult(input: RowInput): ChildView {
 		const failed = state.isError || d.ok === false || d.status === "failed";
 		const pending = d.status === "running" || d.status === "queued" || state.isPartial;
 		const cancelled = failed && d.stopReason === "aborted";
-		if ((!state.collect || failed || state.expanded) && str(d, "task")) lines.push(...text.task);
-		if (!state.collect) {
+		if ((!state.collect || failed || state.expanded) && str(d, "task")) {
+			lines.push(...(state.expanded ? text.task : clippedLines(text.task, state.collect ? 1 : 2, width)));
+		}
+		// The compact header already carries completion; expanded headers omit status.
+		const finished = !failed && (d.status === "done" || (!state.isPartial && !d.status));
+		if (!state.collect && (!finished || state.expanded)) {
 			const status = statusLine(state); add(displayText(status.text), status.color);
 		}
 		for (const warning of text.warnings) add(warning);
@@ -169,7 +173,10 @@ export function renderChildResult(input: RowInput): ChildView {
 		// Cancelled runs may contain only internal response placeholders. Keep all raw
 		// evidence available when expanded; the compact view shows identity/task/activity.
 		if ((failed || !pending) && answer && (!state.collect || state.expanded || failed) && (!cancelled || state.expanded)) {
-			const rendered = new Markdown(cleanBlock(answer), 0, 0, getMarkdownTheme()).render(width);
+			const savedResponse = str(d, "responseFile");
+			const preview = !state.expanded && savedResponse && answer === `Response saved to: ${savedResponse}`
+				? "Response saved to file" : answer;
+			const rendered = new Markdown(cleanBlock(preview), 0, 0, getMarkdownTheme()).render(width);
 			while (rendered.length && !rendered[0].trim()) rendered.shift();
 			while (rendered.length && !rendered.at(-1)!.trim()) rendered.pop();
 			hiddenResultLines = state.expanded ? 0 : Math.max(0, rendered.length - 3);
