@@ -16,7 +16,7 @@ Shipped models use `openai-codex`:
 All role defaults are hosted; configure a role to use a local model.
 User role configuration takes precedence over these defaults. Models come only from role configuration; the `delegate` tool rejects any `model` argument, including null or blank values. This applies to every role, including reviews.
 
-Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template, raw JSON Schema, repair attempts and Save to file. Enablement, extensions, repair attempts, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
+Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template, raw JSON Schema, repair attempts, Save to file and a per-role Completion hook. Enablement, extensions, repair attempts, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
 
 **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both paths share model selection and persistence. Use Roles to save model and reasoning together; the model-first picker saves them separately. Model choices match `/model`: scoped models when set, otherwise all available models. Reasoning comes from Pi's supported levels (including `xhigh`/`max` when supported); non-reasoning models offer only `off`. Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues. They apply to future jobs in this session; queued/running jobs retain their acceptance-time policy. Other sessions need `/reload`.
 
@@ -46,6 +46,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `responseSchema` | Omitted/`null`: no validation; a draft-07 object or boolean enables JSON validation |
 | `responseRepairAttempts` | `2`; integer `0`–`2`, additional attempts after the initial response |
 | `saveToFile` | `false`: return the response inline |
+| `completionHook` | Omitted/`null`: disabled; `{ command: [...], timeoutMs: 10000 }` runs after termination |
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
 
@@ -136,6 +137,55 @@ The schema replaces template instructions while enabled; it does not delete the 
 The parent independently checks the final response. Only the latest validated JSON is returned, including after a wrap request; earlier attempts remain in the native session, not concatenated into the JSON. If repairs are exhausted or settlement is missing, the job fails with `response-format` and bounded diagnostics. JSON above `maxOutputBytes` fails rather than returning truncated JSON as successful. Successful saved JSON uses `response.json`; failure diagnostics use `response.md`. If saving fails, validated JSON stays intact inline and the file warning is reported separately. Schema, retry count and output limit are privately snapshotted at acceptance in `response-format.json` beside the archived prompt.
 
 Validation establishes structure, not truth or successful task completion. Schemas are trusted user configuration, not a sandbox; enabled third-party extensions still execute with normal permissions.
+
+## Completion hooks
+
+Each role, including custom and checkpoint roles, can configure its own **Completion hook** in Roles. Paste a JSON object into the native editor; **Save role** applies it to future jobs. Empty text or `null` disables it. Invalid input stays editable; Esc cancels.
+
+```json
+{
+  "agents": {
+    "review": {
+      "completionHook": {
+        "command": ["/absolute/path/to/review-script", "--configured-argument"],
+        "timeoutMs": 10000
+      }
+    }
+  }
+}
+```
+
+The executable path must be absolute. Arguments are literal: no shell, interpolation, tilde expansion or command splitting. Use an executable script with a shebang, or an absolute interpreter path followed by the script path. Timeout defaults to 10 seconds; allowed range is 1–300,000 ms. No hooks are shipped or enabled automatically.
+
+**Authority:** saving a hook authorizes that executable for every accepted job of the role, including failures, queued/running cancellation and shutdown. It runs in the job's cwd with Pi's permissions and inherited environment, independently of the child's tool restrictions. Only configure trusted scripts. Model responses and repository contents are untrusted data; never evaluate them as commands or infer publication destinations/permission from their prose.
+
+### Input and status
+
+The hook receives one version-1 JSON value followed by a newline on stdin:
+
+| Field | Meaning |
+|---|---|
+| `version`, `event` | `1`, `"delegate.completed"` |
+| `runId`, `jobId`, `role` | Durable run UUID, session-local job ID, configured role |
+| `status`, `stopReason`, `exitCode`, `outcome` | Worker disposition, not task correctness; cancelled workers have `failed` / `aborted` |
+| `model`, `requestedModel`, `reasoning` | Observed/result model, configured model and accepted thinking level |
+| `cwd`, `durationMs` | Job directory and archived worker duration, excluding the hook |
+| `parentSessionId`, `toolCallId` | Originating session and invocation |
+| `paths` | Archive `dir`, `metadata`, `session`, `prompt`, `task`; optional saved response as `response` (otherwise null) |
+| `recordingError` | Recording warning or null |
+| `response.text` | Returned response or failure diagnostics; empty when no response exists |
+| `response.schemaValidated` | True only for successful, schema-validated JSON |
+| `response.json` | Parsed JSON, present only when `schemaValidated` is true |
+
+Hooks work without **Save to file** or a response schema. Failed/partial output is never labelled schema-validated. A `done` status or validated schema is not a review approval.
+
+Execution is asynchronous: collection can return **Completion hook: running**. Collect again to inspect its final status. Hook results (`succeeded`, `failed`, `timed_out`) appear separately in receipts/cards and archived metadata; they never change worker status or response text. Stdout is discarded; the last 4 KiB of stderr is retained in hook metadata. Do not print secrets.
+
+Worker capacity is released before the hook starts. Shutdown/reload waits for pending hooks, up to their configured timeout; cancellation does not undo hook side effects. Timeout kills the hook process group on POSIX (the direct process on Windows). Scripts should finish their work before exiting, not launch background services.
+
+The accepted configuration and stdin payload are saved privately as `completion-hook-config.json` and `completion-hook-input.json` beside `metadata.json`. Hooks run at most once per accepted job in the current process, with no retries or replay on reload. Rejected jobs do not run hooks. Crashes can prevent delivery or leave an uncertain external outcome: this is not a durable queue or exactly-once publishing guarantee. Use `runId` for script-side deduplication.
+
+GitHub targeting, comment rendering and publication belong in the script; pi-delegate does not discover PRs or publish comments.
 
 ## Task handoff
 

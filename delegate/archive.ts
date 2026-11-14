@@ -10,7 +10,10 @@ import { copyFinalizationProgress, type FinalizationProgress } from "../child-ru
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
 
+import type { CompletionHookResult } from "./completion-hook.ts";
+
 export type RunRecord = {
+	completionHook?: CompletionHookResult;
 	version: 1;
 	revision: number;
 	runId: string;
@@ -178,6 +181,12 @@ export class ArchivedRun {
 		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
 		this.data.outcome = describeOutcome({ ...this.data, evidence });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
+		this.persist();
+		try { appendLedger(this.root, this.data); } catch (error) { this.failRecording(error); this.persist(); }
+	}
+
+	recordCompletionHook(result: CompletionHookResult): void {
+		this.data.completionHook = { ...result };
 		this.persist();
 		try { appendLedger(this.root, this.data); } catch (error) { this.failRecording(error); this.persist(); }
 	}

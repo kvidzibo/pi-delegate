@@ -13,10 +13,34 @@ export const ROLE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+export interface CompletionHookConfig {
+	command: string[];
+	timeoutMs: number;
+}
+
+export function parseCompletionHook(value: unknown): CompletionHookConfig | null {
+	if (value === null) return null;
+	if (!value || typeof value !== "object" || Array.isArray(value)
+		|| Reflect.ownKeys(value).some(key => key !== "command" && key !== "timeoutMs")) {
+		throw new Error("completionHook (object with only command and timeoutMs, or null)");
+	}
+	const { command, timeoutMs = 10000 } = value as Record<string, unknown>;
+	if (!Array.isArray(command) || command.length === 0
+		|| Array.from(command).some(arg => typeof arg !== "string" || arg.includes("\0"))
+		|| !command[0].trim() || !isAbsolute(command[0])) {
+		throw new Error("completionHook.command (nonempty array of NUL-free strings; first entry must be an absolute executable path)");
+	}
+	if (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 300000) {
+		throw new Error("completionHook.timeoutMs (integer 1..300000)");
+	}
+	return { command: [...command], timeoutMs: timeoutMs as number };
+}
+
 export interface AgentConfig {
 	enabled?: boolean;
 	model: string;
 	prompt: string;
+	completionHook?: CompletionHookConfig | null;
 	responseTemplate?: string;
 	responseSchema?: ResponseSchema | null;
 	responseRepairAttempts?: number;
@@ -116,6 +140,10 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		errors.push("model (non-empty string)");
 	}
 	if (typeof parsed.prompt !== "string" || !parsed.prompt.trim()) errors.push("prompt (non-empty string)");
+	let completionHook: CompletionHookConfig | null | undefined;
+	try {
+		if (parsed.completionHook !== undefined) completionHook = parseCompletionHook(parsed.completionHook);
+	} catch (error) { errors.push(error instanceof Error ? error.message : "completionHook"); }
 	let tools: string[] | undefined;
 	try {
 		tools = parsed.tools === undefined ? ["*"] : parseTools(parsed.tools, "tools");
@@ -138,6 +166,7 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		enabled: parsed.enabled === undefined ? true : parsed.enabled as boolean,
 		model,
 		prompt: parsed.prompt as string,
+		...(completionHook !== undefined ? { completionHook } : {}),
 		...(parsed.responseTemplate !== undefined ? { responseTemplate: parsed.responseTemplate as string } : {}),
 		...(parsed.responseSchema !== undefined ? { responseSchema: structuredClone(parsed.responseSchema) as ResponseSchema | null } : {}),
 		...(parsed.responseRepairAttempts !== undefined ? { responseRepairAttempts: parsed.responseRepairAttempts as number } : {}),
@@ -261,6 +290,7 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 		enabled: base.enabled,
 		model: base.model,
 		prompt: base.prompt,
+		completionHook: base.completionHook,
 		responseTemplate: base.responseTemplate,
 		responseSchema: base.responseSchema,
 		responseRepairAttempts: base.responseRepairAttempts,
@@ -272,6 +302,7 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
 	if (parsed.model !== undefined) next.model = parsed.model;
 	if (parsed.prompt !== undefined) next.prompt = parsed.prompt;
+	if (parsed.completionHook !== undefined) next.completionHook = parsed.completionHook;
 	if (parsed.responseTemplate !== undefined) next.responseTemplate = parsed.responseTemplate;
 	if (parsed.responseSchema !== undefined) next.responseSchema = parsed.responseSchema;
 	if (parsed.responseRepairAttempts !== undefined) next.responseRepairAttempts = parsed.responseRepairAttempts;

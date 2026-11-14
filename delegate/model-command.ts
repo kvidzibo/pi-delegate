@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { assertKind, delegateConfigRevision, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
 import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
@@ -189,6 +189,7 @@ export class ModelCommand {
 				{ id: "saveToFile", label: "Save to file", description: "Return a private temporary file path instead of response text.", currentValue: draft.saveToFile ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "responseSchema", label: "Response schema", description: "Paste an entire JSON Schema (draft-07), not an example. Takes precedence over the template; empty disables.", currentValue: draft.responseSchema == null ? "disabled" : "configured" },
 				{ id: "responseRepairAttempts", label: "Repair attempts", description: "Retries for schema-invalid responses.", currentValue: String(draft.responseRepairAttempts ?? 2), values: ["0", "1", "2"] },
+				{ id: "completionHook", label: "Completion hook", description: "Runs with full user permissions, also on failure/cancellation. JSON object; empty disables.", currentValue: draft.completionHook == null ? "disabled" : "configured" },
 				{ id: "save", label: "Save role", currentValue: "" },
 			], signal, (id, value) => {
 				if (id === "thinking") draft.thinking = value as AgentConfig["thinking"];
@@ -227,6 +228,20 @@ export class ModelCommand {
 						break;
 					} catch (error) {
 						ctx.ui.notify(`Invalid response schema: ${error instanceof Error ? error.message : String(error)}`, "error");
+					}
+				}
+			} else if (action === "completionHook") {
+				let text = draft.completionHook == null ? "" : JSON.stringify(draft.completionHook, null, 2);
+				while (!signal.aborted) {
+					const edited = await ctx.ui.editor(`Completion hook for ${name} (JSON object; empty disables)`, text);
+					if (signal.aborted) return;
+					if (edited === undefined) break;
+					text = edited;
+					try {
+						draft.completionHook = parseCompletionHook(text.trim() ? JSON.parse(text) : null);
+						break;
+					} catch (error) {
+						ctx.ui.notify(`Invalid completion hook: ${error instanceof Error ? error.message : String(error)}`, "error");
 					}
 				}
 			} else if (action === "tools") {

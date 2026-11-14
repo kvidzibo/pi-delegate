@@ -10,6 +10,8 @@ import type { AgentConfig, DelegateConfig } from "./config.ts";
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
 import { isLocalModel } from "./tg.ts";
+import { parseCompletionHook } from "./config.ts";
+import { runCompletionHook, type CompletionHookResult } from "./completion-hook.ts";
 
 /** Empty templates preserve the exact existing system prompt. */
 export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplate" | "responseSchema">): string {
@@ -37,14 +39,17 @@ export function enqueueDelegate(input: {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = structuredClone(input.agent);
 	const config = { ...input.config };
-	if (agent.responseSchema != null) compileResponseSchema(agent.responseSchema);
+	const validateResponse = agent.responseSchema == null ? undefined : compileResponseSchema(agent.responseSchema);
+	const hook = agent.completionHook == null ? null : parseCompletionHook(agent.completionHook);
 	const repairAttempts = agent.responseRepairAttempts ?? DEFAULT_REPAIR_ATTEMPTS;
 	assertRepairAttempts(repairAttempts);
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
 	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, agentPrompt(agent));
+	let responseText: string | undefined;
 	try {
+		if (hook) writeFileSync(join(archive.paths.dir, "completion-hook-config.json"), JSON.stringify(hook), { mode: 0o600, flag: "wx" });
 		let responseFormatPath: string | undefined;
 		if (agent.responseSchema != null) {
 			responseFormatPath = join(dirname(archive.paths.prompt), "response-format.json");
@@ -57,6 +62,42 @@ export function enqueueDelegate(input: {
 			local, task: input.task, timeoutMs: input.timeoutMs,
 			...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 			background: input.background, cancelOnAbort: input.background ? undefined : input.signal,
+			...(hook ? { onComplete: async (snap: JobSnapshot): Promise<CompletionHookResult> => {
+				// Covers jobs cancelled before dispatch, even outside the extension's scheduler wiring.
+				input.accounting.terminal(archive.data.runId, snap.id, {
+					status: snap.failed ? "failed" : "done", stopReason: snap.stopReason, exitCode: snap.exitCode,
+					finalization: snap.finalization, evidence: snap.outcome?.evidence,
+				});
+				archive.recordCompletionHook({ status: "running", durationMs: 0 });
+				let result: CompletionHookResult;
+				try {
+					const text = responseText ?? snap.answer ?? "";
+					let json: unknown;
+					let schemaValidated = false;
+					if (!snap.failed && validateResponse) {
+						json = JSON.parse(text);
+						schemaValidated = Boolean(validateResponse(json));
+						if (!schemaValidated) throw new Error("Completion hook response failed schema validation.");
+					}
+					const payload = {
+						version: 1, event: "delegate.completed", runId: archive.data.runId, jobId: snap.id,
+						role: snap.kind, status: snap.status, outcome: snap.outcome,
+						stopReason: snap.stopReason ?? null, exitCode: snap.exitCode ?? null,
+						model: snap.model, requestedModel: archive.data.requestedModel, reasoning: agent.thinking,
+						cwd: input.identity.cwd, durationMs: archive.data.durationMs,
+						parentSessionId: archive.data.parentSessionId, toolCallId: archive.data.toolCallId,
+						paths: { ...archive.paths, response: snap.responseFile ?? null },
+						recordingError: snap.recordingError ?? archive.data.recordingError ?? null,
+						response: { text, schemaValidated, ...(schemaValidated ? { json } : {}) },
+					};
+					writeFileSync(join(archive.paths.dir, "completion-hook-input.json"), JSON.stringify(payload), { mode: 0o600, flag: "wx" });
+					result = await runCompletionHook(hook, payload, input.identity.cwd);
+				} catch (error) {
+					result = { status: "failed", durationMs: 0, error: error instanceof Error ? error.message : String(error) };
+				}
+				archive.recordCompletionHook(result);
+				return result;
+			} } : {}),
 			run: async (handle, childSignal, onEvent, onControl) => {
 				const result = await input.accounting.run(archive, handle.id, onUsage => {
 					childSignal.throwIfAborted();
@@ -70,6 +111,7 @@ export function enqueueDelegate(input: {
 						onEvent: event => { onUsage(event); onEvent(event); }, onControl,
 					});
 				}, childSignal);
+				responseText = result.text;
 				// Saving is harness-owned; never ask the child to write or reveal a path.
 				// Keep empty-output failure semantics and all execution/evidence fields intact.
 				if (!agent.saveToFile || !result.text) return result;
