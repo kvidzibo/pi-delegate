@@ -103,7 +103,7 @@ function validateInput(input, response) {
   if (['incomplete', 'failed', 'not_run'].includes(input.outcome)) requireThat(input.limits.length > 0 || (response?.verification_limits.length ?? 0) > 0, 'outcome requires an explanation in limits');
   if (response?.verdict === 'blocked') requireThat(input.outcome === 'incomplete', 'blocked review must be incomplete');
   if (input.outcome === 'clean') {
-    requireThat(response.verdict === 'ship' && response.findings.length === 0 && (response.verification_limits.length === 0 || input.limit_resolutions?.length === response.verification_limits.length) && input.limits.length === 0 && response.checks.every(check => check.result === 'passed') && input.validation.length > 0, 'clean contradicts findings, verdict, limits, checks or missing parent validation');
+    requireThat(response.verdict === 'ship' && response.findings.length === 0 && (response.verification_limits.length === 0 || input.limit_resolutions?.length === response.verification_limits.length) && input.limits.length === 0 && response.checks.length > 0 && response.checks.every(check => check.result === 'passed') && input.validation.length > 0, 'clean contradicts findings, verdict, limits, checks or missing parent validation');
   }
 }
 function validateHistory(history) {
@@ -279,7 +279,7 @@ function completionHook(payload) {
     validateResponse(response);
     input.outcome = response.verdict === 'blocked' ? 'incomplete'
       : response.verdict === 'fix_first' || response.findings.length ? 'changes_required' : 'clean';
-    if (context.validation.some(check => check.result !== 'passed') || response.checks.some(check => check.result !== 'passed') || response.verification_limits.length || !context.validation.length) input.outcome = 'incomplete';
+    if (context.validation.some(check => check.result !== 'passed') || !response.checks.length || response.checks.some(check => check.result !== 'passed') || response.verification_limits.length || !context.validation.length) input.outcome = 'incomplete';
     if (input.outcome === 'incomplete' && !response.verification_limits.length) input.limits.push('The reviewer blocked a conclusion or parent/reviewer validation is incomplete.');
   } else {
     input.limits.push(`Worker ${payload.status}; no successful schema-validated review report is available.`);

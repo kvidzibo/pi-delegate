@@ -111,6 +111,7 @@ test('automatic review hook records archived acceptance context and terminal rev
     archive();
     accept(completion({ ...report, verdict: 'fix_first' }), 'changes_required');
     accept(completion({ ...report, findings: [finding] }), 'changes_required');
+    accept(completion({ ...report, checks: [] }), 'incomplete');
     accept(completion({ ...report, verdict: 'blocked' }), 'incomplete');
     accept(completion({ ...report, verification_limits: ['Unable to exercise integration'] }), 'incomplete');
     for (const result of ['failed', 'inconclusive']) {
