@@ -52,7 +52,10 @@ export class JobCards {
 	}
 
 	watch(origin: string, invalidate: (() => void) | undefined): void {
-		if (this.live.has(origin) && invalidate) this.observers.set(origin, invalidate);
+		const hook = this.snapshots.get(origin)?.completionHook as { status?: string } | undefined;
+		if (invalidate && (this.live.has(origin) || (this.owned.has(origin) && hook?.status === "running"))) {
+			this.observers.set(origin, invalidate);
+		}
 	}
 
 	update(origin: string, details: CardDetails): void {
