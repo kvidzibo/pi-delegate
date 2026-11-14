@@ -79,12 +79,13 @@ process.stdin.on('end', () => {
 	assert.equal(Buffer.byteLength(failedHook.completionHook!.stderrTail!), 4096);
 	const timeout = await finishHook(spawn("custom", { ...agent, completionHook: { command: [process.execPath, script, log, "timeout"], timeoutMs: 250 } }).id);
 	assert.equal(timeout.status, "done"); assert.equal(timeout.completionHook?.status, "timed_out");
-	const missing = await runCompletionHook({ command: [join(root, "missing")], timeoutMs: 1000 }, {}, root);
+	// Use the normal hook budget for execution errors, not a startup/OS teardown latency assertion.
+	const missing = await runCompletionHook({ command: [join(root, "missing")], timeoutMs: 10000 }, {}, root);
 	assert.equal(missing.status, "failed"); assert.match(missing.error ?? missing.stderrTail ?? "", /ENOENT|no such file/i);
 	if (process.platform !== "win32") {
 		const shellText = join(root, "no-shebang"), marker = join(root, "implicit-shell");
 		writeFileSync(shellText, 'printf unexpected > "$1"\n', { mode: 0o700 });
-		const refused = await runCompletionHook({ command: [shellText, marker], timeoutMs: 1000 }, {}, root);
+		const refused = await runCompletionHook({ command: [shellText, marker], timeoutMs: 10000 }, {}, root);
 		assert.equal(refused.status, "failed");
 		assert.equal(existsSync(marker), false, "ENOEXEC must not fall back to a shell");
 	}
