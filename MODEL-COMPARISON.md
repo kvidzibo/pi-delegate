@@ -17,7 +17,7 @@ Each cell: **score / USD**. Artificial Analysis Intelligence Index v5.0.1; score
 | Xhigh | 45 / $0.401 | 56 / $0.648 | 23 / $0.104 | 62 / $2.521 | 61 / $6.445 | 35 / $7.772 | 35 / $0.248 | 50 / $4.092 | 57 / $6.047 | 62 / $14.829 | — |
 | Max | 51 / $0.961 | 57 / $1.014 | 28 / $0.152 | 62 / $3.998 | — | — | 36 / $0.411 | 55 / $10.021 | 59 / $10.036 | 65 / $26.539 | 46 / $3.681 |
 
-Costs are weighted averages per Artificial Analysis benchmark task, **not per chat request**. — = no result listed. AA labels Sonnet, Opus, and Fable results “Default Fallback” and Haiku results by effort alone; effort labels aren’t equivalent across providers. Kimi K3.1 Pro’s single listed result uses AA’s Max-effort configuration.
+Costs are weighted averages per Artificial Analysis benchmark task, **not per chat request**. Haiku’s reported costs exclude its 5× rate for longer-context inputs. — = no result listed. AA labels Sonnet, Opus, and Fable results “Default Fallback” and Haiku results by effort alone; effort labels aren’t equivalent across providers. Kimi K3.1 Pro’s single listed result uses AA’s Max-effort configuration.
 
 ## Updating this snapshot
 
