@@ -9,7 +9,7 @@ import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
-import { applyTgEvent, averageTg, createTgMeter } from "./tg.ts";
+import { applyTgEvent, averageTg, createTgMeter, isLocalModel, type TgMeter } from "./tg.ts";
 
 import type { CompletionHookResult } from "./completion-hook.ts";
 
@@ -105,7 +105,7 @@ export class ArchivedRun {
 	readonly paths: ReturnType<typeof runPaths>;
 	readonly meter: UsageMeter;
 	readonly data: RunRecord;
-	private readonly tg = createTgMeter();
+	private readonly tg: TgMeter;
 	private finished = false;
 	private errorNotified = false;
 	private onError: (message: string) => void;
@@ -121,6 +121,7 @@ export class ArchivedRun {
 		// Never reuse or replace an existing run directory.
 		mkdirSync(this.paths.dir, { mode: 0o700 });
 		this.meter = new UsageMeter(identity.requestedModel, identity.savings);
+		this.tg = createTgMeter(!isLocalModel(identity.requestedModel));
 		const { capabilities: requested, ...fields } = identity;
 		const capabilities = copyCapabilities(requested);
 		this.data = { ...fields, tools: [...identity.tools], ...(capabilities ? { capabilities } : {}),

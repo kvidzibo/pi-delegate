@@ -118,3 +118,19 @@ test("run average spans streamed messages, including tool-call deltas, and ignor
 	applyTgEvent(meter, { type: "message_end", message: { role: "assistant", usage: { output: 500 } } }, 12_050);
 	assert.equal(averageTgLabel(meter), "~tg 25.0/s", "(30 + 20) tokens over 2s; untimeable one-chunk messages are skipped");
 });
+
+test("hosted windows start at message_start so hidden reasoning and burst text are timed", () => {
+	const reply = (meter: ReturnType<typeof createTgMeter>) => {
+		applyTgEvent(meter, { type: "message_start", message: { role: "assistant" } }, 1_000);
+		applyTgEvent(meter, { type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "summary" } }, 10_000);
+		applyTgEvent(meter, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "burst" } }, 15_000);
+		applyTgEvent(meter, { type: "message_end", message: { role: "assistant", usage: { output: 700 } } }, 15_000);
+		return averageTgLabel(meter);
+	};
+	assert.equal(reply(createTgMeter(true)), "~tg 50.0/s", "700 tokens over the whole 14s reply");
+	assert.equal(reply(createTgMeter()), "~tg 140/s", "local keeps the first-delta window");
+	const failed = createTgMeter(true);
+	applyTgEvent(failed, { type: "message_start", message: { role: "assistant" } }, 0);
+	applyTgEvent(failed, { type: "message_end", message: { role: "assistant" } }, 5_000);
+	assert.equal(averageTgLabel(failed), undefined, "replies without tokens add no time");
+});

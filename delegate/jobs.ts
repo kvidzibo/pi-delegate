@@ -306,7 +306,7 @@ export class JobScheduler {
 			status: "queued",
 			controller: new AbortController(),
 			progress: createProgress(),
-			meter: createTgMeter(),
+			meter: createTgMeter(!input.local),
 			listeners: new Set(),
 			background: input.background === true,
 			terminalEmitted: false,

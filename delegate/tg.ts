@@ -49,8 +49,13 @@ export function formatTg(tps: number): string {
 	return `~tg ${Math.round(tps)}/s`;
 }
 
-/** Current assistant message plus completed streamed messages (tokens/ms from first to last generated delta). */
+/**
+ * Current assistant message plus completed messages. Local windows start at the first generated delta
+ * (pure generation). Hosted windows start at message_start: providers may hide reasoning and burst the
+ * visible text, so only the whole reply covers the reported output tokens.
+ */
 export type TgMeter = {
+	fromStart: boolean;
 	t0?: number;
 	last?: number;
 	estimated: number;
@@ -59,14 +64,15 @@ export type TgMeter = {
 	ms: number;
 };
 
-export function createTgMeter(): TgMeter {
-	return { estimated: 0, tokens: 0, ms: 0 };
+export function createTgMeter(fromStart = false): TgMeter {
+	return { fromStart, estimated: 0, tokens: 0, ms: 0 };
 }
 
 function messageWindow(meter: TgMeter): { tokens: number; ms: number } {
 	const ms = meter.t0 === undefined ? 0 : Math.max(0, (meter.last ?? meter.t0) - meter.t0);
-	// Too-short windows (e.g. a tool call delivered in one chunk) cannot be timed.
-	return ms < TG_MIN_MS ? { tokens: 0, ms: 0 } : { tokens: pickTokenCount(meter.usage, meter.estimated), ms };
+	const tokens = pickTokenCount(meter.usage, meter.estimated);
+	// Too-short windows (e.g. a tool call delivered in one chunk) and empty/failed replies cannot be timed.
+	return ms < TG_MIN_MS || tokens < 1 ? { tokens: 0, ms: 0 } : { tokens, ms };
 }
 
 function foldMessage(meter: TgMeter): void {
@@ -103,7 +109,8 @@ export function applyTgEvent(meter: TgMeter, event: unknown, now = Date.now()): 
 		if (rec.message && !assistantRole(rec.message)) return false;
 		const had = meter.t0 !== undefined || meter.estimated > 0 || meter.usage !== undefined;
 		foldMessage(meter);
-		return had;
+		if (meter.fromStart) meter.t0 = meter.last = now;
+		return had || meter.fromStart;
 	}
 	let changed = false;
 	const ev = rec.assistantMessageEvent;
