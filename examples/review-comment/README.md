@@ -79,8 +79,8 @@ text remains in Details. Findings begin `Unresolved`.
 | Outcome | Meaning |
 | --- | --- |
 | `clean` | `ship`, no findings or unresolved gaps, passing checks and parent validation |
-| `changes_required` | Findings or `fix_first` require changes |
-| `incomplete` | Blocked verdict, verification gaps or missing/failed/inconclusive checks |
+| `changes_required` | Findings or `fix_first` require changes, even with verification gaps |
+| `incomplete` | Blocked verdict, or no required changes but verification gaps or missing/failed/inconclusive checks |
 | `failed` | Worker failed/cancelled or no successful schema-validated response |
 | `not_run` | Manual record only; no review attempted |
 

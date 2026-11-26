@@ -279,7 +279,8 @@ function completionHook(payload) {
     validateResponse(response);
     input.outcome = response.verdict === 'blocked' ? 'incomplete'
       : response.verdict === 'fix_first' || response.findings.length ? 'changes_required' : 'clean';
-    if (context.validation.some(check => check.result !== 'passed') || !response.checks.length || response.checks.some(check => check.result !== 'passed') || response.verification_limits.length || !context.validation.length) input.outcome = 'incomplete';
+    // Gaps prevent approval but never hide required changes; a failed check may reproduce a finding.
+    if (input.outcome === 'clean' && (context.validation.some(check => check.result !== 'passed') || !response.checks.length || response.checks.some(check => check.result !== 'passed') || response.verification_limits.length || !context.validation.length)) input.outcome = 'incomplete';
     if (input.outcome === 'incomplete' && !response.verification_limits.length) input.limits.push('The reviewer blocked a conclusion or parent/reviewer validation is incomplete.');
   } else {
     input.limits.push(`Worker ${payload.status}; no successful schema-validated review report is available.`);

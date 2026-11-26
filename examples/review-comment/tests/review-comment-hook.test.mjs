@@ -117,6 +117,8 @@ test('automatic review hook records archived acceptance context and terminal rev
     for (const result of ['failed', 'inconclusive']) {
       accept(completion({ ...report, checks: [{ check: 'Reviewer tests', result, details: '' }] }), 'incomplete');
     }
+    // A failing reproduction is evidence for the finding, not a gap that hides it.
+    accept(completion({ ...changes, checks: [{ check: 'Reproduce finding', result: 'failed', details: 'Wrong result' }] }), 'changes_required');
     for (const result of ['failed', 'inconclusive']) {
       archive({ ...context, validation: [{ check: 'Parent check', result, details: 'Not passed' }] });
       accept(completion(), 'incomplete');
