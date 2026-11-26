@@ -94,6 +94,8 @@ export type EnqueueInput = {
 	task: string;
 	timeoutMs: number;
 	run: JobRun;
+	/** Rate meter already fed by the caller (the run archive), so cards and archives share one measurement. */
+	meter?: TgMeter;
 	/** Runs once after terminal accounting; independent of notifications and worker status. */
 	onComplete?: (snap: JobSnapshot) => Promise<CompletionHookResult>;
 	background?: boolean;
@@ -153,6 +155,7 @@ type InternalJob = {
 	controller: AbortController;
 	progress: ProgressState;
 	meter: TgMeter;
+	ownsMeter: boolean;
 	result?: ChildResult;
 	errorMessage?: string;
 	exitCode?: number;
@@ -306,7 +309,8 @@ export class JobScheduler {
 			status: "queued",
 			controller: new AbortController(),
 			progress: createProgress(),
-			meter: createTgMeter(!input.local),
+			meter: input.meter ?? createTgMeter(!input.local),
+			ownsMeter: !input.meter,
 			listeners: new Set(),
 			background: input.background === true,
 			terminalEmitted: false,
@@ -807,7 +811,7 @@ export class JobScheduler {
 					}
 					const item = parseChildProgress(event);
 					if (item) applyProgress(job.progress, item);
-					applyTgEvent(job.meter, event);
+					if (job.ownsMeter) applyTgEvent(job.meter, event);
 					this.notify(job);
 				},
 				(ctl) => {

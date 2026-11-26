@@ -68,6 +68,8 @@ function checkHeaderMetadata() {
 		assert.ok(header.endsWith(` · high · ${expected}`));
 		const body = renderChildResult(input).render(200).join("\n");
 		assert.doesNotMatch(header + body, /effort|Duration:|elapsed|queued for/);
+		const legacy = renderChildCall({ theme, read: () => ({ ...state, details: { ...state.details, tg: "tg 40.0/s" } }) }).render(200).join("\n");
+		assert.doesNotMatch(legacy, /tg 40\.0/, "pre-0.40 last-reply rates are not shown as run averages");
 		assert.ok(!body.includes(expected), "timing appears only in the header");
 	}
 }

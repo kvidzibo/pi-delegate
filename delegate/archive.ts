@@ -105,7 +105,8 @@ export class ArchivedRun {
 	readonly paths: ReturnType<typeof runPaths>;
 	readonly meter: UsageMeter;
 	readonly data: RunRecord;
-	private readonly tg: TgMeter;
+	/** Authoritative rate meter, shared with the job card; fed before the scheduler sees each event. */
+	readonly tg: TgMeter;
 	private finished = false;
 	private errorNotified = false;
 	private onError: (message: string) => void;

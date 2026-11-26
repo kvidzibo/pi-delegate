@@ -31,7 +31,8 @@ function headerMetadata(d: CardDetails): string {
 	const pending = d.status === "running" || d.status === "queued";
 	const duration = formatDuration(pending ? (d.historical ? undefined : d.elapsedMs) : d.durationMs);
 	// Running cards show the live rate in their status line; finished headers keep the run average.
-	const tg = pending ? "" : str(d, "tg");
+	// Pre-0.40 cards stored an unlabelled last-reply rate (`tg n/s`), not a run average; omit it.
+	const tg = !pending && str(d, "tg").startsWith("~tg ") ? str(d, "tg") : "";
 	return (reasoning ? ` · ${displayText(reasoning)}` : "")
 		+ (speed ? ` · ${displayText(speed)}` : "")
 		+ (duration === undefined ? "" : ` · ${d.status === "queued" ? "queued " : ""}${duration}`)

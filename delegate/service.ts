@@ -69,7 +69,7 @@ export function enqueueDelegate(input: {
 		}
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
-			archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
+			archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities, meter: archive.tg,
 			kind: input.identity.kind, model: input.identity.requestedModel, reasoning: agent.thinking, ...(speed ? { speed } : {}),
 			local, task: input.task, timeoutMs: input.timeoutMs,
 			...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
