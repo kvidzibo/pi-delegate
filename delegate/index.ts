@@ -23,7 +23,7 @@ import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
 import { showJobs } from "./jobs-view.ts";
-import { SUMMARY_ENTRY_TYPE, copySummary, summaryLines } from "./summary.ts";
+import { SUMMARY_ENTRY_TYPE, copySummary, summaryLines, summaryWarning } from "./summary.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
 import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, renderSummary, type RowState } from "./view.ts";
@@ -391,7 +391,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate summary", "warning"); return; }
 			const jobIds = new Map(scheduler.list().flatMap(snap => snap.archive ? [[snap.archive.runId, snap.id] as const] : []));
 			const summary = await accounting.summary(ctx.sessionManager.getSessionId(), jobIds);
-			if (!summary.rows.length) { ctx.ui.notify("No delegate runs in this session yet.", "info"); return; }
+			if (!summary.rows.length) {
+				ctx.ui.notify(summary.warnings ? `No readable delegate runs in this session: ${summaryWarning(summary.warnings)}.` : "No delegate runs in this session yet.", summary.warnings ? "warning" : "info");
+				return;
+			}
 			// A custom entry renders in the TUI transcript but never joins model context.
 			if (ctx.mode === "tui" && typeof pi.registerEntryRenderer === "function") pi.appendEntry(SUMMARY_ENTRY_TYPE, summary);
 			else ctx.ui.notify(summaryLines(summary, plainBoardTheme).join("\n"), "info");

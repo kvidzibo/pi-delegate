@@ -1,5 +1,5 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Markdown, Text, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
@@ -255,7 +255,7 @@ export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDeta
 /** Table rows are clipped, not wrapped, so columns stay aligned; the fill survives clipping resets. */
 export function renderSummary(summary: SessionSummary, theme: CardTheme): Component {
 	return {
-		render: width => paintCard(theme, ["", ...summaryLines(summary, theme).map(line => ` ${truncateToWidth(line, Math.max(1, width - 2), "…")}`), ""], width, "customMessageBg"),
+		render: width => paintCard(theme, ["", ...summaryLines(summary, theme, visibleWidth).map(line => ` ${truncateToWidth(line, Math.max(1, width - 2), "…")}`), ""], width, "customMessageBg"),
 		invalidate() {},
 	};
 }

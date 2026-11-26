@@ -99,14 +99,17 @@ export class Accounting {
 		const loaded = await loadRuns(this.root, { rebuild, activeIds: new Set(this.active.keys()) });
 		const runs = new Map(loaded.runs.map((run) => [run.runId, run]));
 		for (const [id, archive] of this.active) runs.set(id, archive.data);
-		// Memory retains recording-error outcomes even when disk writes failed.
-		for (const [id, run] of this.records) if (run.recordingError) runs.set(id, run);
+		// Memory retains recording-error outcomes even when disk writes failed,
+		// and newer revisions of runs that finished while the archive was being read.
+		for (const [id, run] of this.records) if (run.recordingError || run.revision > (runs.get(id)?.revision ?? -1)) runs.set(id, run);
 		return { runs, warnings: loaded.warnings };
 	}
 
 	async summary(sessionId: string, jobIds?: ReadonlyMap<string, string>): Promise<SessionSummary> {
-		const { runs } = await this.currentRuns();
-		return summarizeSession([...runs.values()], sessionId, { active: new Set(this.active.keys()), jobIds });
+		const { runs, warnings } = await this.currentRuns();
+		// Unattributable archive errors may hide this session's runs too.
+		const unreadable = warnings.filter(w => !w.parentSessionId || w.parentSessionId === sessionId).length;
+		return summarizeSession([...runs.values()], sessionId, { active: new Set(this.active.keys()), jobIds, warnings: unreadable });
 	}
 
 	async report(scope: StatsScope, sessionId: string, rebuild = false): Promise<string> {
