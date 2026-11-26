@@ -58,7 +58,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `fast` | `priority` | GPT-6.2 Astra/Sol, GPT-6.1 Sol/Terra, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna |
 | `ultrafast` | `ultrafast` | GPT-6.2 Astra/Sol, GPT-6.1 Sol, GPT-6 Astra; eligible plans only, otherwise OpenAI may reject the request |
 
-A private child extension adds the tier to the child's own model requests, even with extension discovery disabled. Job cards show the requested speed after reasoning. The backend reports `default` even when Fast applies, so the tier is not confirmed, and delegate cost reports count these jobs at standard rates.
+A private child extension adds the tier to the child's own model requests, even with extension discovery disabled. Job cards and run metadata record the speed requested at acceptance, shown after reasoning; the child re-checks the model and ChatGPT sign-in before each request. The backend reports `default` even when Fast applies, so the tier is not confirmed, and delegate cost reports count these jobs at standard rates.
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
 
