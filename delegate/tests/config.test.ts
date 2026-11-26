@@ -108,6 +108,10 @@ test("user overlay overrides one model", () => {
 	const blank = mergeDelegateConfig(output, { agents: { recon: { responseTemplate: "" } } }, "blank.json");
 	assert.equal(blank.agents.recon.responseTemplate, "");
 	assert.equal(blank.agents.recon.saveToFile, true);
+	assert.equal("speed" in output.agents.recon, false);
+	const fast = mergeDelegateConfig(output, { agents: { recon: { speed: "fast" } } }, "fast.json");
+	assert.equal(mergeDelegateConfig(fast, { agents: { recon: { model: "hosted/other" } } }, "speed-model.json").agents.recon.speed, "fast");
+	assert.equal(mergeDelegateConfig(fast, { agents: { recon: { speed: "standard" } } }, "standard.json").agents.recon.speed, "standard");
 	const off = mergeDelegateConfig(output, { agents: { recon: { saveToFile: false } } }, "off.json");
 	assert.equal(off.agents.recon.saveToFile, false);
 	assert.equal(off.agents.recon.responseTemplate, responseTemplate);
@@ -237,6 +241,7 @@ test("broken shipped invariants refused", () => {
 	for (const [field, values, expected] of [
 		["responseTemplate", [null, true, 42, [], {}], /responseTemplate.*string/],
 		["saveToFile", [null, "true", 1, [], {}], /saveToFile.*boolean/],
+		["speed", [null, "priority", "Fast", true, 1, []], /speed \(one of standard\|fast\|ultrafast\)/],
 		["responseSchema", ["{}", 1, [], { type: "strnig" }, { unknownKeyword: true }, { $async: true }, { $ref: "https://example.com/schema" }], /responseSchema/],
 		["responseRepairAttempts", [null, -1, 3, 1.5, "2"], /responseRepairAttempts/],
 	] as const) {

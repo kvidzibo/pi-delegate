@@ -106,3 +106,24 @@ test("role response policy is snapshotted, formats instructions and saves privat
 		if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
 	}
 });
+
+test("accepted speed applies only to supported models and is recorded for cards and history", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "delegate-speed-test-"));
+	const accounting = new Accounting(root);
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 4 });
+	t.after(async () => { await scheduler.shutdown(); accounting.close(); rmSync(root, { recursive: true, force: true }); });
+	for (const [model, expected] of [["openai-codex/gpt-6.1-terra", "fast"], ["openai/gpt-6.1-terra", undefined], ["hosted/mock", undefined]] as const) {
+		const agent: AgentConfig = { model, prompt: "Read-only.", thinking: "off", tools: [], extensions: false, speed: "fast" };
+		let launched: unknown, recorded: unknown;
+		const job = enqueueDelegate({ scheduler, accounting, agent, onAccepted: archive => { recorded = archive.data.speed; },
+			identity: { kind: "recon", requestedModel: model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: "test" },
+			task: "Exact task", timeoutMs: 1000, background: false, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+			childRunner: async input => { launched = input.speed; return { text: "done", exitCode: 0, stderrTail: "" }; },
+		});
+		agent.speed = "standard";
+		const done = await scheduler.wait(job.id);
+		assert.equal(launched, expected);
+		assert.equal(done.speed, expected);
+		assert.equal(recorded, expected);
+	}
+});

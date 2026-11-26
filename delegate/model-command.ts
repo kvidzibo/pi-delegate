@@ -3,6 +3,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
+import { supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
 import { modelId, pickDelegateModel, scopedDelegateModels, type AvailableModel } from "./model-picker.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
@@ -47,7 +48,9 @@ export class ModelCommand {
 				const options = kinds.map(kind => {
 					const id = this.config.agents[kind].model;
 					const mark = !available.has(id) ? " (unavailable)" : scoped && !inScope.has(id) ? " (not in scope)" : "";
-					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}${roles && this.config.agents[kind].enabled === false ? " · disabled" : ""}`;
+					const speed = this.config.agents[kind].speed;
+					const speedLabel = speed && speed !== "standard" ? ` · speed: ${speed}${supportedSpeeds(id).includes(speed) ? "" : " (inactive)"}` : "";
+					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}${speedLabel}${roles && this.config.agents[kind].enabled === false ? " · disabled" : ""}`;
 				});
 				if (roles) options.push("Add named role…");
 				const choice = await ctx.ui.select(roles ? ["Delegate roles — saved globally; accepted jobs are unchanged", notice].filter(Boolean).join("\n") : [
@@ -178,10 +181,14 @@ export class ModelCommand {
 		while (!signal.aborted) {
 			const model = ctx.modelRegistry.getAll().find(item => modelId(item) === draft.model);
 			const levels = model ? getSupportedThinkingLevels(model) : [];
+			const speed = draft.speed ?? "standard";
+			const speeds = supportedSpeeds(draft.model);
+			const speedNote = !speeds.includes(speed) ? " Inactive on this model." : speeds.length === 1 ? " Not supported by this model." : "";
 			const action = await roleMenu(ctx, `Delegate role · ${name}${adding ? " (new)" : ""}`, [
 				{ id: "enabled", label: "Enabled", currentValue: draft.enabled === false ? "no" : "yes", values: ["yes", "no"] },
 				{ id: "model", label: "Model", currentValue: draft.model },
 				{ id: "thinking", label: "Reasoning", currentValue: draft.thinking, ...(levels.length > 0 && levels.length < 5 ? { values: levels } : {}) },
+				{ id: "speed", label: "Speed", description: `OpenAI Codex service tier with ChatGPT sign-in. Fast and Ultrafast use more plan allowance; Ultrafast needs an eligible plan.${speedNote}`, currentValue: speed, values: speeds.includes(speed) ? speeds : [...speeds, speed] },
 				{ id: "tools", label: "Tools", currentValue: draft.tools.join(", ") || "none" },
 				{ id: "extensions", label: "Extensions", description: "Allow configured extension/MCP discovery. Not a sandbox.", currentValue: draft.extensions ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "prompt", label: "Prompt (multiline)", currentValue: `${draft.prompt.split("\n").length} lines · ≈${Math.ceil(draft.prompt.length / 4)} tokens` },
@@ -193,6 +200,7 @@ export class ModelCommand {
 				{ id: "save", label: "Save role", currentValue: "" },
 			], signal, (id, value) => {
 				if (id === "thinking") draft.thinking = value as AgentConfig["thinking"];
+				else if (id === "speed") draft.speed = value as Speed;
 				else if (id === "enabled") draft.enabled = value === "yes";
 				else if (id === "extensions") draft.extensions = value === "yes";
 				else if (id === "saveToFile") draft.saveToFile = value === "yes";

@@ -9,6 +9,7 @@ import { describeCapabilities } from "./capabilities.ts";
 import type { AgentConfig, DelegateConfig } from "./config.ts";
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
+import { activeSpeed } from "../child-runtime/speed.ts";
 import { isLocalModel } from "./tg.ts";
 import { parseCompletionHook } from "./config.ts";
 import { runCompletionHook, type CompletionHookResult } from "./completion-hook.ts";
@@ -46,7 +47,8 @@ export function enqueueDelegate(input: {
 	const tools = agent.tools;
 	const capabilities = describeCapabilities(tools);
 	const local = isLocalModel(input.identity.requestedModel);
-	const archive = input.accounting.create({ ...input.identity, tools, capabilities }, input.task, agentPrompt(agent));
+	const speed = activeSpeed(input.identity.requestedModel, agent.speed);
+	const archive = input.accounting.create({ ...input.identity, tools, capabilities, ...(speed ? { speed } : {}) }, input.task, agentPrompt(agent));
 	let responseText: string | undefined;
 	try {
 		if (hook) writeFileSync(join(archive.paths.dir, "completion-hook-config.json"), JSON.stringify(hook), { mode: 0o600, flag: "wx" });
@@ -58,7 +60,7 @@ export function enqueueDelegate(input: {
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
 			archive: { runId: archive.data.runId, sessionFile: archive.paths.session }, capabilities,
-			kind: input.identity.kind, model: input.identity.requestedModel, reasoning: agent.thinking,
+			kind: input.identity.kind, model: input.identity.requestedModel, reasoning: agent.thinking, ...(speed ? { speed } : {}),
 			local, task: input.task, timeoutMs: input.timeoutMs,
 			...(local ? { resourceGroup: { key: "local-delegate", capacity: 1 } } : {}),
 			background: input.background, cancelOnAbort: input.background ? undefined : input.signal,
@@ -103,7 +105,7 @@ export function enqueueDelegate(input: {
 					childSignal.throwIfAborted();
 					return (input.childRunner ?? runChild)({
 						task: input.task, cwd: input.identity.cwd, model: input.identity.requestedModel,
-						thinking: agent.thinking, tools: [...tools], extensions: agent.extensions,
+						thinking: agent.thinking, tools: [...tools], extensions: agent.extensions, ...(speed ? { speed } : {}),
 						...(local ? { resourceLease: handle.resourceLease, leaseStartupMs: 15000 } : {}),
 						hardTimeoutMs: config.hardTimeoutMs, maxOutputBytes: config.maxOutputBytes,
 						promptSourcePath: archive.paths.prompt, sessionFile: archive.paths.session, responseFormatPath,

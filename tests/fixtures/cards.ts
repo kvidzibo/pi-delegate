@@ -74,10 +74,11 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	const savedAnswer = `Response saved to: ${responseFile}`;
 	const saved = row(first.tool, "saved-response", { kind: "recon", task: savedTask });
 	const savedResult = { details: { ok: true, status: "done", kind: "recon", jobId: "d0000", task: savedTask,
-		model: "openai-codex/gpt-6.1-terra", reasoning: "low", durationMs: 22000, responseFile, answer: savedAnswer },
+		model: "openai-codex/gpt-6.1-terra", reasoning: "low", speed: "fast", durationMs: 22000, responseFile, answer: savedAnswer },
 		content: [{ type: "text", text: savedAnswer }] };
 	saved.update(savedResult, false);
 	const compact = saved.render(80);
+	assert.match(compact.split("\n")[0], /Terra · low · fast · 22s/, "requested speed shows in the card header");
 	assert.equal((compact.match(/Finished/g) ?? []).length, 1);
 	assert.match(compact, /Finished · needs validation/);
 	assert.doesNotMatch(compact, /Worker finished|task unverified|Response saved to:|pi-delegate-result-example/);

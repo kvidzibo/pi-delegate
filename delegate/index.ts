@@ -36,6 +36,7 @@ import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
 import { completionHookContent } from "./completion-hook.ts";
 import { FileCapacityBroker } from "./capacity.ts";
+import { activeSpeed, type Speed } from "../child-runtime/speed.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -131,11 +132,17 @@ function formatOutput(input: {
 	};
 }
 
+function speedDetail(model: string, speed: Speed | undefined): { speed?: string } {
+	const active = activeSpeed(model, speed);
+	return active ? { speed: active } : {};
+}
+
 function detailsFromSnap(snap: JobSnapshot, extra: Record<string, unknown> = {}): Record<string, unknown> {
 	const details: Record<string, unknown> = {
 		kind: snap.kind,
 		model: snap.model,
 		...(snap.reasoning === undefined ? {} : { reasoning: snap.reasoning }),
+		...(snap.speed === undefined ? {} : { speed: snap.speed }),
 		jobId: snap.id,
 		status: snap.status,
 		activity: [...snap.activity],
@@ -536,7 +543,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const local = isLocalModel(resolved.model);
 					update({
 						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }, ...capabilityContent(capabilities)],
-						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
+						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, resolved.agent.speed), task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
 					});
 
 					let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
@@ -562,7 +569,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						timeoutMs: parsed.timeoutMs, background: parsed.background, signal, config, childRunner,
 						onAccepted: archive => {
 							origins.set(archive.data.runId, toolCallId);
-							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
+							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, resolved.agent.speed), task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
 						},
 					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");

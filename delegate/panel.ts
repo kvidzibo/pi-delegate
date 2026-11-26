@@ -18,7 +18,7 @@ export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocal
 			const since = job.status === "queued" ? job.queuedAt : job.startedAt;
 			return {
 				elapsedMs: now !== undefined && typeof since === "number" && Number.isFinite(since) ? Math.floor(Math.max(0, now - since) / 1000) * 1000 : undefined,
-				jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, task: job.task, status: job.status,
+				jobId: job.id, kind: job.kind, model: job.model, reasoning: job.reasoning, speed: job.speed, task: job.task, status: job.status,
 				reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
 				phase: job.thinking ? "thinking" : undefined,
 				current: tool(job.current), activity: job.activity.map(tool).filter((item) => item !== undefined).slice(-3),

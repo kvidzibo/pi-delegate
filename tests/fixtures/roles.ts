@@ -25,17 +25,17 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const notices: string[] = [];
 	const actions = [
 		[0], // Explicit new-role model selection.
-		[11], // Save safe defaults.
-		[0, 11], // Reopen and edit the new role without reloading.
-		[0, 4, 5], // Disable recon, enable extensions, edit multiline prompt.
-		[6], // Edit the response template independently of the prompt.
-		[7, 3], // Enable saving to file, then open tools.
+		[12], // Save safe defaults.
+		[0, 12], // Reopen and edit the new role without reloading.
+		[0, 3, 5, 6], // Disable recon, cycle speed to fast, enable extensions, edit multiline prompt.
+		[7], // Edit the response template independently of the prompt.
+		[8, 4], // Enable saving to file, then open tools.
 		[0], // All tools.
 		[1], // No tools.
 		[2, -1], // Enable read, then Back.
 		[1], // Model picker.
 		[0], // Select available model.
-		[2, 11], // Cycle reasoning to off, save.
+		[2, 12], // Cycle reasoning to off, save.
 	];
 	const testCtx: any = { ...ctx, hasUI: true, mode: "tui", scopedModels: [],
 		modelRegistry: { refresh: async () => {}, getError: () => undefined, getAvailable: () => [model], getAll: () => [model] },
@@ -118,6 +118,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(config.agents.recon.prompt, "New recon prompt.\nSecond line.");
 	assert.equal(config.agents.recon.responseTemplate, "  Summary:\n{{literal}}\n");
 	assert.equal(config.agents.recon.saveToFile, true);
+	assert.equal(config.agents.recon.speed, "fast", "Speed is kept after switching to a model without Codex tiers");
 	let saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	assert.deepEqual(saved.unrelated, overlay.unrelated);
 	assert.equal(saved.agents.recon.offline, true);
@@ -125,11 +126,12 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(saved.agents.recon.note, "keep");
 	assert.equal(saved.agents.recon.responseTemplate, config.agents.recon.responseTemplate);
 	assert.equal(saved.agents.recon.saveToFile, true);
+	assert.equal(saved.agents.recon.speed, "fast");
 	assert.deepEqual(loadDelegateConfig(paths).agents.recon, config.agents.recon);
 	// Cancelling the editor preserves its prefill; clearing and toggling remain draft-only on Back.
 	const savedRole = structuredClone(config.agents.recon);
 	const discardStart = actions.length;
-	actions.push([6], [6], [7, -1]);
+	actions.push([7], [7], [8, -1]);
 	picks = 2;
 	await command.command("", testCtx, true);
 	assert.equal(edits, 5);
@@ -153,7 +155,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 		assert.equal(editorSteps.length, 0);
 		assert.equal(screen, actions.length);
 	};
-	await editSchema([[8], [9, 11]], [["", schemaText]]);
+	await editSchema([[9], [10, 12]], [["", schemaText]]);
 	assert.deepEqual(config.agents.recon.responseSchema, schema);
 	assert.equal(config.agents.recon.responseRepairAttempts, 0);
 	assert.equal(config.agents.recon.responseTemplate, savedRole.responseTemplate);
@@ -166,16 +168,16 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const invalidSchema = ' {\n "type": "not-a-type"\n} ';
 	const nonDraft07 = '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}';
 	const noticeStart = notices.length;
-	await editSchema([[8], [11]], [
+	await editSchema([[9], [12]], [
 		[prefill, invalidJson], [invalidJson, invalidSchema], [invalidSchema, nonDraft07], [nonDraft07, undefined],
 	]);
 	assert.equal(notices.length, noticeStart + 3);
 	assert.ok(notices.slice(noticeStart).every(text => /Invalid response schema/.test(text)));
 	assert.deepEqual(config.agents.recon.responseSchema, schema, "Esc after errors preserves the original draft schema");
 	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), schemaSaved);
-	await editSchema([[8], [11]], [[prefill, undefined]]);
+	await editSchema([[9], [12]], [[prefill, undefined]]);
 	assert.deepEqual(config.agents.recon.responseSchema, schema, "Cancelled editing preserves the schema");
-	await editSchema([[8], [9, 9, 11]], [[prefill, "  \n"]]);
+	await editSchema([[9], [10, 10, 12]], [[prefill, "  \n"]]);
 	assert.equal(config.agents.recon.responseSchema, null, "Empty editor explicitly disables schema inheritance");
 	assert.equal(config.agents.recon.responseRepairAttempts, 2);
 	assert.equal(config.agents.recon.responseTemplate, savedRole.responseTemplate);
@@ -186,24 +188,24 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	// Completion hooks use the same draft/save/cancel flow and preserve invalid text.
 	const hookText = ' {"command":["/nonexistent hook","","literal; | arg"]} ';
 	const hook = { command: ["/nonexistent hook", "", "literal; | arg"], timeoutMs: 10000 };
-	await editSchema([[10], [11]], [["", hookText]]);
+	await editSchema([[11], [12]], [["", hookText]]);
 	assert.deepEqual(config.agents.recon.completionHook, hook);
 	assert.deepEqual(loadDelegateConfig(paths).agents.recon.completionHook, hook);
 	const hookSaved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	const hookPrefill = JSON.stringify(hook, null, 2);
 	const badHook = ' {"command":["relative"],"shell":true} ';
 	const hookNoticeStart = notices.length;
-	await editSchema([[10], [11]], [[hookPrefill, invalidJson], [invalidJson, badHook], [badHook, undefined]]);
+	await editSchema([[11], [12]], [[hookPrefill, invalidJson], [invalidJson, badHook], [badHook, undefined]]);
 	assert.equal(notices.length, hookNoticeStart + 2);
 	assert.ok(notices.slice(hookNoticeStart).every(text => /Invalid completion hook/.test(text)));
 	assert.deepEqual(config.agents.recon.completionHook, hook);
 	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), hookSaved);
-	await editSchema([[10], [-1]], [[hookPrefill, ""]]);
+	await editSchema([[11], [-1]], [[hookPrefill, ""]]);
 	assert.deepEqual(config.agents.recon.completionHook, hook, "Back discards clearing the hook");
 	assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")), hookSaved);
-	await editSchema([[10], [11]], [[hookPrefill, undefined]]);
+	await editSchema([[11], [12]], [[hookPrefill, undefined]]);
 	assert.deepEqual(config.agents.recon.completionHook, hook, "Editor cancellation preserves the hook");
-	await editSchema([[10], [11]], [[hookPrefill, "  \n"]]);
+	await editSchema([[11], [12]], [[hookPrefill, "  \n"]]);
 	assert.equal(config.agents.recon.completionHook, null);
 	assert.equal(loadDelegateConfig(paths).agents.recon.completionHook, null);
 	saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
@@ -212,6 +214,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(launched.model, original.model);
 	assert.equal(launched.thinking, original.thinking);
 	assert.equal(launched.extensions, original.extensions);
+	assert.equal(launched.speed, undefined, "Accepted jobs keep their original standard speed");
 	assert.deepEqual(launched.tools, original.tools);
 	// Unrelated external edits conflict too; no overlay fields may be silently lost.
 	writeFileSync(paths.userPath, JSON.stringify({ ...saved, changedExternally: true }));
