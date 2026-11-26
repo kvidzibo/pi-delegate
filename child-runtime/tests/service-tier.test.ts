@@ -39,6 +39,7 @@ test("supported speeds follow the Codex catalog and Ultrafast documentation", ()
 	assert.deepEqual(supportedSpeeds("openai-codex/gpt-6.2-astra"), ["standard", "fast", "ultrafast"]);
 	assert.deepEqual(supportedSpeeds("openai-codex/gpt-6-luna"), ["standard", "fast"]);
 	assert.deepEqual(supportedSpeeds("openai-codex/gpt-7-future"), ["standard", "fast"]);
+	assert.deepEqual(supportedSpeeds("openai-codex/"), ["standard"]);
 	assert.deepEqual(supportedSpeeds("openai/gpt-6-luna"), ["standard"]);
 	assert.deepEqual(supportedSpeeds("local-qwen38/qwen38-q4km"), ["standard"]);
 });
