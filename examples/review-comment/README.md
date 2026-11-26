@@ -132,6 +132,9 @@ recover with `render`, or replay the archived input:
 node ./review-comment.mjs hook < /absolute/path/to/completion-hook-input.json
 ```
 
+After an upgrade that changes outcome rules, replaying a run already in history is
+rejected as conflicting reuse; history stays intact. Use `render` for those runs.
+
 Do not hand-edit history, run parallel writers in one worktree, or remove a
 `history.json.lock` directory unless its writer is confirmed stopped. Inspect the
 recovered run and draft again before any parent publication.
