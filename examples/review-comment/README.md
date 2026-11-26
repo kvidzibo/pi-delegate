@@ -79,8 +79,8 @@ text remains in Details. Findings begin `Unresolved`.
 | Outcome | Meaning |
 | --- | --- |
 | `clean` | `ship`, no findings or unresolved gaps, passing checks and parent validation |
-| `changes_required` | Findings or `fix_first` require changes |
-| `incomplete` | Blocked verdict, verification gaps or missing/failed/inconclusive checks |
+| `changes_required` | Findings or `fix_first` require changes, even with verification gaps |
+| `incomplete` | Blocked verdict, or no required changes but verification gaps or missing/failed/inconclusive checks |
 | `failed` | Worker failed/cancelled or no successful schema-validated response |
 | `not_run` | Manual record only; no review attempted |
 
@@ -131,6 +131,10 @@ recover with `render`, or replay the archived input:
 ```bash
 node ./review-comment.mjs hook < /absolute/path/to/completion-hook-input.json
 ```
+
+After an upgrade that changes outcome rules, replaying a recorded run whose outcome
+or limits would change is rejected as conflicting reuse; history stays intact. Use
+`render` for those runs.
 
 Do not hand-edit history, run parallel writers in one worktree, or remove a
 `history.json.lock` directory unless its writer is confirmed stopped. Inspect the
