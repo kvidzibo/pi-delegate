@@ -2,6 +2,7 @@ import { isFailedChildResult } from "../child-runtime/policy.ts";
 import type { ChildResult } from "../child-runtime/spawn.ts";
 import { ArchivedRun, loadRuns, type RunIdentity, type RunRecord, type Outcome, type ArchiveWarning } from "./archive.ts";
 import { infobar, inScope, statsReport, type StatsScope } from "./stats.ts";
+import { summarizeSession, type SessionSummary } from "./summary.ts";
 
 export type AccountingUI = {
 	setStatus: (key: string, text: string | undefined) => void;
@@ -94,12 +95,27 @@ export class Accounting {
 		return run?.finishedAt ? run.durationMs : undefined;
 	}
 
-	async report(scope: StatsScope, sessionId: string, rebuild = false): Promise<string> {
+	private async currentRuns(rebuild = false): Promise<{ runs: Map<string, RunRecord>; warnings: ArchiveWarning[] }> {
 		const loaded = await loadRuns(this.root, { rebuild, activeIds: new Set(this.active.keys()) });
 		const runs = new Map(loaded.runs.map((run) => [run.runId, run]));
 		for (const [id, archive] of this.active) runs.set(id, archive.data);
-		// Memory retains recording-error outcomes even when disk writes failed.
-		for (const [id, run] of this.records) if (run.recordingError) runs.set(id, run);
+		// Memory retains recording-error outcomes even when disk writes failed,
+		// and newer revisions of runs that finished while the archive was being read.
+		for (const [id, run] of this.records) if (run.recordingError || run.revision > (runs.get(id)?.revision ?? -1)) runs.set(id, run);
+		return { runs, warnings: loaded.warnings };
+	}
+
+	/** `jobIds` is read after the scan, with the active set, so jobs queued meanwhile keep their scheduler ID. */
+	async summary(sessionId: string, jobIds?: () => ReadonlyMap<string, string>): Promise<SessionSummary> {
+		const { runs, warnings } = await this.currentRuns();
+		// Unattributable archive errors may hide this session's runs too.
+		const unreadable = warnings.filter(w => !w.parentSessionId || w.parentSessionId === sessionId).length;
+		return summarizeSession([...runs.values()], sessionId, { active: new Set(this.active.keys()), jobIds: jobIds?.(), warnings: unreadable });
+	}
+
+	async report(scope: StatsScope, sessionId: string, rebuild = false): Promise<string> {
+		const loaded = await this.currentRuns(rebuild);
+		const runs = loaded.runs;
 		const warnings = [...loaded.warnings, ...this.warnings];
 		const scoped = warnings.filter((w) => scope === "all" || (scope === "session" ? w.parentSessionId === sessionId : w.createdAt && inScope({ createdAt: w.createdAt, parentSessionId: w.parentSessionId ?? "" }, "today", sessionId))).map((w) => w.message);
 		if (scope !== "all" && warnings.some((w) => scope === "session" ? !w.parentSessionId : !w.createdAt)) {

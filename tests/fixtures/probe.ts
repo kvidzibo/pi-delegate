@@ -392,8 +392,9 @@ export default function probe(pi: ExtensionAPI) {
 		const message: any = { role: "assistant", api: "openai-completions", provider: "local-qwen38", model: "qwen38-q4km", content: [{ type: "text", text: "answer" }], timestamp: 1, stopReason: "stop", usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 5, totalTokens: 155, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
 		child.appendMessage(message); archive.observe({ type: "message_end", message }); archive.observe({ type: "agent_settled" });
 		await archive.finish({ status: "done", stopReason: "stop", exitCode: 0 });
-		const handlers = new Map<string, Function>(); const commands = new Map<string, any>();
-		delegate({ ...pi, registerTool: () => {}, registerMessageRenderer: () => {}, registerCommand: (name: string, command: any) => commands.set(name, command), on: (event: string, fn: Function) => handlers.set(event, fn) } as unknown as ExtensionAPI);
+		const handlers = new Map<string, Function>(); const commands = new Map<string, any>(); const entryRenderers = new Map<string, Function>();
+		delegate({ ...pi, registerTool: () => {}, registerMessageRenderer: () => {}, registerEntryRenderer: (type: string, fn: Function) => entryRenderers.set(type, fn),
+			registerCommand: (name: string, command: any) => commands.set(name, command), on: (event: string, fn: Function) => handlers.set(event, fn) } as unknown as ExtensionAPI);
 		const statuses: Array<string | undefined> = []; const notices: string[] = []; const reports: string[] = [];
 		const testCtx: any = { ...ctx, hasUI: true, ui: { ...ctx.ui,
 			setStatus: (key: string, text: string | undefined) => { statuses.push(text); ctx.ui.setStatus(key, text); },
@@ -428,6 +429,18 @@ export default function probe(pi: ExtensionAPI) {
 		} });
 		assert.equal(notices.length, 0);
 		assert.equal(ctx.sessionManager.getEntries().length, entriesBefore, "stats must not inject model context");
+		const contextBefore = JSON.stringify(ctx.sessionManager.buildSessionContext().messages);
+		await commands.get("pi-delegate").handler("summary", { ...testCtx, mode: "tui" });
+		const entry: any = ctx.sessionManager.getEntries().at(-1);
+		assert.equal(entry.customType, "delegate-summary");
+		assert.deepEqual(entry.data.rows, [{ jobId: "d0001", kind: "recon", model: "local-qwen38/qwen38-q4km", reasoning: "off", status: "done", durationMs: archive.data.durationMs, tokens: 155 }]);
+		assert.equal(JSON.stringify(ctx.sessionManager.buildSessionContext().messages), contextBefore, "summary must stay out of model context");
+		const card = entryRenderers.get("delegate-summary")!(entry, { expanded: false }, ctx.ui.theme);
+		assert.match(card.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, ""), /\[delegate summary\][\s\S]*d0001 +recon +local-qwen38\/qwen38-q4km +off +done/);
+		for (const width of [20, 60, 120]) assert.ok(card.render(width).every((line: string) => visibleWidth(line) <= width));
+		await commands.get("pi-delegate").handler("summary", testCtx);
+		assert.match(notices.at(-1) ?? "", /1 run · 1 done/, "non-TUI modes print the plain table as a notice");
+		notices.length = 0;
 		await handlers.get("session_start")?.({}, { ...testCtx, sessionManager: { getSessionId: () => "another-session", getBranch: () => [] } });
 		assert.equal(statuses.at(-1), undefined);
 		await handlers.get("session_start")?.({}, testCtx);
