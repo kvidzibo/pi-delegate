@@ -1,10 +1,12 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
-import { supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
+import { SPEEDS, supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
 import { modelId, pickDelegateModel, scopedDelegateModels, type AvailableModel } from "./model-picker.ts";
+
+const BULK_SPEED = "Set speed for all Codex roles…";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
 export class ModelCommand {
@@ -52,7 +54,7 @@ export class ModelCommand {
 					const speedLabel = speed && speed !== "standard" ? ` · speed: ${speed}${supportedSpeeds(id).includes(speed) ? "" : " (inactive)"}` : "";
 					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}${speedLabel}${roles && this.config.agents[kind].enabled === false ? " · disabled" : ""}`;
 				});
-				if (roles) options.push("Add named role…");
+				if (roles) options.push(BULK_SPEED, "Add named role…");
 				const choice = await ctx.ui.select(roles ? ["Delegate roles — saved globally; accepted jobs are unchanged", notice].filter(Boolean).join("\n") : [
 					"Delegate models and reasoning — select a role",
 					"Selecting a role opens its model picker; reasoning follows",
@@ -65,7 +67,8 @@ export class ModelCommand {
 				if (index < 0) throw new Error("Invalid delegate role selection.");
 				const kind = kinds[index];
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
-				if (roles) {
+				if (roles && choice === BULK_SPEED) notice = await this.saveCodexSpeed(ctx, signal);
+				else if (roles) {
 					const before = this.revision;
 					await this.editRole(ctx, kind, models, scopedModels, signal);
 					if (this.revision !== before) notice = "Saved role. New delegates use it now.";
@@ -150,6 +153,36 @@ export class ModelCommand {
 		} catch (error) {
 			if (!signal.aborted) ctx.ui.notify(`Delegate checkpoints: ${error instanceof Error ? error.message : String(error)}`, "error");
 		} finally { this.busy = false; }
+	}
+
+	/** One-time bulk set: writes the chosen speed into every role using an OpenAI Codex model. */
+	private async saveCodexSpeed(ctx: ExtensionCommandContext, signal: AbortSignal): Promise<string> {
+		const targets = Object.keys(this.config.agents).filter(kind => this.config.agents[kind].model.startsWith("openai-codex/"));
+		if (!targets.length) { ctx.ui.notify("No roles use OpenAI Codex models.", "warning"); return ""; }
+		const speeds = new Set(targets.map(kind => this.config.agents[kind].speed ?? "standard"));
+		const labels = SPEEDS.map(speed => `${speed}${speeds.size === 1 && speeds.has(speed) ? " ✓ current" : ""}`);
+		const choice = await ctx.ui.select([
+			"Speed for all OpenAI Codex roles",
+			`Roles: ${targets.join(", ")}`,
+			"Fast and Ultrafast need ChatGPT sign-in and use more plan allowance; Ultrafast needs an eligible plan.",
+		].join("\n"), labels, { signal });
+		if (signal.aborted || choice === undefined) return "";
+		const speed = SPEEDS[labels.indexOf(choice)];
+		if (speed === undefined) throw new Error("Invalid speed selection.");
+		const inactive = targets.filter(kind => !supportedSpeeds(this.config.agents[kind].model).includes(speed));
+		const confirmed = await ctx.ui.confirm(`Set ${speed} speed for ${targets.length} Codex roles?`, [
+			targets.join(", "),
+			...(inactive.length ? [`Inactive, model lacks ${speed}: ${inactive.join(", ")}`] : []),
+			`Save to ${this.paths.userPath}`,
+			"Applies to new delegates here immediately. Other open Pi sessions need /reload.",
+			"Other settings, non-Codex roles and existing jobs are unchanged.",
+		].join("\n"), { signal });
+		if (signal.aborted || !confirmed) return "";
+		const current = Object.fromEntries(targets.map(kind => [kind, this.config.agents[kind]]));
+		this.revision = saveRolesSpeed(this.paths, current, speed, this.revision);
+		// Replace, don't mutate: queued runners close over the previous agent object.
+		for (const kind of targets) this.config.agents[kind] = { ...current[kind], speed };
+		return `Saved ${speed} speed for ${targets.length} Codex roles. New delegates use it now.`;
 	}
 
 	private persist(kind: string, current: AgentConfig | undefined, patch: Partial<AgentConfig>): void {

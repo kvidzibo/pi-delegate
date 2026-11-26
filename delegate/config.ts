@@ -406,6 +406,18 @@ export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: Agent
 	});
 }
 
+/** Set one speed on several existing roles in a single atomic save. */
+export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentConfig>, speed: Speed, revision?: string): string {
+	return saveSettingsPatch(paths, "Roles", revision, state => {
+		const agents = { ...state.overlay.agents };
+		for (const [kind, agent] of Object.entries(current)) {
+			if (!Object.hasOwn(state.config.agents, kind) || !isDeepStrictEqual(state.config.agents[kind], agent)) throw settingsConflict(kind);
+			agents[kind] = { ...agents[kind], speed };
+		}
+		return { ...state.overlay, agents };
+	});
+}
+
 export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string): string {
 	return saveSettingsPatch(paths, "Checkpoints", revision, state => {
 		if (!isDeepStrictEqual(state.config.checkpoints, current)) throw settingsConflict("Checkpoints");

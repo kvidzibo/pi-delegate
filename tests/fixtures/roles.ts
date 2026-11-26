@@ -7,6 +7,8 @@ import { loadDelegateConfig } from "../../delegate/config.ts";
 import { ModelCommand } from "../../delegate/model-command.ts";
 import { enqueueDelegate } from "../../delegate/service.ts";
 
+const BULK = "Set speed for all Codex roles";
+
 /** Drive native settings components without a desktop or provider request. */
 export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const paths = { shippedPath: join(import.meta.dirname, "../../delegate/config.json"), userPath: join(getAgentDir(), "roles-test.json") };
@@ -216,6 +218,40 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(launched.extensions, original.extensions);
 	assert.equal(launched.speed, undefined, "Accepted jobs keep their original standard speed");
 	assert.deepEqual(launched.tools, original.tools);
+	// Bulk speed sets every Codex role in one save; other roles and overlay fields are unchanged.
+	const before = structuredClone(config.agents);
+	const { select, confirm } = testCtx.ui;
+	const titles: string[] = [];
+	let confirmText = "";
+	let choices = [BULK, "fast"];
+	testCtx.ui.select = async (title: string, options: string[]) => {
+		titles.push(title);
+		const choice = choices.shift();
+		return choice === undefined ? undefined : options.find(item => item.startsWith(choice));
+	};
+	testCtx.ui.confirm = async (_title: string, text: string) => { confirmText = text; return true; };
+	await command.command("", testCtx, true);
+	assert.match(titles[1], /Roles: implement, review, oracle/);
+	assert.match(confirmText, /^implement, review, oracle\n/);
+	assert.match(titles[2], /Saved fast speed for 3 Codex roles/);
+	const reloaded = loadDelegateConfig(paths).agents;
+	for (const kind of Object.keys(before)) {
+		const expected = kind === "recon" || kind === "writer" ? before[kind] : { ...before[kind], speed: "fast" };
+		assert.deepEqual(config.agents[kind], expected);
+		assert.deepEqual(reloaded[kind], expected);
+	}
+	assert.equal(JSON.parse(readFileSync(paths.userPath, "utf8")).agents.recon.note, "keep");
+	const speedLabels: string[][] = [];
+	titles.length = 0; choices = [BULK];
+	const bulkSelect = testCtx.ui.select;
+	testCtx.ui.select = async (title: string, options: string[]) => { speedLabels.push(options); return bulkSelect(title, options); };
+	await command.command("", testCtx, true);
+	assert.equal(titles.length, 3, "Cancelling the speed choice returns to roles");
+	assert.deepEqual(speedLabels[1], ["standard", "fast ✓ current", "ultrafast"]);
+	assert.deepEqual(loadDelegateConfig(paths).agents, reloaded, "Cancelling saves nothing");
+	testCtx.ui.select = select;
+	testCtx.ui.confirm = confirm;
+	saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	// Unrelated external edits conflict too; no overlay fields may be silently lost.
 	writeFileSync(paths.userPath, JSON.stringify({ ...saved, changedExternally: true }));
 	picks = 2; screen = discardStart - 1;
