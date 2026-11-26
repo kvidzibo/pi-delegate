@@ -27,7 +27,7 @@ test("child requests the Codex tier only for its own eligible ChatGPT-authentica
 	assert.equal(fast({ payload }, ctx("openai-codex", "gpt-6.1-terra", false)), undefined, "API-key billing is unchanged");
 	assert.equal(fast({ payload }, ctx("openai", "gpt-6.1-terra")), undefined);
 	assert.equal(fast({ payload: { ...payload, model: "other" } }, ctx("openai-codex", "gpt-6.1-terra")), undefined);
-	assert.equal(fast({ payload: { model: "codex-auto-review" } }, ctx("openai-codex", "codex-auto-review")), undefined);
+	assert.equal(fast({ payload: { model: "gpt-7-future" } }, ctx("openai-codex", "gpt-7-future")).service_tier, "priority", "Fast covers every Codex model");
 	assert.equal(fast({ payload: [] }, ctx("openai-codex", "gpt-6.1-terra")), undefined);
 	const ultra = handler("ultrafast");
 	assert.equal(ultra({ payload: { model: "gpt-6.2-sol" } }, ctx("openai-codex", "gpt-6.2-sol")).service_tier, "ultrafast");
@@ -35,9 +35,10 @@ test("child requests the Codex tier only for its own eligible ChatGPT-authentica
 	assert.equal(handler("standard")({ payload }, ctx("openai-codex", "gpt-6.1-terra")), undefined);
 });
 
-test("supported speeds follow the documented Codex model tiers", () => {
+test("supported speeds follow the Codex catalog and Ultrafast documentation", () => {
 	assert.deepEqual(supportedSpeeds("openai-codex/gpt-6.2-astra"), ["standard", "fast", "ultrafast"]);
 	assert.deepEqual(supportedSpeeds("openai-codex/gpt-6-luna"), ["standard", "fast"]);
+	assert.deepEqual(supportedSpeeds("openai-codex/gpt-7-future"), ["standard", "fast"]);
 	assert.deepEqual(supportedSpeeds("openai/gpt-6-luna"), ["standard"]);
 	assert.deepEqual(supportedSpeeds("local-qwen38/qwen38-q4km"), ["standard"]);
 });

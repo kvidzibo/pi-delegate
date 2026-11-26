@@ -2,16 +2,11 @@ export const SPEEDS = ["standard", "fast", "ultrafast"] as const;
 export type Speed = typeof SPEEDS[number];
 export const SPEED_ENV = "PI_DELEGATE_SPEED";
 
-// OpenAI Codex (ChatGPT sign-in) service tiers. Fast models match the Codex model catalog;
-// Ultrafast models follow OpenAI's Ultrafast documentation and require an eligible plan.
+// OpenAI Codex (ChatGPT sign-in) service tiers. Every Codex catalog model offers Fast (`priority`);
+// Ultrafast follows OpenAI's documentation and needs an eligible plan. The backend rejects unknown
+// tier names but accepts known tiers the model or plan lacks, reporting `default`.
 const TIERS = { fast: "priority", ultrafast: "ultrafast" } as const;
-const MODELS: Record<keyof typeof TIERS, ReadonlySet<string>> = {
-	fast: new Set([
-		"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna",
-		"gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra", "gpt-6.2-sol",
-	]),
-	ultrafast: new Set(["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"]),
-};
+const ULTRAFAST_MODELS: ReadonlySet<string> = new Set(["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"]);
 
 export function isSpeed(value: unknown): value is Speed {
 	return SPEEDS.includes(value as Speed);
@@ -20,7 +15,7 @@ export function isSpeed(value: unknown): value is Speed {
 /** Request service tier for a provider model, or undefined for standard/unsupported speeds. */
 export function serviceTier(provider: string, id: string, speed: Speed | undefined): string | undefined {
 	if (provider !== "openai-codex" || speed === undefined || speed === "standard") return undefined;
-	return MODELS[speed].has(id) ? TIERS[speed] : undefined;
+	return speed === "fast" || ULTRAFAST_MODELS.has(id) ? TIERS[speed] : undefined;
 }
 
 /** Non-standard speed that applies to a `provider/model` ID; unsupported saved speeds run at standard. */
