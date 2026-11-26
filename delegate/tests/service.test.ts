@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { Accounting } from "../accounting.ts";
 import type { AgentConfig } from "../config.ts";
 import { JobScheduler } from "../jobs.ts";
-import { agentPrompt, enqueueDelegate } from "../service.ts";
+import { agentPrompt, enqueueDelegate, signedInSpeed } from "../service.ts";
 
 test("role response policy is snapshotted, formats instructions and saves private collectible results without changing outcomes", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-response-test-"));
@@ -126,4 +126,18 @@ test("accepted speed applies only to supported models and is recorded for cards 
 		assert.equal(done.speed, expected);
 		assert.equal(recorded, expected);
 	}
+});
+
+test("speed stays active only for ChatGPT-authenticated registry models", () => {
+	const agent: AgentConfig = { model: "openai-codex/gpt-6.2-sol", prompt: "Read-only.", thinking: "off", tools: [], extensions: false, speed: "fast" };
+	const registry = (oauth: boolean, known = true) => ({
+		find: (provider: string, id: string) => known ? { provider, id } : undefined,
+		isUsingOAuth: (model: { provider: string; id: string }) => { assert.deepEqual(model, { provider: "openai-codex", id: "gpt-6.2-sol" }); return oauth; },
+	});
+	assert.equal(signedInSpeed(registry(true), agent.model, agent), agent);
+	assert.equal(signedInSpeed(registry(false), agent.model, agent).speed, "standard", "API-key jobs run and display at standard");
+	assert.equal(signedInSpeed(registry(true, false), agent.model, agent).speed, "standard");
+	assert.equal(agent.speed, "fast", "the configured role is not mutated");
+	const inactive = { ...agent, model: "hosted/mock" };
+	assert.equal(signedInSpeed({ find: () => { throw new Error("unused"); }, isUsingOAuth: () => false }, inactive.model, inactive), inactive);
 });

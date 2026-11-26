@@ -18,7 +18,7 @@ import {
 import { JobScheduler, parseDelegateCall, type JobSnapshot } from "./jobs.ts";
 import { NOTIFY_CUSTOM_TYPE, NotifyGate, shouldConsume, type NotifyDetails } from "./notify.ts";
 import { runChild } from "./spawn.ts";
-import { agentPrompt, enqueueDelegate } from "./service.ts";
+import { agentPrompt, enqueueDelegate, signedInSpeed } from "./service.ts";
 import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
@@ -341,7 +341,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 	pi.on("session_tree", (event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); checkpoints.restore(event, ctx); });
 	const checkpoints = createCheckpointHooks(pi, config, async (task, origin, ctx) => {
 		bindUi(ctx);
-		const { kind, agent, model } = resolveCheckpointAgent(config);
+		const { kind, agent: configured, model } = resolveCheckpointAgent(config);
+		const agent = signedInSpeed(ctx.modelRegistry, model, configured);
 		ctx.signal?.throwIfAborted();
 		const accepted = enqueueDelegate({
 			scheduler, accounting, agent, task, config, childRunner, background: false,
@@ -538,12 +539,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					const kind = parsed.kind;
 					const cwd = resolveChildCwd(parsed.cwd, ctx.cwd, "delegate");
 					const resolved = resolveAgent(kind, config);
+					const agent = signedInSpeed(ctx.modelRegistry, resolved.model, resolved.agent);
 					const tools = [...resolved.agent.tools];
 					capabilities = describeCapabilities(tools);
 					const local = isLocalModel(resolved.model);
 					update({
 						content: [{ type: "text" as const, text: delegateTargetLine(kind, resolved.model) }, ...capabilityContent(capabilities)],
-						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, resolved.agent.speed), task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
+						details: { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, agent.speed), task: parsed.task, pending: true, background: parsed.background, capabilities: copyCapabilities(capabilities) },
 					});
 
 					let savingsInfo: ReturnType<typeof loadSavingsSnapshot> = {};
@@ -560,7 +562,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						} catch { savingsInfo = { reason: "Alternative pricing/calibration unavailable" }; }
 					}
 					snap = enqueueDelegate({
-						scheduler, accounting, agent: resolved.agent, task: parsed.task,
+						scheduler, accounting, agent, task: parsed.task,
 						identity: {
 							parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
 							toolCallId, kind, cwd, requestedModel: resolved.model, thinking: resolved.agent.thinking,
@@ -569,7 +571,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 						timeoutMs: parsed.timeoutMs, background: parsed.background, signal, config, childRunner,
 						onAccepted: archive => {
 							origins.set(archive.data.runId, toolCallId);
-							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, resolved.agent.speed), task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
+							cards.begin(toolCallId, { kind, model: resolved.model, reasoning: resolved.agent.thinking, ...speedDetail(resolved.model, agent.speed), task: parsed.task, status: "queued", capabilities: copyCapabilities(capabilities) });
 						},
 					});
 					publish(snap, parsed.background, snap.status === "queued" || snap.status === "running");

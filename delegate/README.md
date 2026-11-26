@@ -51,7 +51,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 
 ### Speed
 
-`fast` and `ultrafast` apply only to `openai-codex` models with ChatGPT sign-in; other models run at standard speed and the role list marks the setting inactive. Both use more of your plan allowance; see OpenAI's [Fast and Ultrafast modes](https://learn.chatgpt.com/docs/agent-configuration/speed).
+`fast` and `ultrafast` apply only to supported `openai-codex` models with ChatGPT sign-in; otherwise jobs run at standard speed. The role list marks speeds unsupported by the model as inactive. Both use more of your plan allowance; see OpenAI's [Fast and Ultrafast modes](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
 | Speed | Service tier | Models |
 |---|---|---|

@@ -183,7 +183,7 @@ export class ModelCommand {
 			const levels = model ? getSupportedThinkingLevels(model) : [];
 			const speed = draft.speed ?? "standard";
 			const speeds = supportedSpeeds(draft.model);
-			const speedNote = !speeds.includes(speed) ? " Inactive on this model." : speeds.length === 1 ? " Not supported by this model." : "";
+			const speedNote = speeds.length === 1 ? " Not supported by this model." : ` This model supports ${speeds.join(", ")}.`;
 			const action = await roleMenu(ctx, `Delegate role · ${name}${adding ? " (new)" : ""}`, [
 				{ id: "enabled", label: "Enabled", currentValue: draft.enabled === false ? "no" : "yes", values: ["yes", "no"] },
 				{ id: "model", label: "Model", currentValue: draft.model },

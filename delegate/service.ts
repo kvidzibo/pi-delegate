@@ -22,6 +22,16 @@ export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplat
 		: agent.prompt;
 }
 
+type AuthRegistry<M> = { find(provider: string, id: string): M | undefined; isUsingOAuth(model: M): boolean };
+
+/** Codex tiers need ChatGPT sign-in; otherwise the job runs, displays and archives as standard. */
+export function signedInSpeed<M>(registry: AuthRegistry<M>, model: string, agent: AgentConfig): AgentConfig {
+	if (!activeSpeed(model, agent.speed)) return agent;
+	const slash = model.indexOf("/");
+	const found = registry.find(model.slice(0, slash), model.slice(slash + 1));
+	return found && registry.isUsingOAuth(found) ? agent : { ...agent, speed: "standard" };
+}
+
 /** Acceptance/execution path. Snapshot role policy before queue admission. */
 export function enqueueDelegate(input: {
 	scheduler: JobScheduler;
