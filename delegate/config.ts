@@ -6,6 +6,7 @@ import type { Alternative } from "./calibration.ts";
 import { isLocalModel } from "./tg.ts";
 import { MAX_TIMER_MS } from "../child-runtime/policy.ts";
 import { assertRepairAttempts, compileResponseSchema, type ResponseSchema } from "../child-runtime/response-schema.ts";
+import { isSpeed, SPEEDS, type Speed } from "../child-runtime/speed.ts";
 
 export type Kind = string;
 export const ROLE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -48,6 +49,7 @@ export interface AgentConfig {
 	extensions: boolean;
 	tools: string[];
 	thinking: ThinkingLevel;
+	speed?: Speed;
 }
 
 export interface CheckpointConfig {
@@ -159,6 +161,7 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (parsed.extensions !== undefined && typeof parsed.extensions !== "boolean") errors.push("extensions (boolean)");
 	if (parsed.thinking !== undefined && !isThinkingLevel(parsed.thinking)) errors.push(`thinking (one of ${THINKING_LEVELS.join("|")})`);
+	if (parsed.speed !== undefined && !isSpeed(parsed.speed)) errors.push(`speed (one of ${SPEEDS.join("|")})`);
 	if (errors.length > 0) throw new Error(`${label} (${errors.join("; ")})`);
 	const model = (parsed.model as string).trim();
 	if (!model) throw new Error(`${label} (model (non-empty string))`);
@@ -174,6 +177,7 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		extensions: parsed.extensions === true,
 		tools: tools as string[],
 		thinking: (parsed.thinking ?? "off") as ThinkingLevel,
+		...(parsed.speed !== undefined ? { speed: parsed.speed as Speed } : {}),
 	};
 }
 
@@ -298,6 +302,7 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 		extensions: base.extensions,
 		tools: base.tools,
 		thinking: base.thinking,
+		speed: base.speed,
 	};
 	if (parsed.enabled !== undefined) next.enabled = parsed.enabled;
 	if (parsed.model !== undefined) next.model = parsed.model;
@@ -310,6 +315,7 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 	if (parsed.extensions !== undefined) next.extensions = parsed.extensions;
 	if (parsed.tools !== undefined) next.tools = parsed.tools;
 	if (parsed.thinking !== undefined) next.thinking = parsed.thinking;
+	if (parsed.speed !== undefined) next.speed = parsed.speed;
 	return parseAgent(next, label);
 }
 

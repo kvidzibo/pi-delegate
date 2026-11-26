@@ -26,6 +26,8 @@ export type RunRecord = {
 	requestedModel: string;
 	actualModel?: string;
 	thinking: string;
+	/** Requested non-standard service tier; the backend does not confirm it. */
+	speed?: string;
 	tools: string[];
 	capabilities?: CapabilityManifest;
 	createdAt: string;
@@ -43,7 +45,7 @@ export type RunRecord = {
 	outcome?: ExecutionOutcome;
 };
 
-export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "cwd" | "requestedModel" | "thinking" | "tools" | "savings" | "savingsUnavailable" | "capabilities"> & { kind: Kind };
+export type RunIdentity = Pick<RunRecord, "parentSessionId" | "parentSessionFile" | "toolCallId" | "cwd" | "requestedModel" | "thinking" | "speed" | "tools" | "savings" | "savingsUnavailable" | "capabilities"> & { kind: Kind };
 export type Outcome = { status: "done" | "failed"; stopReason?: string; exitCode?: number; finalization?: FinalizationProgress; evidence?: ResponseEvidence };
 const GUARDED_SAVINGS_UNAVAILABLE = "Legacy calibration does not cover guarded execution; a policy-aware calibration is required.";
 function invalidateGuardedSavings(data: RunRecord): void {

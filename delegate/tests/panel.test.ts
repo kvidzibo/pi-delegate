@@ -46,6 +46,7 @@ test("panel clock counts whole seconds from queue/start time and resets when pro
 	assert.equal(project({ queuedAt: undefined }).elapsedMs, undefined);
 	assert.equal(project({ status: "running", startedAt: NaN }).elapsedMs, undefined);
 	assert.equal(project().reasoning, "high");
+	assert.equal(project({ speed: "fast" }).speed, "fast");
 	assert.equal(projectJobBoard([queued], limits)!.cards[0].elapsedMs, undefined, "non-TUI projections omit clocks");
 });
 

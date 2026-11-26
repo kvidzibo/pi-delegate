@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { Accounting } from "../accounting.ts";
 import type { AgentConfig } from "../config.ts";
 import { JobScheduler } from "../jobs.ts";
-import { agentPrompt, enqueueDelegate } from "../service.ts";
+import { agentPrompt, enqueueDelegate, signedInSpeed } from "../service.ts";
 
 test("role response policy is snapshotted, formats instructions and saves private collectible results without changing outcomes", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-response-test-"));
@@ -105,4 +105,39 @@ test("role response policy is snapshotted, formats instructions and saves privat
 	} finally {
 		if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
 	}
+});
+
+test("accepted speed applies only to supported models and is recorded for cards and history", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "delegate-speed-test-"));
+	const accounting = new Accounting(root);
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 4 });
+	t.after(async () => { await scheduler.shutdown(); accounting.close(); rmSync(root, { recursive: true, force: true }); });
+	for (const [model, expected] of [["openai-codex/gpt-6.1-terra", "fast"], ["openai/gpt-6.1-terra", undefined], ["hosted/mock", undefined]] as const) {
+		const agent: AgentConfig = { model, prompt: "Read-only.", thinking: "off", tools: [], extensions: false, speed: "fast" };
+		let launched: unknown, recorded: unknown;
+		const job = enqueueDelegate({ scheduler, accounting, agent, onAccepted: archive => { recorded = archive.data.speed; },
+			identity: { kind: "recon", requestedModel: model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: "test" },
+			task: "Exact task", timeoutMs: 1000, background: false, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+			childRunner: async input => { launched = input.speed; return { text: "done", exitCode: 0, stderrTail: "" }; },
+		});
+		agent.speed = "standard";
+		const done = await scheduler.wait(job.id);
+		assert.equal(launched, expected);
+		assert.equal(done.speed, expected);
+		assert.equal(recorded, expected);
+	}
+});
+
+test("speed stays active only for ChatGPT-authenticated registry models", () => {
+	const agent: AgentConfig = { model: "openai-codex/gpt-6.2-sol", prompt: "Read-only.", thinking: "off", tools: [], extensions: false, speed: "fast" };
+	const registry = (oauth: boolean, known = true) => ({
+		find: (provider: string, id: string) => known ? { provider, id } : undefined,
+		isUsingOAuth: (model: { provider: string; id: string }) => { assert.deepEqual(model, { provider: "openai-codex", id: "gpt-6.2-sol" }); return oauth; },
+	});
+	assert.equal(signedInSpeed(registry(true), agent.model, agent), agent);
+	assert.equal(signedInSpeed(registry(false), agent.model, agent).speed, "standard", "API-key jobs run and display at standard");
+	assert.equal(signedInSpeed(registry(true, false), agent.model, agent).speed, "standard");
+	assert.equal(agent.speed, "fast", "the configured role is not mutated");
+	const inactive = { ...agent, model: "hosted/mock" };
+	assert.equal(signedInSpeed({ find: () => { throw new Error("unused"); }, isUsingOAuth: () => false }, inactive.model, inactive), inactive);
 });

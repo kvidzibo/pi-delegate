@@ -28,9 +28,11 @@ const str = (details: CardDetails, key: string): string => typeof details[key] =
 const cleanBlock = (text: string): string => text.split("\n").map(displayText).join("\n");
 function headerMetadata(d: CardDetails): string {
 	const reasoning = str(d, "reasoning");
+	const speed = str(d, "speed");
 	const pending = d.status === "running" || d.status === "queued";
 	const duration = formatDuration(pending ? (d.historical ? undefined : d.elapsedMs) : d.durationMs);
 	return (reasoning ? ` · ${displayText(reasoning)}` : "")
+		+ (speed ? ` · ${displayText(speed)}` : "")
 		+ (duration === undefined ? "" : ` · ${d.status === "queued" ? "queued " : ""}${duration}`);
 }
 

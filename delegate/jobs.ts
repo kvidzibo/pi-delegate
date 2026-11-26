@@ -56,6 +56,7 @@ export type JobSnapshot = {
 	kind: Kind;
 	model: string;
 	reasoning?: string;
+	speed?: string;
 	local: boolean;
 	task: string;
 	status: JobStatus;
@@ -88,6 +89,7 @@ export type EnqueueInput = {
 	kind: Kind;
 	model: string;
 	reasoning?: string;
+	speed?: string;
 	local: boolean;
 	task: string;
 	timeoutMs: number;
@@ -142,6 +144,7 @@ type InternalJob = {
 	kind: Kind;
 	model: string;
 	reasoning?: string;
+	speed?: string;
 	local: boolean;
 	task: string;
 	timeoutMs: number;
@@ -294,6 +297,7 @@ export class JobScheduler {
 			kind: input.kind,
 			model: input.model,
 			reasoning: input.reasoning,
+			speed: input.speed,
 			local: input.local,
 			task: input.task,
 			timeoutMs: input.timeoutMs,
@@ -590,6 +594,7 @@ export class JobScheduler {
 			kind: job.kind,
 			model: job.model,
 			...(job.reasoning === undefined ? {} : { reasoning: job.reasoning }),
+			...(job.speed === undefined ? {} : { speed: job.speed }),
 			local: job.local,
 			task: job.task,
 			status: job.status,

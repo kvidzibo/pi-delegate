@@ -1,14 +1,20 @@
 import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runPiChild, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
+import { SPEED_ENV, type Speed } from "../child-runtime/speed.ts";
+
+const SERVICE_TIER_EXTENSION = fileURLToPath(new URL("../child-runtime/service-tier.ts", import.meta.url));
 
 export interface ChildArgsInput {
 	model: string;
 	thinking: string;
 	tools: string[];
 	extensions?: boolean;
+	/** Loads the private service-tier extension; the child still checks model eligibility. */
+	speed?: Speed;
 	promptPath: string;
 	sessionFile: string;
 }
@@ -20,6 +26,7 @@ export interface RunChildInput {
 	thinking: string;
 	tools: string[];
 	extensions?: boolean;
+	speed?: Speed;
 	hardTimeoutMs: number;
 	maxOutputBytes: number;
 	promptSourcePath: string;
@@ -53,15 +60,19 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		"--system-prompt",
 		input.promptPath,
 	);
+	if (input.speed && input.speed !== "standard") args.push("--extension", SERVICE_TIER_EXTENSION);
 	return args;
 }
 
-export function buildChildEnv(env: NodeJS.Dict<string> | undefined): NodeJS.ProcessEnv {
-	return {
+export function buildChildEnv(env: NodeJS.Dict<string> | undefined, speed?: Speed): NodeJS.ProcessEnv {
+	const next: NodeJS.ProcessEnv = {
 		...env,
 		PI_DELEGATE_CHILD: "1",
 		PI_DELEGATE_CHILD_DEPTH: "1",
 	};
+	delete next[SPEED_ENV];
+	if (speed && speed !== "standard") next[SPEED_ENV] = speed;
+	return next;
 }
 
 export function delegateLogPath(env: NodeJS.Dict<string> = process.env): string | undefined {
@@ -110,13 +121,14 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 		maxOutputBytes: input.maxOutputBytes,
 		promptSourcePath: input.promptSourcePath,
 		responseFormatPath: input.responseFormatPath,
-		env: buildChildEnv(input.env),
+		env: buildChildEnv(input.env, input.speed),
 		buildArgs: (promptPath) =>
 			buildChildArgs({
 				model: input.model,
 				thinking: input.thinking,
 				tools: input.tools,
 				extensions: input.extensions,
+				speed: input.speed,
 				promptPath,
 				sessionFile: input.sessionFile,
 			}),

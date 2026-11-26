@@ -53,6 +53,19 @@ test("argv never inherits or forks parent sessions and extensions require opt-in
 	assert.ok(noTools.includes("--no-mcp"));
 });
 
+test("non-standard speed loads the service-tier extension and policy without extension discovery", () => {
+	for (const speed of [undefined, "standard"] as const) {
+		assert.equal(buildChildArgs({ ...base, speed }).includes("--extension"), false);
+		assert.equal(buildChildEnv({ PI_DELEGATE_SPEED: "fast" }, speed).PI_DELEGATE_SPEED, undefined);
+	}
+	for (const speed of ["fast", "ultrafast"] as const) {
+		const args = buildChildArgs({ ...base, speed });
+		assert.ok(args.includes("--no-extensions"));
+		assert.match(args[args.indexOf("--extension") + 1], /child-runtime\/service-tier\.ts$/);
+		assert.equal(buildChildEnv({}, speed).PI_DELEGATE_SPEED, speed);
+	}
+});
+
 test("child env marks nest", () => {
 	const env = buildChildEnv({ PATH: "/usr/bin" });
 	assert.equal(env.PI_DELEGATE_CHILD, "1");

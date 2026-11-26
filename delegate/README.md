@@ -16,7 +16,7 @@ Shipped models use `openai-codex`:
 All role defaults are hosted; configure a role to use a local model.
 User role configuration takes precedence over these defaults. Models come only from role configuration; the `delegate` tool rejects any `model` argument, including null or blank values. This applies to every role, including reviews.
 
-Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template, raw JSON Schema, repair attempts, Save to file and a per-role Completion hook. Enablement, extensions, repair attempts, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
+Use **`/pi-delegate roles`** (or Roles in `/pi-delegate`) to edit enablement, model, supported reasoning, speed, tools with all/none, extension discovery, the full multiline prompt, an optional multiline response template, raw JSON Schema, repair attempts, Save to file and a per-role Completion hook. Enablement, speed, extensions, repair attempts, Save to file and short reasoning lists cycle inline. Select **Save role** to persist; Esc discards the draft. **Add named role** requires an explicit available model and nonblank prompt; menu-created roles start with tools `[]`, extensions `false` and reasoning `off`.
 
 **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both paths share model selection and persistence. Use Roles to save model and reasoning together; the model-first picker saves them separately. Model choices match `/model`: scoped models first when a scope is set, with **Tab** switching between scoped and all available models. Reasoning comes from Pi's supported levels (including `xhigh`/`max` when supported); non-reasoning models offer only `off`. Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues. They apply to future jobs in this session; queued/running jobs retain their acceptance-time policy. Other sessions need `/reload`.
 
@@ -42,11 +42,23 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `tools` | All Pi tools (`["*"]`); `[]` disables tools |
 | `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
 | `thinking` | `off` |
+| `speed` | `standard`; `fast` or `ultrafast` requests an OpenAI Codex service tier (see [Speed](#speed)) |
 | `responseTemplate` | Empty/omitted: unchanged response instructions |
 | `responseSchema` | Omitted/`null`: no validation; a draft-07 object or boolean enables JSON validation |
 | `responseRepairAttempts` | `2`; integer `0`–`2`, additional attempts after the initial response |
 | `saveToFile` | `false`: return the response inline |
 | `completionHook` | Omitted/`null`: disabled; `{ command: [...], timeoutMs: 10000 }` runs after termination |
+
+### Speed
+
+`fast` and `ultrafast` apply only to supported `openai-codex` models with ChatGPT sign-in; otherwise jobs run at standard speed. The role list marks speeds unsupported by the model as inactive. Both use more of your plan allowance; see OpenAI's [Fast and Ultrafast modes](https://learn.chatgpt.com/docs/agent-configuration/speed).
+
+| Speed | Service tier | Models |
+|---|---|---|
+| `fast` | `priority` | All `openai-codex` models |
+| `ultrafast` | `ultrafast` | GPT-6.2 Astra/Sol, GPT-6.1 Sol, GPT-6 Astra; eligible plans only |
+
+A private child extension adds the tier to the child's own model requests, even with extension discovery disabled. Job cards and run metadata record the speed requested at acceptance, shown after reasoning; the child re-checks the model and ChatGPT sign-in before each request. The backend reports `default` even when Fast applies, so the tier is not confirmed, and delegate cost reports count these jobs at standard rates. A model or plan without the requested tier may run at standard speed without an error, as observed for Ultrafast without plan eligibility. If the backend rejects a request, such as an unsupported tier name, the job fails with the provider error; Pi retries only transient provider failures.
 
 Omitted overlay fields inherit the existing role's defaults. Tool arrays replace rather than extend them; use `tools: ["*"]` to give a starter role all tools. Shipped roles keep their explicit tool restrictions. Extension opt-in can execute installed/configured extension code and expose additional tools; skills, prompt templates and context-file discovery remain disabled.
 
