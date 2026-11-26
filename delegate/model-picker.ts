@@ -85,10 +85,8 @@ export async function pickDelegateModel(
 				return [
 					theme.fg("accent", theme.bold(`Delegate model · ${kind}`)),
 					theme.fg("muted", `Current: ${current}`),
-					...(toggle ? [
-						`${theme.fg("muted", "Scope: ")}${scopeLabel("all")}${theme.fg("muted", " | ")}${scopeLabel("scoped")}`,
-						`${keyHint("tui.input.tab", "scope")}${theme.fg("muted", " (all/scoped)")}`,
-					] : []),
+					// One line, as before the toggle, so short terminals keep the same list height.
+					...(toggle ? [`${theme.fg("muted", "Scope: ")}${scopeLabel("all")}${theme.fg("muted", " | ")}${scopeLabel("scoped")}${theme.fg("muted", " · ")}${keyHint("tui.input.tab", "toggle")}`] : []),
 					"Search by provider, model ID or name:", ...search.render(width), "",
 					...list.render(width), "",
 					theme.fg("dim", `${filtered.length}/${sorted.length} ${scope === "scoped" ? "scoped" : "available"} · ↑↓ navigate · enter select · esc back`),

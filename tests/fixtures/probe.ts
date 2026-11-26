@@ -203,7 +203,7 @@ export default function probe(pi: ExtensionAPI) {
 						const rendered = component.render(100).join("\n");
 						assert.ok(rendered.includes("✓ current"));
 						assert.ok(rendered.includes(selected));
-						assert.ok(rendered.includes("Scope: ") && rendered.includes("(all/scoped)"), rendered);
+						assert.ok(rendered.includes("Scope: ") && rendered.includes("toggle"), rendered);
 						assert.ok(!rendered.includes("picker-extra"), rendered);
 						assert.ok(!rendered.includes("picker-no-auth"));
 							const pick = ++modelPicks;
@@ -310,7 +310,7 @@ export default function probe(pi: ExtensionAPI) {
 							assert.ok(text.includes("picker-extra/other"), text);
 							assert.ok(text.includes(selected));
 							assert.ok(!text.includes("picker-no-auth"));
-							assert.ok(!text.includes("Scope: ") && !text.includes("(all/scoped)"), text);
+							assert.ok(!text.includes("Scope: ") && !text.includes("toggle"), text);
 							assert.match(text, /3\/3 available/);
 							component.handleInput("\x1b");
 							return result;
