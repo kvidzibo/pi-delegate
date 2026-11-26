@@ -41,7 +41,7 @@ test("accepted live transcript snapshots stay unchanged until terminal, even on 
 	cards.watch("spawn", () => { invalidations++; });
 	const accepted = cards.get("spawn");
 	for (const current of [{ name: "read", mark: "→" }, { name: "bash", mark: "→" }]) {
-		cards.update("spawn", { ...running, current, thinking: "private thought", tg: "tg 40/s", wrapped: true });
+		cards.update("spawn", { ...running, current, thinking: "private thought", tg: "~tg 40/s", wrapped: true });
 		assert.deepEqual(cards.get("spawn"), accepted, "a mounted row must not read changing live details");
 	}
 	assert.equal(invalidations, 0, "live updates belong in the widget, not scrollback");

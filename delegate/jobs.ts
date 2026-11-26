@@ -14,7 +14,7 @@ import {
 	type ActivityItem,
 	type ProgressState,
 } from "./display.ts";
-import { applyTgEvent, createTgMeter, visibleChildTg, type TgMeter } from "./tg.ts";
+import { applyTgEvent, averageTgLabel, createTgMeter, tgLabel, type TgMeter } from "./tg.ts";
 
 import type { CompletionHookResult } from "./completion-hook.ts";
 
@@ -582,10 +582,8 @@ export class JobScheduler {
 	private snapshot(job: InternalJob): JobSnapshot {
 		const failed =
 			job.status === "failed" || (job.status === "done" && job.result ? isFailedChildResult(job.result) : false);
-		const tg =
-			job.status === "running" || job.status === "done" || job.status === "failed"
-				? visibleChildTg(job.model, job.meter, undefined)
-				: undefined;
+		const tg = job.status === "running" ? tgLabel(job.meter) ?? averageTgLabel(job.meter)
+			: job.status === "done" || job.status === "failed" ? averageTgLabel(job.meter) : undefined;
 		const snap: JobSnapshot = {
 			queuedAt: job.queuedAt,
 			startedAt: job.startedAt,
@@ -809,7 +807,7 @@ export class JobScheduler {
 					}
 					const item = parseChildProgress(event);
 					if (item) applyProgress(job.progress, item);
-					if (job.local) applyTgEvent(job.meter, event);
+					applyTgEvent(job.meter, event);
 					this.notify(job);
 				},
 				(ctl) => {

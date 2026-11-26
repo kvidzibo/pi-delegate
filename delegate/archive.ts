@@ -9,6 +9,7 @@ import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
+import { applyTgEvent, averageTg, createTgMeter } from "./tg.ts";
 
 import type { CompletionHookResult } from "./completion-hook.ts";
 
@@ -38,6 +39,8 @@ export type RunRecord = {
 	exitCode?: number;
 	durationMs: number;
 	usage: UsageSummary;
+	/** Approximate output tokens/s over streamed assistant messages; hidden reasoning can inflate it. */
+	tg?: number;
 	recordingError?: string;
 	savings?: SavingsSnapshot;
 	savingsUnavailable?: string;
@@ -102,6 +105,7 @@ export class ArchivedRun {
 	readonly paths: ReturnType<typeof runPaths>;
 	readonly meter: UsageMeter;
 	readonly data: RunRecord;
+	private readonly tg = createTgMeter();
 	private finished = false;
 	private errorNotified = false;
 	private onError: (message: string) => void;
@@ -143,6 +147,7 @@ export class ArchivedRun {
 		if (this.finished) return false;
 		const progress = record(event);
 		if (progress.type === "delegate_finalization" && this.noteFinalization(progress.state)) { this.persist(); return true; }
+		applyTgEvent(this.tg, event);
 		const result = this.meter.observe(event);
 		if (result.changed) {
 			this.data.actualModel = this.meter.resolvedModel;
@@ -181,6 +186,8 @@ export class ArchivedRun {
 		const { finalization, evidence, ...terminal } = outcome;
 		this.noteFinalization(finalization);
 		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
+		const tg = averageTg(this.tg);
+		if (tg !== undefined) this.data.tg = Math.round(tg * 10) / 10;
 		this.data.outcome = describeOutcome({ ...this.data, evidence });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
 		this.persist();

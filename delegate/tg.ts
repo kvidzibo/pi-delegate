@@ -45,22 +45,36 @@ export function speedFrom(tokens: number, elapsedMs: number, minMs = TG_MIN_MS):
 
 export function formatTg(tps: number): string {
 	if (!Number.isFinite(tps) || tps < 0) return "";
-	if (tps < 100) return `tg ${tps.toFixed(1)}/s`;
-	return `tg ${Math.round(tps)}/s`;
+	if (tps < 100) return `~tg ${tps.toFixed(1)}/s`;
+	return `~tg ${Math.round(tps)}/s`;
 }
 
+/** Current assistant message plus completed streamed messages (tokens/ms from first to last generated delta). */
 export type TgMeter = {
 	t0?: number;
+	last?: number;
 	estimated: number;
 	usage?: number;
+	tokens: number;
+	ms: number;
 };
 
 export function createTgMeter(): TgMeter {
-	return { estimated: 0 };
+	return { estimated: 0, tokens: 0, ms: 0 };
 }
 
-export function resetTgMeter(meter: TgMeter): void {
+function messageWindow(meter: TgMeter): { tokens: number; ms: number } {
+	const ms = meter.t0 === undefined ? 0 : Math.max(0, (meter.last ?? meter.t0) - meter.t0);
+	// Too-short windows (e.g. a tool call delivered in one chunk) cannot be timed.
+	return ms < TG_MIN_MS ? { tokens: 0, ms: 0 } : { tokens: pickTokenCount(meter.usage, meter.estimated), ms };
+}
+
+function foldMessage(meter: TgMeter): void {
+	const window = messageWindow(meter);
+	meter.tokens += window.tokens;
+	meter.ms += window.ms;
 	meter.t0 = undefined;
+	meter.last = undefined;
 	meter.estimated = 0;
 	meter.usage = undefined;
 }
@@ -75,6 +89,8 @@ function assistantRole(message: unknown): boolean {
 	return Boolean(message && typeof message === "object" && (message as { role?: unknown }).role === "assistant");
 }
 
+const GENERATED_DELTAS = new Set(["thinking_delta", "text_delta", "toolcall_delta"]);
+
 export function applyTgEvent(meter: TgMeter, event: unknown, now = Date.now()): boolean {
 	if (!event || typeof event !== "object") return false;
 	const rec = event as {
@@ -86,21 +102,19 @@ export function applyTgEvent(meter: TgMeter, event: unknown, now = Date.now()): 
 	if (rec.type === "message_start") {
 		if (rec.message && !assistantRole(rec.message)) return false;
 		const had = meter.t0 !== undefined || meter.estimated > 0 || meter.usage !== undefined;
-		resetTgMeter(meter);
+		foldMessage(meter);
 		return had;
 	}
 	let changed = false;
 	const ev = rec.assistantMessageEvent;
 	if (
 		rec.type === "message_update" &&
-		(ev?.type === "thinking_delta" || ev?.type === "text_delta") &&
-		typeof ev.delta === "string" &&
+		GENERATED_DELTAS.has(ev?.type as string) &&
+		typeof ev?.delta === "string" &&
 		ev.delta.length > 0
 	) {
-		if (meter.t0 === undefined) {
-			meter.t0 = now;
-			changed = true;
-		}
+		meter.t0 ??= now;
+		meter.last = now;
 		meter.estimated += estimateTokensFromText(ev.delta);
 		changed = true;
 	}
@@ -111,25 +125,31 @@ export function applyTgEvent(meter: TgMeter, event: unknown, now = Date.now()): 
 		);
 	if (usage !== undefined && usage > 0 && usage !== meter.usage) {
 		meter.usage = usage;
+		if (meter.t0 !== undefined) meter.last = now;
+		changed = true;
+	}
+	// Close the window at message end so tool execution does not dilute the live rate.
+	if (rec.type === "message_end" && assistantRole(rec.message) && meter.t0 !== undefined) {
+		foldMessage(meter);
 		changed = true;
 	}
 	return changed;
 }
 
+/** Live rate of the current assistant message. */
 export function tgLabel(meter: TgMeter, now = Date.now()): string | undefined {
 	if (meter.t0 === undefined) return undefined;
 	const tps = speedFrom(pickTokenCount(meter.usage, meter.estimated), now - meter.t0);
-	if (tps === undefined) return undefined;
-	const text = formatTg(tps);
-	return text || undefined;
+	return tps === undefined ? undefined : formatTg(tps) || undefined;
 }
 
-export function visibleChildTg(
-	model: string | undefined,
-	meter: TgMeter,
-	lastTg: string | undefined,
-	now = Date.now(),
-): string | undefined {
-	if (!model || !isLocalModel(model)) return undefined;
-	return tgLabel(meter, now) ?? lastTg;
+/** Frozen average over every streamed assistant message, for finished runs. */
+export function averageTg(meter: TgMeter): number | undefined {
+	const current = messageWindow(meter);
+	return speedFrom(meter.tokens + current.tokens, meter.ms + current.ms);
+}
+
+export function averageTgLabel(meter: TgMeter): string | undefined {
+	const tps = averageTg(meter);
+	return tps === undefined ? undefined : formatTg(tps) || undefined;
 }

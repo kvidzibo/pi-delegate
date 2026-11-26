@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { ArchivedRun, archiveRoot, loadRuns, type RunIdentity } from "../archive.ts";
 import { totalTokens } from "../usage.ts";
+import { statsReport } from "../stats.ts";
 
 const identity: RunIdentity = { parentSessionId: "parent", parentSessionFile: "/parent.jsonl", toolCallId: "tool-call", kind: "recon", cwd: "/tmp", requestedModel: "local-qwen38/qwen38-q4km", thinking: "off", tools: ["read"] };
 const used = { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 };
@@ -206,4 +207,20 @@ test("simultaneous processes use globally unique runs and independently append v
 	assert.equal(rows.length, 8);
 	assert.equal(new Set(rows.map((r) => r.runId)).size, 8);
 	assert.equal((await loadRuns(root)).runs.length, 9);
+});
+
+test("finished runs archive their average generation rate for stats", async (t) => {
+	const { root, run } = setup(t);
+	let now = 1_000;
+	t.mock.method(Date, "now", () => now);
+	run.start("d0001");
+	run.observe({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "abcd".repeat(10) } });
+	now = 2_000;
+	assistant(run); run.observe({ type: "agent_settled" });
+	now = 9_000;
+	await run.finish({ status: "done" });
+	assert.equal(run.data.tg, 20, "usage output 20 over 1s of streaming");
+	const [loaded] = (await loadRuns(root)).runs;
+	assert.equal(loaded.tg, 20);
+	assert.match(statsReport([loaded], root, "session"), /d0001 recon \S+ done 120 tokens ~tg 20\.0\/s/);
 });

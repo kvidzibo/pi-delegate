@@ -22,7 +22,7 @@ export function projectJobBoard(jobs: readonly JobSnapshot[], limits: { maxLocal
 				reason: job.reason, wrapped: job.wrapped, cancellationRequested: job.cancellationRequested,
 				phase: job.thinking ? "thinking" : undefined,
 				current: tool(job.current), activity: job.activity.map(tool).filter((item) => item !== undefined).slice(-3),
-				tg: job.local ? job.tg : undefined, recordingError: job.recordingError,
+				tg: job.tg, recordingError: job.recordingError,
 				resource: job.resource ? { key: job.resource.key } : undefined, resourceError: job.resourceError,
 				sessionFile: job.archive?.sessionFile,
 			};

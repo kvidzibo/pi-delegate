@@ -1,7 +1,7 @@
 import { addTokens, emptyUsage, totalTokens, type UsageSummary } from "./usage.ts";
 import { runPaths, type RunRecord } from "./archive.ts";
 import { validSnapshot, validEstimate } from "./calibration.ts";
-import { isLocalModel } from "./tg.ts";
+import { formatTg, isLocalModel } from "./tg.ts";
 import { copyOutcome } from "./outcomes.ts";
 
 export type StatsScope = "session" | "today" | "all";
@@ -82,7 +82,7 @@ export function statsReport(runs: RunRecord[], root: string, scope: string, warn
 	const recent = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
 	if (recent.length) lines.push("Latest runs (full history remains in the archive):");
 	for (const run of recent) {
-		lines.push(`${run.jobId ?? "queued"} ${run.kind} ${run.actualModel ?? run.requestedModel} ${run.status} ${totalTokens(run.usage)} tokens${run.usage.incomplete ? " (partial)" : ""}`);
+		lines.push(`${run.jobId ?? "queued"} ${run.kind} ${run.actualModel ?? run.requestedModel} ${run.status} ${totalTokens(run.usage)} tokens${run.usage.incomplete ? " (partial)" : ""}${typeof run.tg === "number" && formatTg(run.tg) ? ` ${formatTg(run.tg)}` : ""}`);
 		const outcome = copyOutcome(run.outcome);
 		if (outcome) lines.push(`  Worker: ${outcome.execution}; response lifecycle: ${outcome.responses}${outcome.limitations.length ? `; limitations: ${outcome.limitations.join(", ")}` : ""}`);
 		lines.push(`  ${runPaths(root, run.runId).session}`);
