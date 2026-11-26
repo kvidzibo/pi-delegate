@@ -209,6 +209,7 @@ export async function cardProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext) 
 	for (let attempt = 0; attempt < 100 && !entries.some((e) => e.customType === CARD_STATE_TYPE && e.data.originToolCallId === "origin"); attempt++) await new Promise((r) => setTimeout(r, 5));
 	assert.equal(entries.filter((e) => e.customType === CARD_STATE_TYPE).length, completedBeforeOriginal + 1);
 	assert.ok(original.row.invalidations() > before, "returned spawn must be invalidated at completion without a collect call");
+	original.row.context.state.delegateResult.details.tg = "~tg 10.0/s"; // live rate from an earlier receipt
 	const completed = original.row.render();
 	assert.match(completed, /○ Finished · needs validation/); assert.match(completed, /Review complete/);
 	assert.match(completed.split("\n")[0], /grok-4\.6 · \w+ · \d+s$/, "completed compact headers keep frozen archive duration");

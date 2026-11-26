@@ -189,7 +189,7 @@ export class ArchivedRun {
 		this.noteFinalization(finalization);
 		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
 		const tg = averageTg(this.tg);
-		if (tg !== undefined) this.data.tg = Math.round(tg * 10) / 10;
+		if (tg !== undefined) this.data.tg = tg; // Unrounded: displays format it like the card.
 		this.data.outcome = describeOutcome({ ...this.data, evidence });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
 		this.persist();

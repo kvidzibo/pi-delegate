@@ -311,6 +311,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			&& saved.details.callType === "spawn" && saved.details.jobId === current.jobId;
 		const snapshot = failedOrigin || (!context.isError && saved?.details?.ok !== false) ? current : undefined;
 		const details: CardDetails = { ...saved?.details, ...snapshot };
+		// A receipt's live rate must not survive as a finished average the job snapshot omitted.
+		if (snapshot && snapshot.tg === undefined) delete details.tg;
 		const kind = knownKind(details.kind) ?? knownKind(args.kind);
 		details.kind ??= kind;
 		details.model ??= args.model ?? (kind && Object.hasOwn(config.agents, kind) ? config.agents[kind].model : undefined);
