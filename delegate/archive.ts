@@ -9,6 +9,7 @@ import { copyCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyFinalizationProgress, type FinalizationProgress } from "../child-runtime/guard-protocol.ts";
 import { copyResponseEvidence, type ResponseEvidence } from "../child-runtime/evidence.ts";
 import { copyOutcome, describeOutcome, type ExecutionOutcome } from "./outcomes.ts";
+import { applyTgEvent, averageTg, createTgMeter, isLocalModel, type TgMeter } from "./tg.ts";
 
 import type { CompletionHookResult } from "./completion-hook.ts";
 
@@ -38,6 +39,8 @@ export type RunRecord = {
 	exitCode?: number;
 	durationMs: number;
 	usage: UsageSummary;
+	/** Approximate output tokens/s over streamed assistant messages; hidden reasoning can inflate it. */
+	tg?: number;
 	recordingError?: string;
 	savings?: SavingsSnapshot;
 	savingsUnavailable?: string;
@@ -102,6 +105,8 @@ export class ArchivedRun {
 	readonly paths: ReturnType<typeof runPaths>;
 	readonly meter: UsageMeter;
 	readonly data: RunRecord;
+	/** Authoritative rate meter, shared with the job card; fed before the scheduler sees each event. */
+	readonly tg: TgMeter;
 	private finished = false;
 	private errorNotified = false;
 	private onError: (message: string) => void;
@@ -117,6 +122,7 @@ export class ArchivedRun {
 		// Never reuse or replace an existing run directory.
 		mkdirSync(this.paths.dir, { mode: 0o700 });
 		this.meter = new UsageMeter(identity.requestedModel, identity.savings);
+		this.tg = createTgMeter(!isLocalModel(identity.requestedModel));
 		const { capabilities: requested, ...fields } = identity;
 		const capabilities = copyCapabilities(requested);
 		this.data = { ...fields, tools: [...identity.tools], ...(capabilities ? { capabilities } : {}),
@@ -143,6 +149,7 @@ export class ArchivedRun {
 		if (this.finished) return false;
 		const progress = record(event);
 		if (progress.type === "delegate_finalization" && this.noteFinalization(progress.state)) { this.persist(); return true; }
+		applyTgEvent(this.tg, event);
 		const result = this.meter.observe(event);
 		if (result.changed) {
 			this.data.actualModel = this.meter.resolvedModel;
@@ -181,6 +188,8 @@ export class ArchivedRun {
 		const { finalization, evidence, ...terminal } = outcome;
 		this.noteFinalization(finalization);
 		Object.assign(this.data, terminal, { finishedAt: new Date().toISOString() });
+		const tg = averageTg(this.tg);
+		if (tg !== undefined) this.data.tg = tg; // Unrounded: displays format it like the card.
 		this.data.outcome = describeOutcome({ ...this.data, evidence });
 		this.data.durationMs = this.data.startedAt ? Math.max(0, Date.now() - Date.parse(this.data.startedAt)) : 0;
 		this.persist();

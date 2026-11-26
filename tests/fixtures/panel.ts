@@ -57,16 +57,19 @@ function checkHeaderMetadata() {
 	for (const expanded of [false, true]) for (const [timing, expected] of [
 		[{ status: "running", elapsedMs: 83000 }, "1m 23s"],
 		[{ status: "queued", elapsedMs: 12000 }, "queued 12s"],
-		[{ status: "done", elapsedMs: 83000, durationMs: 128000 }, "2m 8s"],
-		[{ status: "failed", durationMs: 0 }, "0s"],
+		[{ status: "done", elapsedMs: 83000, durationMs: 128000 }, "2m 8s · ~tg 40/s"],
+		[{ status: "failed", durationMs: 0 }, "0s · ~tg 40/s"],
 	] as const) {
-		const state: RowState = { details: { jobId: "d0001", kind: "implement", model: "hosted/luna", reasoning: "high", ...timing },
+		// Pending cards show the rate in their status line only; finished headers keep the average.
+		const state: RowState = { details: { jobId: "d0001", kind: "implement", model: "hosted/luna", reasoning: "high", tg: "~tg 40/s", ...timing },
 			collect: false, live: true, pinned: true, isPartial: false, expanded };
 		const input = { theme, read: () => state };
 		const header = renderChildCall(input).render(200).join("\n");
 		assert.ok(header.endsWith(` · high · ${expected}`));
 		const body = renderChildResult(input).render(200).join("\n");
 		assert.doesNotMatch(header + body, /effort|Duration:|elapsed|queued for/);
+		const legacy = renderChildCall({ theme, read: () => ({ ...state, details: { ...state.details, tg: "tg 40.0/s" } }) }).render(200).join("\n");
+		assert.doesNotMatch(legacy, /tg 40\.0/, "pre-0.40 last-reply rates are not shown as run averages");
 		assert.ok(!body.includes(expected), "timing appears only in the header");
 	}
 }
@@ -211,13 +214,13 @@ function checkFullCardAnchoring() {
 
 	// The retired strip's status coverage belongs to the production full-card renderer.
 	const mixed = projectJobBoard([
-		{ ...job, local: true, model: "local-qwen38/qwen38-q4km", thinking: true, tg: "tg 40/s", current: { mark: "→", name: "read" } },
+		{ ...job, local: true, model: "local-qwen38/qwen38-q4km", thinking: true, tg: "~tg 40/s", current: { mark: "→", name: "read" } },
 		{ ...job, id: "d0002", status: "queued", reason: "gpu", current: undefined },
 		{ ...job, id: "d0003", thinking: true, wrapped: true, current: undefined },
 	], { maxLocalConcurrent: 1 })!;
 	const rendered = renderJobBoard(mixed, 100, 12, theme, false, "").join("\n");
 	assert.match(rendered, /d0001[\s\S]*d0002[\s\S]*d0003/, "cards keep acceptance order");
-	assert.match(rendered, /Running — reading file · tg 40\/s/, "in-flight tools take precedence over thinking");
+	assert.match(rendered, /Running — reading file · ~tg 40\/s/, "in-flight tools take precedence over thinking");
 	assert.match(rendered, /Queued — waiting for GPU/);
 	assert.match(rendered, /Running — thinking · wrap requested/);
 	assert.equal(mixed.summary, "delegate  2 run  1 wait  local 1/1");

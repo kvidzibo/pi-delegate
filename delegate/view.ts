@@ -3,7 +3,6 @@ import { Markdown, Text, stripTerminalSequences, truncateToWidth, visibleWidth, 
 import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
-import { isLocalModel } from "./tg.ts";
 import type { CardDetails } from "./cards.ts";
 import type { JobBoardState } from "./panel.ts";
 import { capabilityContent } from "./capabilities.ts";
@@ -31,9 +30,13 @@ function headerMetadata(d: CardDetails): string {
 	const speed = str(d, "speed");
 	const pending = d.status === "running" || d.status === "queued";
 	const duration = formatDuration(pending ? (d.historical ? undefined : d.elapsedMs) : d.durationMs);
+	// Running cards show the live rate in their status line; finished headers keep the run average.
+	// Pre-0.40 cards stored an unlabelled last-reply rate (`tg n/s`), not a run average; omit it.
+	const tg = !pending && str(d, "tg").startsWith("~tg ") ? str(d, "tg") : "";
 	return (reasoning ? ` · ${displayText(reasoning)}` : "")
 		+ (speed ? ` · ${displayText(speed)}` : "")
-		+ (duration === undefined ? "" : ` · ${d.status === "queued" ? "queued " : ""}${duration}`);
+		+ (duration === undefined ? "" : ` · ${d.status === "queued" ? "queued " : ""}${duration}`)
+		+ (tg ? ` · ${displayText(tg)}` : "");
 }
 
 function receipt(state: RowState): string {
@@ -72,7 +75,7 @@ function statusLine(state: RowState): { color: string; text: string } {
 		if (d.cancellationRequested) return { color: "muted", text: "● Cancelling — waiting for child cleanup" };
 		const current = asActivityItem(d.current);
 		const phase = current?.mark === "→" ? activityLabel(current) : d.phase === "thinking" ? "thinking" : activityLabel(current);
-		const tg = isLocalModel(str(d, "model")) && d.tg ? ` · ${str(d, "tg")}` : "";
+		const tg = d.tg ? ` · ${displayText(str(d, "tg"))}` : "";
 		return { color: "accent", text: `● Running — ${phase}${tg}${d.wrapped ? " · wrap requested" : ""}` };
 	}
 	return { color: "muted", text: "○ Preparing" };

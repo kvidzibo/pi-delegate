@@ -355,7 +355,7 @@ test("board summary shows running, queued and local-slot counts", () => {
 
 test("board summary ignores per-job activity, identity and terminal jobs", () => {
 	const jobs = [
-		{ id: "d0001", local: true, status: "running", thinking: "PRIVATE", current: { mark: "→" as const, name: "read" }, tg: "tg 40/s" },
+		{ id: "d0001", local: true, status: "running", thinking: "PRIVATE", current: { mark: "→" as const, name: "read" }, tg: "~tg 40/s" },
 		{ id: "d0002", local: true, status: "queued", reason: "gpu" },
 		{ id: "d0003", local: false, status: "running", thinking: "SECRET", wrapped: true },
 		{ id: "d0004", local: true, status: "done" },

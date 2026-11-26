@@ -7,6 +7,7 @@ import { Accounting } from "../accounting.ts";
 import type { AgentConfig } from "../config.ts";
 import { JobScheduler } from "../jobs.ts";
 import { agentPrompt, enqueueDelegate, signedInSpeed } from "../service.ts";
+import { formatTg } from "../tg.ts";
 
 test("role response policy is snapshotted, formats instructions and saves private collectible results without changing outcomes", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "delegate-response-test-"));
@@ -140,4 +141,29 @@ test("speed stays active only for ChatGPT-authenticated registry models", () => 
 	assert.equal(agent.speed, "fast", "the configured role is not mutated");
 	const inactive = { ...agent, model: "hosted/mock" };
 	assert.equal(signedInSpeed({ find: () => { throw new Error("unused"); }, isUsingOAuth: () => false }, inactive.model, inactive), inactive);
+});
+
+test("cards and archives share one generation-rate measurement", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "delegate-tg-test-"));
+	const accounting = new Accounting(root);
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 4 });
+	t.after(async () => { await scheduler.shutdown(); accounting.close(); rmSync(root, { recursive: true, force: true }); });
+	let now = 0;
+	t.mock.method(Date, "now", () => now);
+	const agent: AgentConfig = { model: "hosted/mock", prompt: "p", thinking: "off", tools: [], extensions: false };
+	const job = enqueueDelegate({ scheduler, accounting, agent,
+		identity: { kind: "review", requestedModel: agent.model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: "tg" },
+		task: "t", timeoutMs: 1000, background: true, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+		childRunner: async input => {
+			now = 1_000;
+			input.onEvent?.({ type: "message_start", message: { role: "assistant" } });
+			for (let i = 0; i < 5; i++) { now += 100; input.onEvent?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "abcd" } }); }
+			input.onEvent?.({ type: "message_end", message: { role: "assistant" } });
+			return { text: "ok", stopReason: "stop", exitCode: 0, stderrTail: "" };
+		},
+	});
+	const done = await scheduler.wait(job.id);
+	const archived = JSON.parse(readFileSync(join(root, "runs", done.archive!.runId, "metadata.json"), "utf8")).tg;
+	assert.equal(archived, 10, "5 estimated tokens over 500 ms, each event metered once");
+	assert.equal(done.tg, formatTg(archived));
 });

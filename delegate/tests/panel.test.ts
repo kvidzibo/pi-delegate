@@ -24,15 +24,15 @@ test("panel projection carries full card identity and task while excluding raw t
 	assert.equal((first.cards[0].activity as any[])[0].args, "file.ts", "projection owns its tool snapshots");
 });
 
-test("panel preserves active acceptance order, queue/wrap/warnings and local rates, excluding terminal jobs", () => {
+test("panel preserves active acceptance order, queue/wrap/warnings and rates, excluding terminal jobs", () => {
 	const state = projectJobBoard([job(), job({ id: "d0002", status: "queued", reason: "gpu", local: true, wrapped: true }),
-		job({ id: "d0003", status: "done" }), job({ id: "d0004", local: true, tg: "tg 40/s", recordingError: "Recording incomplete" })], limits)!;
+		job({ id: "d0003", status: "done" }), job({ id: "d0004", local: true, tg: "~tg 40/s", recordingError: "Recording incomplete" })], limits)!;
 	assert.deepEqual(state.cards.map((d) => d.jobId), ["d0001", "d0002", "d0004"]);
 	assert.equal(state.cards[1].reason, "gpu"); assert.equal(state.cards[1].wrapped, true);
-	assert.equal(state.cards[2].tg, "tg 40/s"); assert.equal(state.cards[2].recordingError, "Recording incomplete");
+	assert.equal(state.cards[2].tg, "~tg 40/s"); assert.equal(state.cards[2].recordingError, "Recording incomplete");
 	assert.equal(state.summary, "delegate  2 run  1 wait  local 1/1");
 	assert.equal(projectJobBoard([job({ status: "done" })], limits), undefined);
-	assert.equal(projectJobBoard([job({ tg: "tg 90/s" })], limits)!.cards[0].tg, undefined);
+	assert.equal(projectJobBoard([job({ tg: "~tg 90/s" })], limits)!.cards[0].tg, "~tg 90/s", "hosted jobs show rates too");
 });
 
 test("panel clock counts whole seconds from queue/start time and resets when promoted", () => {
