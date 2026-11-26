@@ -21,8 +21,10 @@ const sequence = (jobId: string | undefined): number => jobId && /^d[0-9a-f]+$/.
  */
 export function summarizeSession(runs: RunRecord[], sessionId: string, options: { active: ReadonlySet<string>; jobIds?: ReadonlyMap<string, string>; now?: number; warnings?: number }): SessionSummary {
 	const now = options.now ?? Date.now();
+	// Archive validation does not type these optional fields; never let one record break the table.
+	const text = (value: unknown): string | undefined => typeof value === "string" && value ? value : undefined;
 	const rows = latestRuns(runs).filter(run => run.parentSessionId === sessionId)
-		.map(run => ({ run, jobId: run.jobId ?? options.jobIds?.get(run.runId) }))
+		.map(run => ({ run, jobId: text(run.jobId) ?? options.jobIds?.get(run.runId) }))
 		.sort((a, b) => Date.parse(a.run.createdAt) - Date.parse(b.run.createdAt) || sequence(a.jobId) - sequence(b.jobId))
 		.map(({ run, jobId }): SummaryRow => {
 			// Only this process's running jobs are measurably live; stale on-disk "running" rows show no duration.
@@ -30,9 +32,9 @@ export function summarizeSession(runs: RunRecord[], sessionId: string, options: 
 			const started = run.startedAt ? Date.parse(run.startedAt) : NaN;
 			const durationMs = run.finishedAt ? run.durationMs : live && Number.isFinite(started) ? Math.max(0, now - started) : undefined;
 			const partial = Boolean(run.startedAt) && !live && (run.usage.incomplete || run.usage.missing > 0);
-			const unknown = !run.startedAt || (partial && run.usage.reported === 0);
+			const unknown = !run.startedAt || (partial && totalTokens(run.usage) === 0);
 			return {
-				...(jobId ? { jobId } : {}), kind: run.kind, model: run.actualModel ?? run.requestedModel,
+				...(jobId ? { jobId } : {}), kind: run.kind, model: text(run.actualModel) ?? run.requestedModel,
 				reasoning: run.thinking, status: run.status, ...(durationMs === undefined ? {} : { durationMs }),
 				...(unknown ? {} : { tokens: totalTokens(run.usage) }), ...(live ? { live } : {}), ...(partial ? { partial } : {}),
 			};
@@ -77,8 +79,10 @@ export function summaryLines(summary: SessionSummary, theme: ThemeFg, measure: (
 		row.tokens === undefined ? "—" : `${formatTokens(row.tokens)}${mark(row)}`].map(displayText));
 	const anyLive = summary.rows.some(row => row.live);
 	const lowerBound = summary.rows.some(row => row.partial);
+	// A stale "running" archive (e.g. after a crash) has unknown runtime.
+	const timeLowerBound = summary.rows.some(row => row.status === "running" && row.durationMs === undefined);
 	const timed = summary.rows.filter(row => row.durationMs !== undefined), counted = summary.rows.filter(row => row.tokens !== undefined);
-	const totalTime = timed.length ? `${formatDuration(timed.reduce((sum, row) => sum + row.durationMs!, 0))}${anyLive ? "…" : ""}` : "—";
+	const totalTime = timed.length ? `${formatDuration(timed.reduce((sum, row) => sum + row.durationMs!, 0))}${anyLive ? "…" : timeLowerBound ? "+" : ""}` : "—";
 	const totalTokens = counted.length ? `${formatTokens(counted.reduce((sum, row) => sum + row.tokens!, 0))}${anyLive ? "…" : lowerBound ? "+" : ""}` : "—";
 	const widths = HEADER.map((name, column) => Math.max(measure(name), ...cells.map(row => measure(row[column])),
 		column === 6 ? measure(totalTime) : column === 7 ? measure(totalTokens) : 0));
@@ -98,7 +102,7 @@ export function summaryLines(summary: SessionSummary, theme: ThemeFg, measure: (
 	const totals = `${fits ? theme.fg("muted", runs) : ""}${" ".repeat(durationStart - (fits ? measure(runs) : 0))}${theme.bold(`${pad(totalTime, 6)}  ${pad(totalTokens, 7)}`)}`;
 	const notes = ["Launch order, as in the live panel"];
 	if (anyLive) notes.push("… still running");
-	if (lowerBound) notes.push("+ partial usage (lower bound)");
+	if (lowerBound || timeLowerBound) notes.push("+ lower bound (incomplete records)");
 	const ids = summary.rows.flatMap(row => row.jobId ? [row.jobId] : []);
 	if (new Set(ids).size < ids.length) notes.push("job IDs restart after reload or resume");
 	return [

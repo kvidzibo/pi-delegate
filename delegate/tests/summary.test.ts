@@ -20,9 +20,12 @@ test("session summary lists launch order with live, stale, queued, partial and r
 		run("b", { createdAt: at(5), jobId: "d0002", status: "failed", startedAt: at(5), finishedAt: at(10), durationMs: 5_000, usage: tokens(2_000, { incomplete: true }) }),
 		run("d", { createdAt: at(40), status: "queued" }),
 		run("e", { createdAt: at(50), jobId: "d0004", status: "running", startedAt: at(50), usage: { ...emptyUsage(), incomplete: true } }),
+		// Cancelled mid-stream: no completed report, but the observed lower bound is kept.
+		run("g", { createdAt: at(60), jobId: "d0005", status: "failed", startedAt: at(60), finishedAt: at(61), durationMs: 1_000, usage: tokens(120, { reported: 0, incomplete: true }) }),
 		run("x", { parentSessionId: "other", createdAt: at(2) }),
 	];
 	runs[3].usage.missing = 1; runs[3].usage.incomplete = true;
+	(runs[1] as any).actualModel = 42; // malformed optional archive field falls back to the requested model
 	const summary = summarizeSession(runs, "session-1", { active: new Set(["c", "d"]), jobIds: new Map([["d", "d0002"]]), now: Date.parse(at(131)), warnings: 1 });
 	assert.deepEqual(summary.rows.map(row => [row.jobId, row.status, row.model, row.durationMs, row.tokens, row.live, row.partial]), [
 		["d0001", "done", "p/requested-model-name", 351_000, 1_167_531, undefined, undefined],
@@ -31,6 +34,7 @@ test("session summary lists launch order with live, stale, queued, partial and r
 		["d0001", "running", "p/actual", 100_000, 96_300, true, undefined],
 		["d0002", "queued", "p/requested-model-name", undefined, undefined, undefined, undefined],
 		["d0004", "running", "p/requested-model-name", undefined, undefined, undefined, true],
+		["d0005", "failed", "p/requested-model-name", 1_000, 120, undefined, true],
 	]);
 	const lines = summaryLines(summary, plainBoardTheme);
 	assert.match(lines[0], /\[delegate summary\] · session session- · not sent to model/);
@@ -39,11 +43,12 @@ test("session summary lists launch order with live, stale, queued, partial and r
 	assert.match(lines[6], /^3  d0003 .* failed +1s +—$/);
 	assert.match(lines[7], /^4  d0001  oracle +p\/actual +xhigh +running +1m 40s… +96\.3k…$/);
 	assert.match(lines[8], /^5  d0002  review .* queued +— +—$/);
-	assert.match(lines[11], /6 runs · 1 done · 2 failed · 2 running · 1 queued +7m 37s… +1\.3m…$/);
-	assert.equal(lines.at(-2), "Launch order, as in the live panel · … still running · + partial usage (lower bound) · job IDs restart after reload or resume");
+	assert.match(lines[10], /^7  d0005 .* failed +1s +120\+$/);
+	assert.match(lines[12], /7 runs · 1 done · 3 failed · 2 running · 1 queued +7m 38s… +1\.3m…$/);
+	assert.equal(lines.at(-2), "Launch order, as in the live panel · … still running · + lower bound (incomplete records) · job IDs restart after reload or resume");
 	assert.match(lines.at(-1)!, /^1 unreadable archive record; totals may be incomplete/);
 	const width = (line: string) => [...line].length;
-	assert.equal(new Set([lines[2], ...lines.slice(4, 10), lines[11]].map(width)).size, 1, "table rows and totals must align");
+	assert.equal(new Set([lines[2], ...lines.slice(4, 11), lines[12]].map(width)).size, 1, "table rows and totals must align");
 
 	// Counts that do not fit left of Duration move below the totals instead of pushing them out of their columns.
 	const short = { kind: "r", requestedModel: "m", thinking: "off" };
@@ -54,7 +59,7 @@ test("session summary lists launch order with live, stale, queued, partial and r
 		run("n4", { ...short, status: "queued" }),
 	], "session-1", { active: new Set() }), plainBoardTheme);
 	assert.equal(width(narrow[9]), width(narrow[2]));
-	assert.match(narrow[9], /^ +2s +15$/);
+	assert.match(narrow[9], /^ +2s\+ +15$/, "a stale running run makes the time total a lower bound");
 	assert.match(narrow[10], /4 runs · 1 done · 1 failed · 1 running · 1 queued/);
 
 	assert.deepEqual(copySummary(JSON.parse(JSON.stringify(summary))), summary);

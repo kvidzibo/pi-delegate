@@ -105,11 +105,12 @@ export class Accounting {
 		return { runs, warnings: loaded.warnings };
 	}
 
-	async summary(sessionId: string, jobIds?: ReadonlyMap<string, string>): Promise<SessionSummary> {
+	/** `jobIds` is read after the scan, with the active set, so jobs queued meanwhile keep their scheduler ID. */
+	async summary(sessionId: string, jobIds?: () => ReadonlyMap<string, string>): Promise<SessionSummary> {
 		const { runs, warnings } = await this.currentRuns();
 		// Unattributable archive errors may hide this session's runs too.
 		const unreadable = warnings.filter(w => !w.parentSessionId || w.parentSessionId === sessionId).length;
-		return summarizeSession([...runs.values()], sessionId, { active: new Set(this.active.keys()), jobIds, warnings: unreadable });
+		return summarizeSession([...runs.values()], sessionId, { active: new Set(this.active.keys()), jobIds: jobIds?.(), warnings: unreadable });
 	}
 
 	async report(scope: StatsScope, sessionId: string, rebuild = false): Promise<string> {

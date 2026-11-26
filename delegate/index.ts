@@ -389,8 +389,8 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		description: "Table of this session's delegate runs (not sent to model)",
 		handler: async (args, ctx) => {
 			if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate summary", "warning"); return; }
-			const jobIds = new Map(scheduler.list().flatMap(snap => snap.archive ? [[snap.archive.runId, snap.id] as const] : []));
-			const summary = await accounting.summary(ctx.sessionManager.getSessionId(), jobIds);
+			const summary = await accounting.summary(ctx.sessionManager.getSessionId(),
+				() => new Map(scheduler.list().flatMap(snap => snap.archive ? [[snap.archive.runId, snap.id] as const] : [])));
 			if (!summary.rows.length) {
 				ctx.ui.notify(summary.warnings ? `No readable delegate runs in this session: ${summaryWarning(summary.warnings)}.` : "No delegate runs in this session yet.", summary.warnings ? "warning" : "info");
 				return;
