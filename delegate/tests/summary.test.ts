@@ -44,7 +44,7 @@ test("session summary lists launch order with live, stale, queued, partial and r
 	assert.match(lines[7], /^4  d0001  oracle +p\/actual +xhigh +running +1m 40s… +96\.3k…$/);
 	assert.match(lines[8], /^5  d0002  review .* queued +— +—$/);
 	assert.match(lines[10], /^7  d0005 .* failed +1s +120\+$/);
-	assert.match(lines[12], /7 runs · 1 done · 3 failed · 2 running · 1 queued +7m 38s… +1\.3m…$/);
+	assert.match(lines[12], /7 runs · 1 done · 3 failed · 2 running · 1 queued +7m 38s\+… +1\.3m\+…$/, "lower-bound and live markers combine");
 	assert.equal(lines.at(-2), "Launch order, as in the live panel · … still running · + lower bound (incomplete records) · job IDs restart after reload or resume");
 	assert.match(lines.at(-1)!, /^1 unreadable archive record; totals may be incomplete/);
 	const width = (line: string) => [...line].length;

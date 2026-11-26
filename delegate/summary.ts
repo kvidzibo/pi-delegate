@@ -82,8 +82,10 @@ export function summaryLines(summary: SessionSummary, theme: ThemeFg, measure: (
 	// A stale "running" archive (e.g. after a crash) has unknown runtime.
 	const timeLowerBound = summary.rows.some(row => row.status === "running" && row.durationMs === undefined);
 	const timed = summary.rows.filter(row => row.durationMs !== undefined), counted = summary.rows.filter(row => row.tokens !== undefined);
-	const totalTime = timed.length ? `${formatDuration(timed.reduce((sum, row) => sum + row.durationMs!, 0))}${anyLive ? "…" : timeLowerBound ? "+" : ""}` : "—";
-	const totalTokens = counted.length ? `${formatTokens(counted.reduce((sum, row) => sum + row.tokens!, 0))}${anyLive ? "…" : lowerBound ? "+" : ""}` : "—";
+	// Markers are independent: "+" excludes unknown records, "…" is still growing.
+	const marks = (lower: boolean) => `${lower ? "+" : ""}${anyLive ? "…" : ""}`;
+	const totalTime = timed.length ? `${formatDuration(timed.reduce((sum, row) => sum + row.durationMs!, 0))}${marks(timeLowerBound)}` : "—";
+	const totalTokens = counted.length ? `${formatTokens(counted.reduce((sum, row) => sum + row.tokens!, 0))}${marks(lowerBound)}` : "—";
 	const widths = HEADER.map((name, column) => Math.max(measure(name), ...cells.map(row => measure(row[column])),
 		column === 6 ? measure(totalTime) : column === 7 ? measure(totalTokens) : 0));
 	const pad = (text: string, column: number) => {
