@@ -44,6 +44,8 @@ Model choices match `/model`: scoped models first when `/scoped-models` is set, 
 
 Use **`/pi-delegate jobs`** for active/queued jobs and full tasks, or **`/pi-delegate stats [session|today|all|rebuild]`** for usage.
 
+**`/pi-delegate summary`** prints a table of this session's delegate runs into the transcript, in launch order like the live panel: job ID, role, model, reasoning, status, duration and tokens, plus totals. It is a display-only session entry, never sent to the model, and stays as a snapshot on resume. Running jobs show elapsed time and tokens so far; job IDs restart after reload or resume, so `#` is the unique row number. Non-TUI modes show the table as a notice.
+
 Jobs and stats use framed, opaque panels so live transcript output stays visually separate. They support ↑/↓, Page Up/Down and Home/End; Esc returns. In the interactive stats panel, **1/2/3** switches Session/Today/All. Jobs refresh while open without changing their state.
 
 Manual configuration edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**

@@ -23,9 +23,10 @@ import { Accounting } from "./accounting.ts";
 import { registerDelegateCommand } from "./command.ts";
 import { showStats } from "./stats-view.ts";
 import { showJobs } from "./jobs-view.ts";
+import { SUMMARY_ENTRY_TYPE, copySummary, summaryLines } from "./summary.ts";
 import { archiveRoot } from "./archive.ts";
 import { isLocalModel } from "./tg.ts";
-import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, type RowState } from "./view.ts";
+import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage, renderSummary, type RowState } from "./view.ts";
 import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
 import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
@@ -285,6 +286,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		});
 	}
 
+	if (typeof pi.registerEntryRenderer === "function") {
+		pi.registerEntryRenderer(SUMMARY_ENTRY_TYPE, (entry, _options, theme) => {
+			const summary = copySummary(entry.data);
+			return summary ? renderSummary(summary, theme) : undefined;
+		});
+	}
+
 	const readRow = (context: ViewContext): RowState => {
 		const args = context.args ?? (context.state.delegateArgs as Record<string, unknown> | undefined) ?? {};
 		const saved = context.state.delegateResult as { details?: CardDetails; content?: RowState["content"] } | undefined;
@@ -375,6 +383,18 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				signal: dialogs.signal,
 				load: next => accounting.report(next, ctx.sessionManager.getSessionId()),
 			});
+		},
+	}, {
+		name: "summary",
+		description: "Table of this session's delegate runs (not sent to model)",
+		handler: async (args, ctx) => {
+			if (args.trim()) { ctx.ui.notify("Usage: /pi-delegate summary", "warning"); return; }
+			const jobIds = new Map(scheduler.list().flatMap(snap => snap.archive ? [[snap.archive.runId, snap.id] as const] : []));
+			const summary = await accounting.summary(ctx.sessionManager.getSessionId(), jobIds);
+			if (!summary.rows.length) { ctx.ui.notify("No delegate runs in this session yet.", "info"); return; }
+			// A custom entry renders in the TUI transcript but never joins model context.
+			if (ctx.mode === "tui" && typeof pi.registerEntryRenderer === "function") pi.appendEntry(SUMMARY_ENTRY_TYPE, summary);
+			else ctx.ui.notify(summaryLines(summary, plainBoardTheme).join("\n"), "info");
 		},
 	}, {
 		name: "jobs",

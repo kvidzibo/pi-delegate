@@ -1,5 +1,5 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Markdown, Text, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
@@ -9,6 +9,7 @@ import type { JobBoardState } from "./panel.ts";
 import { capabilityContent } from "./capabilities.ts";
 import { outcomeContent } from "./outcomes.ts";
 import { completionHookContent } from "./completion-hook.ts";
+import { summaryLines, type SessionSummary } from "./summary.ts";
 
 export type RowState = {
 	details: CardDetails;
@@ -20,7 +21,7 @@ export type RowState = {
 	live: boolean;
 	pinned?: boolean;
 };
-type CardBackground = "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
+type CardBackground = "toolPendingBg" | "toolSuccessBg" | "toolErrorBg" | "customMessageBg";
 type CardTheme = ThemeFg & { bg?: (key: CardBackground, text: string) => string };
 type RowInput = { theme: CardTheme; read: () => RowState; expandHint?: string };
 const str = (details: CardDetails, key: string): string => typeof details[key] === "string" ? details[key] as string : "";
@@ -249,4 +250,12 @@ export function renderJobBoard(state: JobBoardState, width: number, maxRows: num
 
 export function renderNotifyMessage(input: { theme: ThemeFg; details: NotifyDetails; expanded: boolean }): Text {
 	return new Text(paintNotify(input.theme, input.details, input.expanded), 0, 0);
+}
+
+/** Table rows are clipped, not wrapped, so columns stay aligned; the fill survives clipping resets. */
+export function renderSummary(summary: SessionSummary, theme: CardTheme): Component {
+	return {
+		render: width => paintCard(theme, ["", ...summaryLines(summary, theme).map(line => ` ${truncateToWidth(line, Math.max(1, width - 2), "…")}`), ""], width, "customMessageBg"),
+		invalidate() {},
+	};
 }
