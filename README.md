@@ -40,7 +40,7 @@ Pi supplies peer dependencies and installs runtime dependencies for npm/git sour
 
 Run **`/pi-delegate`** for the menu, or **`/pi-delegate roles`** for the full native Roles editor: enablement, model, supported reasoning, tools (including all/none), extension discovery, multiline prompt, optional response template, raw JSON Schema editor, repair attempts, save-to-file toggle, per-role completion hook and named-role creation. Short choices cycle inline. **Save role** persists changes; Esc discards the draft and goes back. New roles require an explicit available model and nonblank prompt, defaulting to no tools, no extensions and reasoning off.
 
-Model choices match `/model` (scoped models when set, otherwise all available models). **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both editors save to `~/.pi/agent/delegate.json`, preserving unrelated and legacy keys; disk conflicts or uncertain catalogues refuse saves. Changes affect future jobs only; queued and running jobs keep their accepted settings. Unavailable models are never automatically replaced.
+Model choices match `/model`: scoped models first when `/scoped-models` is set, with **Tab** switching between scoped and all available models. **`/pi-delegate models`** retains the model-first picker followed by reasoning. Both editors save to `~/.pi/agent/delegate.json`, preserving unrelated and legacy keys; disk conflicts or uncertain catalogues refuse saves. Changes affect future jobs only; queued and running jobs keep their accepted settings. Unavailable models are never automatically replaced.
 
 Use **`/pi-delegate jobs`** for active/queued jobs and full tasks, or **`/pi-delegate stats [session|today|all|rebuild]`** for usage.
 

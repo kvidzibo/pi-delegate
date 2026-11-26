@@ -203,7 +203,7 @@ export default function probe(pi: ExtensionAPI) {
 						const rendered = component.render(100).join("\n");
 						assert.ok(rendered.includes("✓ current"));
 						assert.ok(rendered.includes(selected));
-						assert.ok(rendered.includes("Same models as /model."));
+						assert.ok(rendered.includes("Scope: ") && rendered.includes("toggle"), rendered);
 						assert.ok(!rendered.includes("picker-extra"), rendered);
 						assert.ok(!rendered.includes("picker-no-auth"));
 							const pick = ++modelPicks;
@@ -310,7 +310,7 @@ export default function probe(pi: ExtensionAPI) {
 							assert.ok(text.includes("picker-extra/other"), text);
 							assert.ok(text.includes(selected));
 							assert.ok(!text.includes("picker-no-auth"));
-							assert.ok(!text.includes("Same models as /model."));
+							assert.ok(!text.includes("Scope: ") && !text.includes("toggle"), text);
 							assert.match(text, /3\/3 available/);
 							component.handleInput("\x1b");
 							return result;
@@ -348,7 +348,31 @@ export default function probe(pi: ExtensionAPI) {
 				assert.equal(readFileSync(userPath, "utf8"), saved);
 			}
 			assert.ok(notices.some(text => text.includes("Cannot determine reasoning levels")));
-			return { roleModels: true, availableOnly: true, scopedOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
+			// Tab reveals all available models; an out-of-scope choice saves.
+			let allRoles = 0;
+			await commands.get("pi-delegate").handler("models", { ...testCtx, ui: { ...testCtx.ui,
+				select: async (title: string, options: string[]) => {
+					if (title.startsWith("Reasoning for")) return undefined;
+					if (!title.startsWith("Delegate models")) throw new Error(`unexpected ${title}`);
+					return ++allRoles === 1 ? options.find(option => option.startsWith("review · ")) : undefined;
+				},
+				custom: async (create: Function) => {
+					let result: string | undefined;
+					const tui = { terminal: { rows: 30 }, requestRender: () => {} };
+					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+					try {
+						component.handleInput("\t");
+						for (const char of "Unscoped") component.handleInput(char);
+						assert.match(component.render(100).join("\n"), /1\/3 available/);
+						component.handleInput("\r");
+						return result;
+					} finally { component.dispose(); }
+				},
+				confirm: async () => true,
+			} });
+			assert.equal(allRoles, 2);
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).agents.review.model, "picker-extra/other");
+			return { roleModels: true, availableOnly: true, scopeToggle: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();
 			if (skip === undefined) delete process.env.PI_DELEGATE_SKIP_USER_CONFIG; else process.env.PI_DELEGATE_SKIP_USER_CONFIG = skip;
