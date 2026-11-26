@@ -3,7 +3,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
-import { modelId, pickDelegateModel, selectableDelegateModels, type AvailableModel } from "./model-picker.ts";
+import { modelId, pickDelegateModel, scopedDelegateModels, type AvailableModel } from "./model-picker.ts";
 
 /** Changes affect future launches only. Accepted runners retain their agent object. */
 export class ModelCommand {
@@ -38,15 +38,15 @@ export class ModelCommand {
 			if (error) ctx.ui.notify(`Model catalogue: ${error}`, "warning");
 			let notice = "";
 			while (!signal.aborted) {
-				const availableModels = ctx.modelRegistry.getAvailable();
+				const models = ctx.modelRegistry.getAvailable();
 				const scoped = (ctx.scopedModels?.length ?? 0) > 0;
-				const models = selectableDelegateModels(availableModels, ctx.scopedModels);
-				const available = new Set(availableModels.map(modelId));
-				const selectable = new Set(models.map(modelId));
+				const scopedModels = scopedDelegateModels(models, ctx.scopedModels);
+				const available = new Set(models.map(modelId));
+				const inScope = new Set(scopedModels.map(modelId));
 				const kinds = Object.keys(this.config.agents);
 				const options = kinds.map(kind => {
 					const id = this.config.agents[kind].model;
-					const mark = selectable.has(id) ? "" : scoped && available.has(id) ? " (not in scope)" : " (unavailable)";
+					const mark = !available.has(id) ? " (unavailable)" : scoped && !inScope.has(id) ? " (not in scope)" : "";
 					return `${kind} · ${id}${mark} · reasoning: ${this.config.agents[kind].thinking}${roles && this.config.agents[kind].enabled === false ? " · disabled" : ""}`;
 				});
 				if (roles) options.push("Add named role…");
@@ -64,9 +64,9 @@ export class ModelCommand {
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
 				if (roles) {
 					const before = this.revision;
-					await this.editRole(ctx, kind, models, scoped, signal);
+					await this.editRole(ctx, kind, models, scopedModels, signal);
 					if (this.revision !== before) notice = "Saved role. New delegates use it now.";
-				} else notice = await this.configureRole(ctx, kind, models, scoped, signal);
+				} else notice = await this.configureRole(ctx, kind, models, scopedModels, signal);
 			}
 		} catch (error) {
 			if (!signal.aborted) ctx.ui.notify(`Delegate role settings: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -153,7 +153,7 @@ export class ModelCommand {
 		this.revision = saveDelegatePatch(this.paths, kind, current, patch, this.revision);
 	}
 
-	private async editRole(ctx: ExtensionCommandContext, kind: string | undefined, models: AvailableModel[], scoped: boolean, signal: AbortSignal): Promise<void> {
+	private async editRole(ctx: ExtensionCommandContext, kind: string | undefined, models: AvailableModel[], scopedModels: AvailableModel[], signal: AbortSignal): Promise<void> {
 		if (ctx.mode !== "tui") { ctx.ui.notify("Roles requires native Pi TUI mode.", "warning"); return; }
 		const adding = kind === undefined;
 		if (adding) {
@@ -167,7 +167,7 @@ export class ModelCommand {
 		const draft: AgentConfig = before ? structuredClone(before)
 			: { enabled: true, model: "", thinking: "off", prompt: "", tools: [], extensions: false };
 		if (adding) {
-			const selected = await pickDelegateModel(ctx, name, "", models, signal, scoped);
+			const selected = await pickDelegateModel(ctx, name, "", models, scopedModels, signal);
 			if (signal.aborted || selected === undefined) return;
 			draft.model = selected;
 			const prompt = await ctx.ui.editor(`Prompt for ${name}`, "");
@@ -200,7 +200,7 @@ export class ModelCommand {
 			});
 			if (signal.aborted || action === undefined) return;
 			if (action === "model") {
-				const selected = await pickDelegateModel(ctx, name, draft.model, models, signal, scoped);
+				const selected = await pickDelegateModel(ctx, name, draft.model, models, scopedModels, signal);
 				if (selected) draft.model = selected;
 			} else if (action === "thinking") {
 				const selected = await ctx.ui.select(`Reasoning for ${name}`, levels, { signal });
@@ -277,15 +277,13 @@ export class ModelCommand {
 
 	/** Model picker first. Reasoning opens only after a selection, including the current model. */
 	private async configureRole(
-		ctx: ExtensionCommandContext, kind: Kind, models: AvailableModel[], scoped: boolean, signal: AbortSignal,
+		ctx: ExtensionCommandContext, kind: Kind, models: AvailableModel[], scopedModels: AvailableModel[], signal: AbortSignal,
 	): Promise<string> {
 		let modelNotice = "";
 		if (!models.length) {
-			ctx.ui.notify(scoped
-				? "No scoped models are available. Adjust /scoped-models, or configure model access in Pi (/login or models.json)."
-				: "No models available. Configure model access in Pi (/login or models.json) first.", "warning");
+			ctx.ui.notify("No models available. Configure model access in Pi (/login or models.json) first.", "warning");
 		} else {
-			const picked = await this.saveModel(ctx, kind, models, scoped, signal);
+			const picked = await this.saveModel(ctx, kind, models, scopedModels, signal);
 			if (signal.aborted || picked === "cancelled") return "";
 			if (picked === "saved") modelNotice = `Saved model: ${this.config.agents[kind].model}. New delegates use it now.`;
 		}
@@ -294,11 +292,11 @@ export class ModelCommand {
 	}
 
 	private async saveModel(
-		ctx: ExtensionCommandContext, kind: Kind, models: AvailableModel[], scoped: boolean, signal: AbortSignal,
+		ctx: ExtensionCommandContext, kind: Kind, models: AvailableModel[], scopedModels: AvailableModel[], signal: AbortSignal,
 	): Promise<"cancelled" | "unchanged" | "saved"> {
 		while (!signal.aborted) {
 			const current = this.config.agents[kind];
-			const selected = await pickDelegateModel(ctx, kind, current.model, models, signal, scoped);
+			const selected = await pickDelegateModel(ctx, kind, current.model, models, scopedModels, signal);
 			if (signal.aborted || selected === undefined) return "cancelled";
 			if (selected === current.model) return "unchanged";
 			const confirmed = await ctx.ui.confirm(`Save ${kind} model?`, [
@@ -309,7 +307,7 @@ export class ModelCommand {
 			].join("\n"), { signal });
 			if (signal.aborted) return "cancelled";
 			if (!confirmed) continue;
-			if (!selectableDelegateModels(ctx.modelRegistry.getAvailable(), ctx.scopedModels).some(model => modelId(model) === selected)) {
+			if (!ctx.modelRegistry.getAvailable().some(model => modelId(model) === selected)) {
 				throw new Error("Selected model is no longer available.");
 			}
 			if (ctx.modelRegistry.getError()) throw new Error("Model catalogue is uncertain; settings were not changed.");

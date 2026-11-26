@@ -42,7 +42,7 @@ test("native Roles edits full policy, creates safe roles and preserves accepted 
 
 test("delegate model UI lists roles, searches available models and saves without changing accepted jobs", async () => {
 	assert.deepEqual((await runPiProbe("delegate-models-probe")).result, {
-		roleModels: true, availableOnly: true, scopedOnly: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true,
+		roleModels: true, availableOnly: true, scopeToggle: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true,
 	});
 });
 
