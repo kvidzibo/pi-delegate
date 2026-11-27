@@ -242,7 +242,11 @@ export class ModelCommand {
 			if (signal.aborted || action === undefined) return;
 			if (action === "model") {
 				const selected = await pickDelegateModel(ctx, name, draft.model, models, scopedModels, signal);
-				if (selected) { draft.model = selected; draft.speed = speedForModel(selected, draft.speed); }
+				if (selected && selected !== draft.model) {
+					draft.model = selected;
+					// Assign only on change: an own `speed: undefined` would fail the next save's conflict check.
+					if (speedForModel(selected, draft.speed) !== draft.speed) draft.speed = "standard";
+				}
 			} else if (action === "thinking") {
 				const selected = await ctx.ui.select(`Reasoning for ${name}`, levels, { signal });
 				if (selected) draft.thinking = selected as AgentConfig["thinking"];
