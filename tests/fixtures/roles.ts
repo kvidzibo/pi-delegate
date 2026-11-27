@@ -120,7 +120,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(config.agents.recon.prompt, "New recon prompt.\nSecond line.");
 	assert.equal(config.agents.recon.responseTemplate, "  Summary:\n{{literal}}\n");
 	assert.equal(config.agents.recon.saveToFile, true);
-	assert.equal(config.agents.recon.speed, "fast", "Speed is kept after switching to a model without Codex tiers");
+	assert.equal(config.agents.recon.speed, "standard", "Speed resets after switching to a model without Codex tiers");
 	let saved = JSON.parse(readFileSync(paths.userPath, "utf8"));
 	assert.deepEqual(saved.unrelated, overlay.unrelated);
 	assert.equal(saved.agents.recon.offline, true);
@@ -128,7 +128,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.equal(saved.agents.recon.note, "keep");
 	assert.equal(saved.agents.recon.responseTemplate, config.agents.recon.responseTemplate);
 	assert.equal(saved.agents.recon.saveToFile, true);
-	assert.equal(saved.agents.recon.speed, "fast");
+	assert.equal(saved.agents.recon.speed, "standard");
 	assert.deepEqual(loadDelegateConfig(paths).agents.recon, config.agents.recon);
 	// Cancelling the editor preserves its prefill; clearing and toggling remain draft-only on Back.
 	const savedRole = structuredClone(config.agents.recon);

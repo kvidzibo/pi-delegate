@@ -3,7 +3,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
-import { SPEEDS, supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
+import { SPEEDS, speedForModel, supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
 import { modelId, pickDelegateModel, scopedDelegateModels, type AvailableModel } from "./model-picker.ts";
 
 const BULK_SPEED = "Set speed for all Codex roles…";
@@ -242,7 +242,7 @@ export class ModelCommand {
 			if (signal.aborted || action === undefined) return;
 			if (action === "model") {
 				const selected = await pickDelegateModel(ctx, name, draft.model, models, scopedModels, signal);
-				if (selected) draft.model = selected;
+				if (selected) { draft.model = selected; draft.speed = speedForModel(selected, draft.speed); }
 			} else if (action === "thinking") {
 				const selected = await ctx.ui.select(`Reasoning for ${name}`, levels, { signal });
 				if (selected) draft.thinking = selected as AgentConfig["thinking"];
@@ -340,8 +340,10 @@ export class ModelCommand {
 			const selected = await pickDelegateModel(ctx, kind, current.model, models, scopedModels, signal);
 			if (signal.aborted || selected === undefined) return "cancelled";
 			if (selected === current.model) return "unchanged";
+			const speed = speedForModel(selected, current.speed);
 			const confirmed = await ctx.ui.confirm(`Save ${kind} model?`, [
 				`${current.model} → ${selected}`,
+				...(speed !== current.speed ? [`Speed ${current.speed} → standard: not supported by this model.`] : []),
 				`Save to ${this.paths.userPath}`,
 				"Applies to new delegates here immediately. Other open Pi sessions need /reload.",
 				"Tools, parent model and existing jobs are unchanged. Reasoning is chosen next.",
@@ -352,7 +354,7 @@ export class ModelCommand {
 				throw new Error("Selected model is no longer available.");
 			}
 			if (ctx.modelRegistry.getError()) throw new Error("Model catalogue is uncertain; settings were not changed.");
-			const patch = { model: selected };
+			const patch = { model: selected, ...(speed !== current.speed ? { speed } : {}) };
 			this.persist(kind, current, patch);
 			// Replace, don't mutate: queued runners close over the previous agent object.
 			this.config.agents[kind] = { ...current, ...patch };

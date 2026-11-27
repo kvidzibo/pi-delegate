@@ -23,6 +23,11 @@ export function activeSpeed(model: string, speed: Speed | undefined): Exclude<Sp
 	return speed && speed !== "standard" && supportedSpeeds(model).includes(speed) ? speed : undefined;
 }
 
+/** Saved speed carried over to `model`: one the model lacks resets to standard. */
+export function speedForModel(model: string, speed: Speed | undefined): Speed | undefined {
+	return speed === undefined || supportedSpeeds(model).includes(speed) ? speed : "standard";
+}
+
 /** Speeds available for a `provider/model` ID; always includes standard. */
 export function supportedSpeeds(model: string): Speed[] {
 	const slash = model.indexOf("/");

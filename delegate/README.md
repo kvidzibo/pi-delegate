@@ -51,7 +51,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 
 ### Speed
 
-`fast` and `ultrafast` apply only to supported `openai-codex` models with ChatGPT sign-in; otherwise jobs run at standard speed. The role list marks speeds unsupported by the model as inactive. **Set speed for all Codex roles…** in the role list writes one speed into every role using an `openai-codex` model in a single save; roles stay individually editable. Both use more of your plan allowance; see OpenAI's [Fast and Ultrafast modes](https://learn.chatgpt.com/docs/agent-configuration/speed).
+`fast` and `ultrafast` apply only to supported `openai-codex` models with ChatGPT sign-in; otherwise jobs run at standard speed. Changing a role's model in `/pi-delegate` resets a speed the new model lacks to `standard`; the role list marks unsupported speeds left by manual edits as inactive. **Set speed for all Codex roles…** in the role list writes one speed into every role using an `openai-codex` model in a single save; roles stay individually editable. Both use more of your plan allowance; see OpenAI's [Fast and Ultrafast modes](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
 | Speed | Service tier | Models |
 |---|---|---|
