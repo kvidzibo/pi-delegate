@@ -27,10 +27,4 @@ Optional `responseFormatPath` points to a private acceptance-time JSON snapshot 
 
 ## Validation
 
-Run from the repository root; `npm test` adds offline installed-Pi integration checks:
-
-```bash
-node --test --experimental-strip-types child-runtime/tests/*.test.ts
-```
-
-Tests use mocked workers or owned offline processes, never model requests.
+From the repository root, run `node --test --experimental-strip-types child-runtime/tests/*.test.ts`; `npm test` adds offline installed-Pi integration checks. Tests use mocked workers or owned offline processes, never model requests.

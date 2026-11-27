@@ -233,7 +233,7 @@ Keep independent first-pass handoffs neutral: omit requests for approval, implem
 
 ## Cross-extension busy query
 
-Extensions may query delegate activity with `pi.events.emit('delegate:query-busy', { reply: busy => ... })`. The reply is synchronous: `true` means shutdown is underway or queued/running delegate jobs exist. If no listener responds, availability is unknown; fail closed and treat delegate as busy. Invalid payloads are ignored.
+Extensions may query delegate activity with `pi.events.emit('delegate:query-busy', { reply: busy => ... })`. The reply is synchronous: `true` means shutdown is underway, queued/running delegate jobs exist or a completion hook is pending. If no listener responds, availability is unknown; fail closed and treat delegate as busy. Invalid payloads are ignored.
 
 ## Job lifecycle
 
