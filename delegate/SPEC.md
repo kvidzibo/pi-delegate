@@ -1,22 +1,12 @@
 # delegate — implementation contract
 
-The Pi extension has one routing tool. Config-defined named agents. Child model is config. No nesting. Do not add a second Pi parent tool. Version 0.28.0 is extension-only; no standalone host or MCP interface ships. Finish old jobs before [migrating](../MIGRATION.md); running jobs cannot be adopted.
-
 ## Goal
 
-One routing tool. Config-defined named agents with four shipped starters. Child model is config (any Pi model id). No nesting.
+One routing tool; do not add a second Pi parent tool. Config-defined named agents with four shipped starters. Child model is config (any Pi model id). No nesting. Extension-only: no standalone host or MCP interface ships ([migration](../MIGRATION.md)).
 
 Spawns default to background mode and return `jobId` immediately; explicit `background: false` waits. Local/GPU children share `maxLocalConcurrent` (queue, do not overlap). Hosted children use `maxConcurrent` only. Do not start/stop GPU servers.
 
 ## Layout
-
-```
-delegate/
-  README.md SPEC.md config.json
-  index.ts config.ts spawn.ts display.ts view.ts cards.ts board.ts dock.ts panel.ts tg.ts jobs.ts notify.ts
-  archive.ts usage.ts accounting.ts stats.ts calibration.ts capacity.ts capabilities.ts outcomes.ts
-  tests/{config,spawn,display,tg,jobs,lifecycle,notify}.test.ts
-```
 
 Repo root has `package.json` (`pi.extensions: ["./delegate"]`), with host-provided peer dependencies, Ajv/ajv-formats runtime dependencies and no build step or executable. This directory has no package.json. `service.ts` owns acceptance/execution and snapshots the complete role policy before queue admission.
 
@@ -162,8 +152,7 @@ Stdin JSONL (`\n` only, no Node `readline`): `prompt`, `steer` (wrap), `abort` (
 
 Correlated rejection of the initial RPC prompt (`id: p1`, `success: false`) is a terminal error: preserve its message, close stdin, terminate the child, and release the slot. Unrelated responses do not terminate the run. Keep the first terminal cause when errors, timeout, or abort race.
 
-An empty configured tool list uses `--no-tools --no-mcp`, never an empty
-`--tools` argument that might inherit defaults.
+An empty configured tool list uses `--no-tools --no-mcp`, never an empty `--tools` argument that might inherit defaults.
 
 Preserve the last assistant message's provider error separately from its text and return the error before any partial answer. A successful retry replaces earlier errors. Model token-limit termination (`stopReason: "length"`) is a failure with an explicit incomplete-answer explanation, including thinking-only/empty answers. The explanation precedes partial text and is subject to the normal output cap. A natural no-schema completion shortened only by `maxOutputBytes` remains successful; schema-enabled output must fit without truncation.
 

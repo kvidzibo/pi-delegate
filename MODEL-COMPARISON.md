@@ -25,14 +25,4 @@ Recheck every listed model and thinking level against the source pages below, us
 
 ## Sources
 
-- [Terra 6.1](https://artificialanalysis.ai/models/releases/gpt-6-1-terra)
-- [Sol 6.2](https://artificialanalysis.ai/models/gpt-6-2-sol)
-- [Luna 6](https://artificialanalysis.ai/models/releases/gpt-6-luna)
-- [Astra 6.2](https://artificialanalysis.ai/models/gpt-6-2-astra)
-- [Gemini 4 Neon](https://artificialanalysis.ai/models/gemini-4-neon)
-- [Grok 4.7](https://artificialanalysis.ai/models/releases/grok-4-7)
-- [Haiku 5.5](https://artificialanalysis.ai/models/claude-haiku-5-5)
-- [Sonnet 5.5](https://artificialanalysis.ai/models/claude-sonnet-5-5)
-- [Opus 5.5](https://artificialanalysis.ai/models/releases/claude-opus-5-5)
-- [Fable 5.2](https://artificialanalysis.ai/models/claude-fable-5-2)
-- [Kimi K3.1 Pro](https://artificialanalysis.ai/models/kimi-k3-1-pro)
+[Terra 6.1](https://artificialanalysis.ai/models/releases/gpt-6-1-terra) · [Sol 6.2](https://artificialanalysis.ai/models/gpt-6-2-sol) · [Luna 6](https://artificialanalysis.ai/models/releases/gpt-6-luna) · [Astra 6.2](https://artificialanalysis.ai/models/gpt-6-2-astra) · [Gemini 4 Neon](https://artificialanalysis.ai/models/gemini-4-neon) · [Grok 4.7](https://artificialanalysis.ai/models/releases/grok-4-7) · [Haiku 5.5](https://artificialanalysis.ai/models/claude-haiku-5-5) · [Sonnet 5.5](https://artificialanalysis.ai/models/claude-sonnet-5-5) · [Opus 5.5](https://artificialanalysis.ai/models/releases/claude-opus-5-5) · [Fable 5.2](https://artificialanalysis.ai/models/claude-fable-5-2) · [Kimi K3.1 Pro](https://artificialanalysis.ai/models/kimi-k3-1-pro)
