@@ -128,7 +128,8 @@ test("a model from an extension provider loads only that extension when extensio
 	const argv = process.argv;
 	try {
 		process.argv = [...argv, "-ne"];
-		assert.equal(await providerExtension("claude-bridge/claude-opus", working), undefined, "A parent without extensions gets none loaded for it");
+		assert.equal(await providerExtension("claude-bridge/uncached", working), undefined, "A parent without extensions gets none loaded for it");
+		assert.equal(asked.length, 3, "and no probe runs");
 	} finally { process.argv = argv; }
 	resetProviderExtensions();
 });
