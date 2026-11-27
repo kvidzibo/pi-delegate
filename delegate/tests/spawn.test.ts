@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { appendDelegateLog, buildChildArgs, buildChildEnv, delegateLogPath } from "../spawn.ts";
-import { parseProviderOwners, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
+import { parentExtensionArgs, parseProviderOwners, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
 
 const base = {
 	model: "local-qwen38/qwen38-q4km",
@@ -121,6 +122,12 @@ test("a model from an extension provider loads only that extension when extensio
 	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), undefined, "A failed probe leaves the launch unchanged");
 	assert.equal(await providerExtension("claude-bridge/claude-opus", working), bridge, "A failed probe is retried");
 	assert.equal(await providerExtension("openai-codex/gpt", working), undefined);
+	assert.equal(await providerExtension("claude-bridge", working), undefined, "Bare ids keep their existing resolution");
 	assert.equal(probes, 2, "One successful probe serves every later launch");
 	resetProviderExtensions();
+
+	const here = fileURLToPath(import.meta.url);
+	assert.deepEqual(parentExtensionArgs(["--mode", "rpc", "-e", relative(process.cwd(), here), "--extension", "npm:some-provider@1", "-ne", "-e"]),
+		{ extensions: [here, "npm:some-provider@1"], noExtensions: true }, "The probe sees the parent's own extensions, with local paths made absolute");
+	assert.deepEqual(parentExtensionArgs([]), { extensions: [], noExtensions: false });
 });

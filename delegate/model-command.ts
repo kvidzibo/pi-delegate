@@ -199,6 +199,8 @@ export class ModelCommand {
 		].join("\n"), { signal });
 		if (signal.aborted || !confirmed) return "";
 		const current = Object.fromEntries(targets.map(kind => [kind, this.config.agents[kind]]));
+		// One declined or cancelled check leaves the whole batch unsaved.
+		for (const kind of targets) if (!await this.verify(ctx, kind, current[kind], { ...current[kind], speed }, signal)) return "";
 		this.revision = saveRolesSpeed(this.paths, current, speed, this.revision);
 		// Replace, don't mutate: queued runners close over the previous agent object.
 		for (const kind of targets) this.config.agents[kind] = { ...current[kind], speed };
@@ -215,11 +217,14 @@ export class ModelCommand {
 		const stop = () => check.abort();
 		signal.addEventListener("abort", stop, { once: true });
 		let result: { failed: boolean; text: string } | undefined;
+		const run = () => this.roleCheck!(kind, next, ctx, check.signal).catch(error => ({ failed: true, text: error instanceof Error ? error.message : String(error) }));
 		try {
-			result = await ctx.ui.custom<{ failed: boolean; text: string } | undefined>((tui, theme, _keys, done) => {
+			// Only the TUI can draw a loader; other clients get a notice and the same check.
+			if (ctx.mode !== "tui") { ctx.ui.notify(`Checking ${kind} with ${next.model}…`, "info"); result = await run(); }
+			else result = await ctx.ui.custom<{ failed: boolean; text: string } | undefined>((tui, theme, _keys, done) => {
 				const loader = new BorderedLoader(tui, theme, `Checking ${kind} with ${next.model}…`);
 				loader.onAbort = () => { check.abort(); done(undefined); };
-				this.roleCheck!(kind, next, ctx, check.signal).then(done, error => done({ failed: true, text: error instanceof Error ? error.message : String(error) }));
+				void run().then(done);
 				return loader;
 			});
 		} finally { signal.removeEventListener("abort", stop); }

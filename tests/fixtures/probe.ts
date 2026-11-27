@@ -381,6 +381,21 @@ export default function probe(pi: ExtensionAPI) {
 			} });
 			assert.equal(allRoles, 2);
 			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).agents.review.model, "picker-extra/other");
+			// Clients without custom UI have no loader; the check still runs before the save.
+			let plainRoles = 0;
+			const checked = checks.length;
+			await commands.get("pi-delegate").handler("models", { ...testCtx, mode: "rpc", ui: { ...testCtx.ui,
+				custom: async () => undefined,
+				select: async (title: string, options: string[]) => {
+					if (title.startsWith("Reasoning for")) return undefined;
+					if (title.startsWith("Model for")) return options.find(option => option.startsWith(selected));
+					return ++plainRoles === 1 ? options.find(option => option.startsWith("oracle · ")) : undefined;
+				},
+				confirm: async () => true,
+			} });
+			assert.equal(checks.length, checked + 1);
+			assert.ok(checks.at(-1)!.startsWith(`${selected} `));
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).agents.oracle.model, selected);
 			return { roleModels: true, availableOnly: true, scopeToggle: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();

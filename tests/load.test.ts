@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { parseProviderOwners } from "../delegate/provider-extension.ts";
 import { REPO, runPiProbe } from "./pi-cli.ts";
 
 test("package manifest loads only delegate through the installed Pi CLI", async () => {
@@ -98,4 +101,27 @@ test("job cards finalize without collection, restore safely and render compact r
 	assert.deepEqual((await runPiProbe("delegate-card-probe")).result, {
 		liveCard: true, receipts: true, previews: true, restoration: true, cancellation: true, emptyFailures: true, noModelCalls: true,
 	});
+});
+
+test("provider probe maps model-bearing providers and never runs project extensions", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-provider-probe-"));
+	try {
+		const project = join(dir, "project"), ran = join(dir, "ran");
+		const models = `models: [{ id: "m", name: "m", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 }]`;
+		const provider = (name: string, extra: string) => `export default function (pi) { pi.registerProvider("${name}", { baseUrl: "http://unused.invalid/v1", ${extra} }); }\n`;
+		mkdirSync(join(project, ".pi", "extensions"), { recursive: true });
+		writeFileSync(join(project, ".pi", "extensions", "untrusted.ts"),
+			`import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(ran)}, "1");\n${provider("project-provider", `api: "openai-completions", apiKey: "unused", ${models}`)}`);
+		writeFileSync(join(dir, "owner.ts"), provider("probe-owner", `api: "openai-completions", apiKey: "unused", ${models}`));
+		writeFileSync(join(dir, "override.ts"), provider("anthropic", ""));
+		const mark = "probe-test=";
+		const result = spawnSync("pi", ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-session",
+			"--extension", join(REPO, "child-runtime", "provider-probe.ts"), "--list-models"], {
+			cwd: project, encoding: "utf8", timeout: 20000,
+			env: { PATH: process.env.PATH, HOME: dir, PI_CODING_AGENT_DIR: join(dir, "agent"), PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_DELEGATE_CHILD: "1",
+				PI_DELEGATE_PROVIDER_PROBE: JSON.stringify({ mark, extensions: [join(dir, "owner.ts"), join(dir, "override.ts")], noExtensions: false }) },
+		});
+		assert.deepEqual([...parseProviderOwners(result.stdout, mark)], [["probe-owner", join(dir, "owner.ts")]], result.stderr);
+		assert.equal(existsSync(ran), false, "An untrusted project's extension must not run");
+	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
