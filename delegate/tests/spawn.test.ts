@@ -125,5 +125,10 @@ test("a model from an extension provider loads only that extension when extensio
 	assert.equal(await providerExtension("openai-codex/gpt", working), undefined);
 	assert.equal(await providerExtension("claude-opus", working), undefined, "Bare ids keep their existing resolution");
 	assert.deepEqual(asked, ["claude-bridge/claude-opus", "claude-bridge/claude-opus", "openai-codex/gpt"]);
+	const argv = process.argv;
+	try {
+		process.argv = [...argv, "-ne"];
+		assert.equal(await providerExtension("claude-bridge/claude-opus", working), undefined, "A parent without extensions gets none loaded for it");
+	} finally { process.argv = argv; }
 	resetProviderExtensions();
 });

@@ -38,6 +38,9 @@ const owners = new Map<string, Promise<string | undefined>>();
  */
 export async function providerExtension(model: string, probe: ProviderProbe = runProbe): Promise<string | undefined> {
 	if (model.indexOf("/") < 1) return undefined;
+	// A parent started without extensions must not have them run on its behalf. A prompt word
+	// that looks like the flag only skips the lookup, which leaves the launch as it was.
+	if (process.argv.slice(2).some(arg => arg === "--no-extensions" || arg === "-ne")) return undefined;
 	let pending = owners.get(model);
 	if (!pending) owners.set(model, pending = probe(model));
 	try { return await pending; }

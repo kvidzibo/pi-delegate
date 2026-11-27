@@ -117,7 +117,9 @@ test("provider probe names the extension a model needs and never runs project ex
 		writeFileSync(owner, provider("probe-owner"));
 		// Replaces the catalogue of a provider whose models.json entry already resolves without it.
 		writeFileSync(join(agent, "extensions", "replace.ts"), provider("configured"));
-		writeFileSync(join(agent, "models.json"), JSON.stringify({ providers: { configured: { baseUrl: "http://unused.invalid/v1", api: "openai-completions", apiKey: "unused", models: [{ id: "known" }] } } }));
+		writeFileSync(join(agent, "models.json"), JSON.stringify({ providers: { configured: { baseUrl: "http://unused.invalid/v1", api: "openai-completions", apiKey: "unused", models: [{ id: "known-model" }] } } }));
+		// Two files shaping one provider: neither alone reproduces the parent.
+		for (const name of ["first.ts", "second.ts"]) writeFileSync(join(agent, "extensions", name), provider("shared"));
 		const need = (id: string) => {
 			const mark = "probe-test=";
 			const result = spawnSync("pi", ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-session",
@@ -129,7 +131,8 @@ test("provider probe names the extension a model needs and never runs project ex
 			return parseProviderOwner(result.stdout, mark);
 		};
 		assert.equal(need("probe-owner/m"), owner);
-		assert.equal(need("configured/known"), undefined, "A model that resolves without extensions keeps its launch");
+		assert.equal(need("configured/known"), undefined, "A model that --model resolves without extensions keeps its launch");
+		assert.equal(need("shared/m"), undefined);
 		assert.equal(need("project-provider/m"), undefined);
 		assert.equal(existsSync(ran), false, "An untrusted project's extension must not run");
 	} finally { rmSync(dir, { recursive: true, force: true }); }

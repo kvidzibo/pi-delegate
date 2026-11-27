@@ -69,6 +69,8 @@ The first time a session launches a given `provider/model` with extensions off, 
 
 - The extension runs whole in the child: its hooks apply, and any tools it registers are available if the role's `tools` allow them.
 - Project extensions (`.pi/` in the working directory) and extensions passed to Pi with `-e` are never loaded by the lookup.
+- Nothing is looked up when Pi itself was started with `--no-extensions`.
+- When more than one extension file registers the same provider, none is loaded.
 - Providers that an extension registers only after a session starts are not found.
 - A model configured without its provider prefix is launched unchanged.
 - If the lookup fails, the child starts as before and reports the missing model.
