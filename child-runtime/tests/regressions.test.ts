@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import { JobScheduler } from "../../delegate/jobs.ts";
@@ -52,6 +55,20 @@ test("startup handshake withholds the task and fails closed without any prompt",
 	const result = await within(failed.pending);
 	assert.match(result.text, /startup handshake failed.*guard absent/);
 	assert.equal(failed.proc.stdinBytes, "");
+});
+
+test("a child that exits before the startup handshake reports its stderr", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-early-exit-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const responseFormatPath = join(dir, "response-format.json");
+	writeFileSync(responseFormatPath, JSON.stringify({ schema: { type: "object" }, repairAttempts: 0, maxOutputBytes: 65536 }));
+	const early = start(t, { responseFormatPath });
+	early.proc.stderr!.write('Error: Model "missing/model" not found.\n');
+	await new Promise(resolve => setImmediate(resolve));
+	early.proc.close(1);
+	const result = await within(early.pending);
+	assert.match(result.text, /before the startup handshake[\s\S]*Model "missing\/model" not found/);
+	assert.equal(early.proc.stdinBytes, "");
 });
 
 test("shutdown aborts a pending startup handshake", async (t) => {

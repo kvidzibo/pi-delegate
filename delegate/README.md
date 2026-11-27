@@ -21,6 +21,8 @@ Models come only from role configuration, for every role including reviews: the 
 
 **`/pi-delegate models`** is a model-first picker followed by reasoning. It saves model and reasoning separately; Roles saves them together.
 
+**Role check.** Both menus start the role once before saving a change to its model, reasoning, speed, tools or extensions, or when a role is added or re-enabled. The bulk Codex speed change checks each enabled role in turn and saves nothing unless all are accepted. The check sends one short prompt to the real provider through the normal job queue, so it uses a small amount of provider allowance and waits behind running local jobs. Esc cancels it and saves nothing. If the role does not answer, the menu shows the error and offers **Do not save** or **Save anyway**. Disabled roles and other edits are not checked.
+
 - Model choices match `/model`: scoped models first when a scope is set, with **Tab** switching between scoped and all available models.
 - Reasoning offers Pi's supported levels (including `xhigh`/`max` where supported); non-reasoning models offer only `off`.
 - Saves preserve the complete user overlay and reject disk conflicts, unavailable models and uncertain catalogues.
@@ -43,7 +45,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 |---|---|
 | `enabled` | `true`; `false` refuses new jobs |
 | `tools` | All Pi tools (`["*"]`); `[]` disables tools |
-| `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support |
+| `extensions` | `false`; `true` enables normal Pi extension discovery, including configured MCP support. With `false`, a model whose provider is registered by an extension still loads that one extension (see [Extension providers](#extension-providers)) |
 | `thinking` | `off` |
 | `speed` | `standard`; `fast` or `ultrafast` requests an OpenAI Codex service tier (see [Speed](#speed)) |
 | `responseTemplate` | Empty/omitted: unchanged response instructions |
@@ -58,6 +60,20 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 - Invalid configuration prevents loading. Manual edits require `/reload` or a restart; **reload stops outstanding children**. Accepted jobs keep their original prompt and policy.
 
 Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` setting. Set `PI_OFFLINE=1` to suppress automatic networking such as model-catalogue refreshes; this does not block model requests or tools' network access.
+
+### Extension providers
+
+Some providers are registered by a Pi extension rather than built in or listed in `models.json`, for example `claude-bridge/…` from `pi-claude-bridge`. A role with `extensions: false` would otherwise start without that provider and fail with "Model not found".
+
+The first time a session launches a given `provider/model` with extensions off, delegate asks a short Pi process, started without extensions, whether that model resolves there. If it does, nothing changes. If not, the process loads your user-level extensions without starting a session, and the child gets the file that registers the provider as its only extra `--extension`. Limits:
+
+- The extension runs whole in the child: its hooks apply, and any tools it registers are available if the role's `tools` allow them.
+- Project extensions (`.pi/` in the working directory) and extensions passed to Pi with `-e` are never loaded by the lookup.
+- Nothing is looked up when Pi itself was started with `--no-extensions`.
+- When more than one extension file registers the same provider, none is loaded.
+- Providers that an extension registers only after a session starts are not found.
+- A model configured without its provider prefix is launched unchanged.
+- If the lookup fails, the child starts as before and reports the missing model.
 
 ### Speed
 

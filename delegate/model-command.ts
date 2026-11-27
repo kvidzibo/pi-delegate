@@ -1,4 +1,4 @@
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
@@ -8,6 +8,26 @@ import { modelId, pickDelegateModel, scopedDelegateModels, type AvailableModel }
 
 const BULK_SPEED = "Set speed for all Codex roles…";
 
+const KEEP_EDITING = "Do not save", SAVE_ANYWAY = "Save anyway";
+export const ROLE_CHECK_TASK = "Reply with exactly: OK";
+export const ROLE_CHECK_TIMEOUT_MS = 120_000;
+
+/** Same launch settings as the role; a one-line prompt and no response contract or hook. */
+export function roleCheckAgent(agent: AgentConfig): AgentConfig {
+	return { enabled: true, model: agent.model, thinking: agent.thinking, tools: [...agent.tools], extensions: agent.extensions,
+		...(agent.speed ? { speed: agent.speed } : {}), prompt: "This is a connectivity check. Reply with the single word OK. Do not use tools." };
+}
+
+/** Whether a save changes how the role's child is launched, so a check can tell something new. */
+export function launchChanged(before: AgentConfig | undefined, next: AgentConfig): boolean {
+	return !before || before.enabled === false || before.model !== next.model || before.thinking !== next.thinking
+		|| (before.speed ?? "standard") !== (next.speed ?? "standard") || before.extensions !== next.extensions
+		|| [...before.tools].sort().join() !== [...next.tools].sort().join();
+}
+
+/** Starts the role once against the real provider. */
+export type RoleCheck = (kind: string, agent: AgentConfig, ctx: ExtensionCommandContext, signal: AbortSignal) => Promise<{ failed: boolean; text: string }>;
+
 /** Changes affect future launches only. Accepted runners retain their agent object. */
 export class ModelCommand {
 	private readonly config: DelegateConfig;
@@ -16,7 +36,7 @@ export class ModelCommand {
 	private busy = false;
 	private revision: string;
 
-	constructor(config: DelegateConfig, paths: ConfigPaths, private readonly onRoleAdded?: () => void) {
+	constructor(config: DelegateConfig, paths: ConfigPaths, private readonly onRoleAdded?: () => void, private readonly roleCheck?: RoleCheck) {
 		this.config = config;
 		this.paths = paths;
 		this.revision = delegateConfigRevision(paths);
@@ -179,10 +199,44 @@ export class ModelCommand {
 		].join("\n"), { signal });
 		if (signal.aborted || !confirmed) return "";
 		const current = Object.fromEntries(targets.map(kind => [kind, this.config.agents[kind]]));
+		// One declined or cancelled check leaves the whole batch unsaved.
+		for (const kind of targets) if (!await this.verify(ctx, kind, current[kind], { ...current[kind], speed }, signal)) return "";
 		this.revision = saveRolesSpeed(this.paths, current, speed, this.revision);
 		// Replace, don't mutate: queued runners close over the previous agent object.
 		for (const kind of targets) this.config.agents[kind] = { ...current[kind], speed };
 		return `Saved ${speed} speed for ${targets.length} Codex roles. New delegates use it now.`;
+	}
+
+	/**
+	 * True when the save may proceed: the role answered, the check does not apply, or the user
+	 * chose to save despite a failure. False on Escape or when the user declines.
+	 */
+	private async verify(ctx: ExtensionCommandContext, kind: string, before: AgentConfig | undefined, next: AgentConfig, signal: AbortSignal): Promise<boolean> {
+		if (!this.roleCheck || next.enabled === false || !launchChanged(before, next)) return true;
+		const check = new AbortController();
+		const stop = () => check.abort();
+		signal.addEventListener("abort", stop, { once: true });
+		let result: { failed: boolean; text: string } | undefined;
+		const run = () => this.roleCheck!(kind, next, ctx, check.signal).catch(error => ({ failed: true, text: error instanceof Error ? error.message : String(error) }));
+		try {
+			// Only the TUI can draw a loader; other clients get a notice and the same check.
+			if (ctx.mode !== "tui") { ctx.ui.notify(`Checking ${kind} with ${next.model}…`, "info"); result = await run(); }
+			else result = await ctx.ui.custom<{ failed: boolean; text: string } | undefined>((tui, theme, _keys, done) => {
+				const loader = new BorderedLoader(tui, theme, `Checking ${kind} with ${next.model}…`);
+				loader.onAbort = () => { check.abort(); done(undefined); };
+				void run().then(done);
+				return loader;
+			});
+		} finally { signal.removeEventListener("abort", stop); }
+		if (signal.aborted || check.signal.aborted || !result) return false;
+		if (!result.failed) return true;
+		const reason = result.text.trim().split("\n").slice(-12).join("\n").slice(-1200) || "The role returned no response.";
+		// Not a confirm: its default answer would save a broken role on Enter.
+		return await ctx.ui.select([
+			`${kind} check failed: ${next.model} did not return a response`,
+			reason,
+			`Delegates to ${kind} will fail the same way.`,
+		].join("\n"), [KEEP_EDITING, SAVE_ANYWAY], { signal }) === SAVE_ANYWAY && !signal.aborted;
 	}
 
 	private persist(kind: string, current: AgentConfig | undefined, patch: Partial<AgentConfig>): void {
@@ -312,6 +366,7 @@ export class ModelCommand {
 				const latest = ctx.modelRegistry.getAvailable().find(item => modelId(item) === draft.model);
 				if (!latest || !getSupportedThinkingLevels(latest).includes(draft.thinking)) throw new Error("Choose an available model and supported reasoning level before saving.");
 				if (!draft.prompt.trim()) throw new Error("Prompt must not be blank.");
+				if (!await this.verify(ctx, name, before, draft, signal)) continue;
 				this.persist(name, before, draft);
 				this.config.agents[name] = { ...draft, tools: [...draft.tools] };
 				if (adding) this.onRoleAdded?.();
@@ -359,6 +414,7 @@ export class ModelCommand {
 			}
 			if (ctx.modelRegistry.getError()) throw new Error("Model catalogue is uncertain; settings were not changed.");
 			const patch = { model: selected, ...(speed !== current.speed ? { speed } : {}) };
+			if (!await this.verify(ctx, kind, current, { ...current, ...patch }, signal)) { if (signal.aborted) return "cancelled"; continue; }
 			this.persist(kind, current, patch);
 			// Replace, don't mutate: queued runners close over the previous agent object.
 			this.config.agents[kind] = { ...current, ...patch };
@@ -408,6 +464,7 @@ export class ModelCommand {
 			const latest = ctx.modelRegistry.getAvailable().find(item => modelId(item) === latestCurrent.model);
 			if (!latest || !getSupportedThinkingLevels(latest).includes(thinking)) throw new Error("Selected reasoning level is no longer supported by this model.");
 			const patch = { thinking };
+			if (!await this.verify(ctx, kind, latestCurrent, { ...latestCurrent, ...patch }, signal)) { if (signal.aborted) return ""; continue; }
 			this.persist(kind, latestCurrent, patch);
 			this.config.agents[kind] = { ...latestCurrent, ...patch };
 			return `Saved reasoning: ${thinking}. New delegates use it now.`;

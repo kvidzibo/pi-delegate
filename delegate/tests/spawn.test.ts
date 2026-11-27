@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { appendDelegateLog, buildChildArgs, buildChildEnv, delegateLogPath } from "../spawn.ts";
+import { parseProviderOwner, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
 
 const base = {
 	model: "local-qwen38/qwen38-q4km",
@@ -99,4 +100,36 @@ test("delegate log writes one json line without task text", () => {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+test("a model from an extension provider loads only that extension when extensions are off", async () => {
+	const bridge = "/agent/npm/node_modules/pi-claude-bridge/src/index.ts";
+	const args = buildChildArgs({ ...base, providerExtension: bridge });
+	assert.ok(args.includes("--no-extensions"));
+	assert.equal(args[args.indexOf("--extension") + 1], bridge);
+	assert.equal(buildChildArgs({ ...base, extensions: true, providerExtension: bridge }).includes("--extension"), false);
+
+	const mark = "mark=";
+	assert.equal(parseProviderOwner(`noise\n${mark}"/spoof.ts"\nmore\n${mark}${JSON.stringify(bridge)}\n`, mark), bridge, "Only the last marked line counts");
+	assert.equal(parseProviderOwner(`${mark}null\n`, mark), undefined);
+	assert.equal(parseProviderOwner(`${mark}"relative.ts"\n`, mark), undefined);
+	assert.throws(() => parseProviderOwner("models…\n", mark), /no result/);
+
+	const asked: string[] = [];
+	const failing = async (model: string) => { asked.push(model); throw new Error("pi missing"); };
+	const working = async (model: string) => { asked.push(model); return model.startsWith("claude-bridge/") ? bridge : undefined; };
+	resetProviderExtensions();
+	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), undefined, "A failed probe leaves the launch unchanged");
+	assert.equal(await providerExtension("claude-bridge/claude-opus", working), bridge, "A failed probe is retried");
+	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), bridge, "An answer is reused for later launches");
+	assert.equal(await providerExtension("openai-codex/gpt", working), undefined);
+	assert.equal(await providerExtension("claude-opus", working), undefined, "Bare ids keep their existing resolution");
+	assert.deepEqual(asked, ["claude-bridge/claude-opus", "claude-bridge/claude-opus", "openai-codex/gpt"]);
+	const argv = process.argv;
+	try {
+		process.argv = [...argv, "-ne"];
+		assert.equal(await providerExtension("claude-bridge/uncached", working), undefined, "A parent without extensions gets none loaded for it");
+		assert.equal(asked.length, 3, "and no probe runs");
+	} finally { process.argv = argv; }
+	resetProviderExtensions();
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { ArchivedRun, archiveRoot } from "../../delegate/archive.ts";
@@ -141,13 +141,15 @@ export default function probe(pi: ExtensionAPI) {
 		delete process.env.PI_DELEGATE_SKIP_USER_CONFIG;
 		const handlers = new Map<string, Function>(), commands = new Map<string, any>();
 		let tool: any, finish: (() => void) | undefined;
-		const launches: any[] = [], notices: string[] = [];
+		const launches: any[] = [], notices: string[] = [], checks: string[] = [];
 		const factory = () => delegate({ ...pi,
 			registerTool: (definition: unknown) => { tool = definition; },
 			registerCommand: (name: string, command: unknown) => commands.set(name, command),
 			registerMessageRenderer: () => {}, on: (event: string, handler: Function) => { handlers.set(event, handler); },
 			setModel: () => { throw new Error("Must not change the parent model"); },
 		} as unknown as ExtensionAPI, async input => {
+			// Saving a model or reasoning level starts the role once with those settings.
+			if (input.task === "Reply with exactly: OK") { checks.push(`${input.model} ${input.thinking} ${input.tools.join(",")}`); return { text: "OK", exitCode: 0, stderrTail: "" }; }
 			launches.push(input);
 			if (input.task === "hold") await new Promise<void>(resolve => {
 				finish = resolve; input.signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -197,8 +199,11 @@ export default function probe(pi: ExtensionAPI) {
 				custom: async (create: Function) => {
 					let result: string | undefined;
 					const tui = { terminal: { rows: 30 }, requestRender: () => {} };
-					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+					let settle!: (value: unknown) => void;
+					const settled = new Promise(resolve => { settle = resolve; });
+					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; settle(value); });
 					try {
+						if (component instanceof BorderedLoader) return await settled;
 						component.focused = true;
 						const rendered = component.render(100).join("\n");
 						assert.ok(rendered.includes("✓ current"));
@@ -280,6 +285,7 @@ export default function probe(pi: ExtensionAPI) {
 			finish!();
 			await call({ jobId: running.details.jobId }); await call({ jobId: queued.details.jobId });
 			assert.deepEqual(launches.map(input => input.model), [oldModel, selected, oldModel]);
+			assert.deepEqual(checks, [`${selected} medium read,bash`, `${selected} max read,bash`]);
 			assert.ok(launches.every(input => !("offline" in input)));
 			assert.deepEqual(launches.map(input => input.thinking), ["medium", "max", "medium"]);
 			assert.ok(launches.every(input => input.tools.join(",") === "read,bash"));
@@ -359,8 +365,11 @@ export default function probe(pi: ExtensionAPI) {
 				custom: async (create: Function) => {
 					let result: string | undefined;
 					const tui = { terminal: { rows: 30 }, requestRender: () => {} };
-					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+					let settle!: (value: unknown) => void;
+					const settled = new Promise(resolve => { settle = resolve; });
+					const component = await create(tui, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; settle(value); });
 					try {
+						if (component instanceof BorderedLoader) return await settled;
 						component.handleInput("\t");
 						for (const char of "Unscoped") component.handleInput(char);
 						assert.match(component.render(100).join("\n"), /1\/3 available/);
@@ -372,6 +381,21 @@ export default function probe(pi: ExtensionAPI) {
 			} });
 			assert.equal(allRoles, 2);
 			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).agents.review.model, "picker-extra/other");
+			// Clients without custom UI have no loader; the check still runs before the save.
+			let plainRoles = 0;
+			const checked = checks.length;
+			await commands.get("pi-delegate").handler("models", { ...testCtx, mode: "rpc", ui: { ...testCtx.ui,
+				custom: async () => undefined,
+				select: async (title: string, options: string[]) => {
+					if (title.startsWith("Reasoning for")) return undefined;
+					if (title.startsWith("Model for")) return options.find(option => option.startsWith(selected));
+					return ++plainRoles === 1 ? options.find(option => option.startsWith("oracle · ")) : undefined;
+				},
+				confirm: async () => true,
+			} });
+			assert.equal(checks.length, checked + 1);
+			assert.ok(checks.at(-1)!.startsWith(`${selected} `));
+			assert.equal(JSON.parse(readFileSync(userPath, "utf8")).agents.oracle.model, selected);
 			return { roleModels: true, availableOnly: true, scopeToggle: true, searchable: true, cancellation: true, persisted: true, live: true, queuedUnchanged: true, noModelCalls: true };
 		} finally {
 			finish?.(); await handlers.get("session_shutdown")?.();
