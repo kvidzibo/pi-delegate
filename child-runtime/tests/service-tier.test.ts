@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import serviceTierExtension from "../service-tier.ts";
-import { SPEED_ENV, supportedSpeeds } from "../speed.ts";
+import { SPEED_ENV, speedForModel, supportedSpeeds } from "../speed.ts";
 
 function handler(speed: string | undefined) {
 	const previous = process.env[SPEED_ENV];
@@ -42,4 +42,11 @@ test("supported speeds follow the Codex catalog and Ultrafast documentation", ()
 	assert.deepEqual(supportedSpeeds("openai-codex/"), ["standard"]);
 	assert.deepEqual(supportedSpeeds("openai/gpt-6-luna"), ["standard"]);
 	assert.deepEqual(supportedSpeeds("local-qwen38/qwen38-q4km"), ["standard"]);
+});
+
+test("a model change keeps only speeds the new model supports", () => {
+	assert.equal(speedForModel("claude-bridge/claude-opus-5-5", "fast"), "standard");
+	assert.equal(speedForModel("openai-codex/gpt-6.1-terra", "ultrafast"), "standard");
+	assert.equal(speedForModel("openai-codex/gpt-6.1-terra", "fast"), "fast");
+	assert.equal(speedForModel("claude-bridge/claude-opus-5-5", undefined), undefined);
 });
