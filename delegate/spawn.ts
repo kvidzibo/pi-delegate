@@ -118,7 +118,13 @@ function logChildResult(input: RunChildInput, result: ChildResult): void {
 export async function runChild(input: RunChildInput): Promise<ChildResult> {
 	if ("execution" in input && input.execution !== undefined) throw new Error("Execution/headroom guard APIs are retired; refusing to launch without the requested policy.");
 	// --no-extensions also drops the extension that registers the model's provider.
-	const provider = input.extensions ? undefined : await providerExtension(input.model);
+	// A cancelled caller stops waiting; the lookup itself is shared and carries on.
+	const provider = input.extensions ? undefined : await new Promise<string | undefined>((done, reject) => {
+		const stop = () => reject(input.signal!.reason);
+		input.signal?.addEventListener("abort", stop, { once: true });
+		void providerExtension(input.model).then(done).finally(() => input.signal?.removeEventListener("abort", stop));
+	});
+	input.signal?.throwIfAborted();
 	const result = await runPiChild({
 		cwd: input.cwd,
 		model: input.model,

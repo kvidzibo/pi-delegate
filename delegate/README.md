@@ -65,16 +65,13 @@ Delegation does not add `--offline` or change Pi's inherited `PI_OFFLINE` settin
 
 Some providers are registered by a Pi extension rather than built in or listed in `models.json`, for example `claude-bridge/…` from `pi-claude-bridge`. A role with `extensions: false` would otherwise start without that provider and fail with "Model not found".
 
-Before the first such launch in a session, delegate starts a short Pi process that loads your user-level extensions, plus any passed to Pi with `-e`, without starting a session, and records which file registers each provider together with its models. A child whose `provider/model` uses one of those providers gets that file as its only extra `--extension`. Limits:
+The first time a session launches a given `provider/model` with extensions off, delegate asks a short Pi process, started without extensions, whether that model resolves there. If it does, nothing changes. If not, the process loads your user-level extensions without starting a session, and the child gets the file that registers the provider as its only extra `--extension`. Limits:
 
 - The extension runs whole in the child: its hooks apply, and any tools it registers are available if the role's `tools` allow them.
-- Project extensions (`.pi/` in the working directory) are never loaded by the lookup, whether or not the project is trusted.
-- An extension that only changes a built-in provider's endpoint or headers is not loaded: those models work without it, as before.
+- Project extensions (`.pi/` in the working directory) and extensions passed to Pi with `-e` are never loaded by the lookup.
 - Providers that an extension registers only after a session starts are not found.
 - A model configured without its provider prefix is launched unchanged.
 - If the lookup fails, the child starts as before and reports the missing model.
-
-Set `extensions: true` for a role that needs one of the cases above.
 
 ### Speed
 

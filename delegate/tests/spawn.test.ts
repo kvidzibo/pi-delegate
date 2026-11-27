@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { test } from "node:test";
 import { appendDelegateLog, buildChildArgs, buildChildEnv, delegateLogPath } from "../spawn.ts";
-import { parentExtensionArgs, parseProviderOwners, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
+import { parseProviderOwner, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
 
 const base = {
 	model: "local-qwen38/qwen38-q4km",
@@ -111,23 +110,20 @@ test("a model from an extension provider loads only that extension when extensio
 	assert.equal(buildChildArgs({ ...base, extensions: true, providerExtension: bridge }).includes("--extension"), false);
 
 	const mark = "mark=";
-	const owners = parseProviderOwners(`noise\n${mark}{"x":"spoof"}\nmore\n${mark}${JSON.stringify({ "claude-bridge": bridge, relative: "index.ts" })}\n`, mark);
-	assert.deepEqual([...owners], [["claude-bridge", bridge]], "Only the last marked line and absolute paths count");
-	assert.throws(() => parseProviderOwners("models…\n", mark), /no result/);
+	assert.equal(parseProviderOwner(`noise\n${mark}"/spoof.ts"\nmore\n${mark}${JSON.stringify(bridge)}\n`, mark), bridge, "Only the last marked line counts");
+	assert.equal(parseProviderOwner(`${mark}null\n`, mark), undefined);
+	assert.equal(parseProviderOwner(`${mark}"relative.ts"\n`, mark), undefined);
+	assert.throws(() => parseProviderOwner("models…\n", mark), /no result/);
 
-	let probes = 0;
-	const failing = async () => { probes++; throw new Error("pi missing"); };
-	const working = async () => { probes++; return owners; };
+	const asked: string[] = [];
+	const failing = async (model: string) => { asked.push(model); throw new Error("pi missing"); };
+	const working = async (model: string) => { asked.push(model); return model.startsWith("claude-bridge/") ? bridge : undefined; };
 	resetProviderExtensions();
 	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), undefined, "A failed probe leaves the launch unchanged");
 	assert.equal(await providerExtension("claude-bridge/claude-opus", working), bridge, "A failed probe is retried");
+	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), bridge, "An answer is reused for later launches");
 	assert.equal(await providerExtension("openai-codex/gpt", working), undefined);
-	assert.equal(await providerExtension("claude-bridge", working), undefined, "Bare ids keep their existing resolution");
-	assert.equal(probes, 2, "One successful probe serves every later launch");
+	assert.equal(await providerExtension("claude-opus", working), undefined, "Bare ids keep their existing resolution");
+	assert.deepEqual(asked, ["claude-bridge/claude-opus", "claude-bridge/claude-opus", "openai-codex/gpt"]);
 	resetProviderExtensions();
-
-	const here = fileURLToPath(import.meta.url);
-	assert.deepEqual(parentExtensionArgs(["--mode", "rpc", "-e", relative(process.cwd(), here), "--extension", "npm:some-provider@1", "-ne", "-e"]),
-		{ extensions: [here, "npm:some-provider@1"], noExtensions: true }, "The probe sees the parent's own extensions, with local paths made absolute");
-	assert.deepEqual(parentExtensionArgs([]), { extensions: [], noExtensions: false });
 });
