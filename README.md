@@ -9,7 +9,7 @@ One child per call; no nested delegation. Define custom roles or override prompt
 | Kind | Purpose |
 |---|---|
 | `recon` | Find files, map code, gather facts |
-| `implement` | Make bounded edits and run tests |
+| `implement` | Implement scoped changes and run tests |
 | `review` | Read-only review with shell access |
 | `oracle` | Last-resort analysis without editing |
 
