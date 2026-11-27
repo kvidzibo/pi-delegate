@@ -37,7 +37,7 @@ Delegate a background recon to find this repo's test files and test commands.
 Do not edit files. Collect the result when it finishes.
 ```
 
-Spawns return a job ID immediately; the parent can wait, peek, request wrap-up or cancel with it. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor and finished results in the transcript, marked **needs validation**; **Ctrl+O** expands them.
+By default, spawns return a job ID immediately; the parent can wait, peek, request wrap-up or cancel with it. `timeoutMs` limits waiting, not runtime. **Esc interrupting the parent also cancels its running and queued delegates, including background jobs.** Active jobs appear above the editor and finished results in the transcript, marked **needs validation**; **Ctrl+O** expands them.
 
 | Command | Purpose |
 |---|---|
@@ -51,13 +51,13 @@ Spawns return a job ID immediately; the parent can wait, peek, request wrap-up o
 
 Settings save to `~/.pi/agent/delegate.json` and affect future jobs only. Manual edits, package updates and other open sessions need `/reload` or a restart. **Reload stops outstanding children.**
 
-Optional per-role features, all off by default:
+Optional features, all off by default and set per role unless noted:
 
 - [Speed](delegate/README.md#speed): `fast`/`ultrafast` OpenAI Codex service tiers, using more plan allowance.
 - [Response template and Save to file](delegate/README.md#response-templates-and-files): guide the final response, or return a temporary file path instead of the body.
 - [Response schema](delegate/README.md#json-schema-validation): enforce JSON output with local validation and bounded repairs. It checks structure, not correctness.
 - [Completion hook](delegate/README.md#completion-hooks): run a trusted executable with the terminal result, with your permissions. The [review-comment example](examples/review-comment/README.md) drafts review comments without publishing.
-- [Automatic checkpoints](delegate/README.md#automatic-checkpoints): a tool-free advisor role comments every 10 or 20 action rounds. **It sends conversation and tool excerpts, which may contain sensitive data, to the advisor's provider.** Feedback is advisory, not a review or approval gate.
+- [Automatic checkpoints](delegate/README.md#automatic-checkpoints): a global setting, not per role. A tool-free advisor role comments on all main-agent work every 10 or 20 action rounds. **It sends conversation and tool excerpts, which may contain sensitive data, to the advisor's provider.** Feedback is advisory, not a review or approval gate.
 
 See [configuration and job controls](delegate/README.md) for all settings and tool arguments, and the [model comparison](MODEL-COMPARISON.md) for a dated benchmark reference when choosing models.
 

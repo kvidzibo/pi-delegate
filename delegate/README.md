@@ -276,7 +276,7 @@ Panels scroll with ↑/↓, Page Up/Down and Home/End; Esc goes back. In stats, 
 
 The summary is display-only, never sent to the model, and stays as a snapshot on resume. Running jobs show elapsed time and tokens so far (`…`); `+` marks partial usage, a lower bound. Job IDs restart after reload or resume, so `#` is the unique row number. RPC mode shows the table as a notice.
 
-The footer shows `⑂ <total>|<local%>` once total tokens are nonzero. The local share is rounded (`<1%` for a positive share below 1%) and omitted when zero; `|~$X` appears only for positive savings. Savings are a calibrated API-equivalent estimate, not measured net savings. Incomplete usage, recording warnings and estimate coverage appear only in stats.
+The footer shows `⑂ <total>|<local%>` once total tokens are nonzero. The local share is rounded (`<1%` for a positive share below 1%) and omitted when zero; `|~$X` appears only for positive savings. Savings are a calibrated API-equivalent estimate, not measured net savings. Incomplete usage, recording warnings and estimate coverage are omitted from the footer; see stats.
 
 To enable savings estimates, set `calibrationProfiles` to absolute profile paths and `localAlternatives` to the matching hosted model/thinking references, then `/reload`. Profiles must match models, role, thinking, tools and prompt; profiles older than 90 days are not selected for new jobs. Missing or incompatible profiles disable estimates, not delegation.
 

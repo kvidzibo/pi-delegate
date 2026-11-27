@@ -1,6 +1,6 @@
 # Migration notes
 
-After any update, finish outstanding jobs, then `/reload`. `~/.pi/agent/delegate.json` and existing archives stay valid throughout; no data conversion or deletion is required.
+After any update, finish outstanding jobs, then `/reload`. Keep `~/.pi/agent/delegate.json` and existing archives: no data conversion or deletion is required, apart from the [legacy settings](#removed-features-and-legacy-settings) below.
 
 ## 0.33.0: background by default
 
@@ -20,7 +20,7 @@ The MCP server, executable, tools/resources and private operator settings API ar
 
 ## Removed features and legacy settings
 
-- Role `offline` and `context` keys and legacy `snapshots` configuration are ignored and preserved on saves. Stored snapshots are not deleted; remove them manually if no longer needed.
+- Repository snapshot capture and safety audits are removed. Role `offline` and `context` keys and legacy `snapshots` configuration are ignored and preserved on saves. Stored snapshots are not deleted; remove them manually if no longer needed.
 - `docs` is an ordinary custom role: old `agents.docs` entries need a `prompt` or must be removed.
 - Automatic diff/full-file context preparation and `base`/`head` job arguments are unsupported; supply context in the task.
 - Execution/headroom guard APIs are retired; stale `execution` options are refused. Existing archive metadata remains readable.
