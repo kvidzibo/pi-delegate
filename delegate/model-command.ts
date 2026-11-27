@@ -282,6 +282,7 @@ export class ModelCommand {
 				{ id: "responseTemplate", label: "Response template", description: "Free-form text; inactive when a response schema is set. Empty disables. No placeholder processing.", currentValue: draft.responseTemplate?.trim() ? `${draft.responseTemplate.split("\n").length} lines · ≈${Math.ceil(draft.responseTemplate.length / 4)} tokens` : "disabled" },
 				{ id: "saveToFile", label: "Save to file", description: "Return a private temporary file path instead of response text.", currentValue: draft.saveToFile ? "yes" : "no", values: ["no", "yes"] },
 				{ id: "responseSchema", label: "Response schema", description: "Paste an entire JSON Schema (draft-07), not an example. Takes precedence over the template; empty disables.", currentValue: draft.responseSchema == null ? "disabled" : "configured" },
+				{ id: "responseSchemaEnabled", label: "Response schema enabled", description: "No keeps the schema but runs the role as schema-less. No effect without a schema.", currentValue: draft.responseSchemaEnabled === false ? "no" : "yes", values: ["yes", "no"] },
 				{ id: "responseRepairAttempts", label: "Repair attempts", description: "Retries for schema-invalid responses.", currentValue: String(draft.responseRepairAttempts ?? 2), values: ["0", "1", "2"] },
 				{ id: "completionHook", label: "Completion hook", description: "Runs with full user permissions, also on failure/cancellation. JSON object; empty disables.", currentValue: draft.completionHook == null ? "disabled" : "configured" },
 				{ id: "save", label: "Save role", currentValue: "" },
@@ -291,6 +292,7 @@ export class ModelCommand {
 				else if (id === "enabled") draft.enabled = value === "yes";
 				else if (id === "extensions") draft.extensions = value === "yes";
 				else if (id === "saveToFile") draft.saveToFile = value === "yes";
+				else if (id === "responseSchemaEnabled") draft.responseSchemaEnabled = value === "yes";
 				else if (id === "responseRepairAttempts") draft.responseRepairAttempts = Number(value);
 			});
 			if (signal.aborted || action === undefined) return;

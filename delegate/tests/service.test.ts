@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -106,6 +106,41 @@ test("role response policy is snapshotted, formats instructions and saves privat
 	} finally {
 		if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
 	}
+});
+
+test("a switched-off response schema runs exactly like a schema-less role", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "delegate-schema-off-test-"));
+	const accounting = new Accounting(root);
+	const scheduler = new JobScheduler({ maxConcurrent: 1, maxLocalConcurrent: 1, maxQueued: 4 });
+	t.after(async () => { await scheduler.shutdown(); accounting.close(); rmSync(root, { recursive: true, force: true }); });
+	const plain: AgentConfig = { model: "hosted/mock", prompt: "Implement.", thinking: "off", tools: [], extensions: false, responseTemplate: "## Checks", saveToFile: true };
+	const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] };
+	const off: AgentConfig = { ...plain, responseSchema: schema, responseSchemaEnabled: false };
+	assert.equal(agentPrompt(off), agentPrompt(plain));
+	assert.equal(agentPrompt({ ...plain, responseTemplate: undefined, responseSchema: schema, responseSchemaEnabled: false }), plain.prompt);
+	assert.equal(agentPrompt({ ...off, responseSchemaEnabled: true }), agentPrompt({ ...plain, responseSchema: schema }));
+	const results = [];
+	for (const [policy, id] of [[plain, "plain"], [off, "off"]] as const) {
+		let prompt: string | undefined, responseFormatPath: string | undefined;
+		const job = enqueueDelegate({ scheduler, accounting, agent: policy,
+			identity: { kind: "implement", requestedModel: policy.model, thinking: "off", cwd: root, parentSessionId: "test", toolCallId: id },
+			task: "Exact task", timeoutMs: 1000, background: false, config: { hardTimeoutMs: 0, maxOutputBytes: 4096 },
+			childRunner: async input => {
+				prompt = readFileSync(input.promptSourcePath, "utf8");
+				responseFormatPath = input.responseFormatPath;
+				assert.equal(existsSync(join(dirname(input.promptSourcePath), "response-format.json")), false);
+				return { text: "not JSON", stopReason: "stop", exitCode: 0, stderrTail: "" };
+			},
+		});
+		const done = await scheduler.wait(job.id);
+		t.after(() => rmSync(dirname(done.responseFile!), { recursive: true, force: true }));
+		assert.equal(done.failed, false);
+		assert.ok(done.responseFile!.endsWith("response.md"));
+		assert.equal(readFileSync(done.responseFile!, "utf8"), "not JSON");
+		results.push({ prompt, responseFormatPath });
+	}
+	assert.deepEqual(results[1], results[0]);
+	assert.equal(results[0].responseFormatPath, undefined);
 });
 
 test("accepted speed applies only to supported models and is recorded for cards and history", async (t) => {

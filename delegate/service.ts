@@ -6,7 +6,7 @@ import { isFailedChildResult } from "../child-runtime/policy.ts";
 import { Accounting } from "./accounting.ts";
 import type { ArchivedRun, RunIdentity } from "./archive.ts";
 import { describeCapabilities } from "./capabilities.ts";
-import type { AgentConfig, DelegateConfig } from "./config.ts";
+import { effectiveResponseSchema, type AgentConfig, type DelegateConfig } from "./config.ts";
 import { JobScheduler, type JobSnapshot } from "./jobs.ts";
 import { runChild } from "./spawn.ts";
 import { activeSpeed } from "../child-runtime/speed.ts";
@@ -15,8 +15,9 @@ import { parseCompletionHook } from "./config.ts";
 import { runCompletionHook, type CompletionHookResult } from "./completion-hook.ts";
 
 /** Empty templates preserve the exact existing system prompt. */
-export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplate" | "responseSchema">): string {
-	if (agent.responseSchema != null) return `${agent.prompt}\n\n## Response format\nReturn exactly one JSON value matching this draft-07 JSON Schema. No Markdown fences or surrounding prose. This schema takes precedence over other response-format instructions. Do not invent facts to fill fields.\n\n${JSON.stringify(agent.responseSchema, null, 2)}`;
+export function agentPrompt(agent: Pick<AgentConfig, "prompt" | "responseTemplate" | "responseSchema" | "responseSchemaEnabled">): string {
+	const schema = effectiveResponseSchema(agent);
+	if (schema != null) return `${agent.prompt}\n\n## Response format\nReturn exactly one JSON value matching this draft-07 JSON Schema. No Markdown fences or surrounding prose. This schema takes precedence over other response-format instructions. Do not invent facts to fill fields.\n\n${JSON.stringify(schema, null, 2)}`;
 	return agent.responseTemplate?.trim()
 		? `${agent.prompt}\n\n## Response format\nFollow this template for your final response. Treat placeholders as guidance, not facts; do not invent findings, resolutions or commit hashes.\n\n${agent.responseTemplate}`
 		: agent.prompt;
@@ -50,7 +51,8 @@ export function enqueueDelegate(input: {
 	if (input.agent.enabled === false) throw new Error(`delegate refused: ${input.identity.kind} is disabled in configuration.`);
 	const agent = structuredClone(input.agent);
 	const config = { ...input.config };
-	const validateResponse = agent.responseSchema == null ? undefined : compileResponseSchema(agent.responseSchema);
+	const responseSchema = effectiveResponseSchema(agent);
+	const validateResponse = responseSchema == null ? undefined : compileResponseSchema(responseSchema);
 	const hook = agent.completionHook == null ? null : parseCompletionHook(agent.completionHook);
 	const repairAttempts = agent.responseRepairAttempts ?? DEFAULT_REPAIR_ATTEMPTS;
 	assertRepairAttempts(repairAttempts);
@@ -63,9 +65,9 @@ export function enqueueDelegate(input: {
 	try {
 		if (hook) writeFileSync(join(archive.paths.dir, "completion-hook-config.json"), JSON.stringify(hook), { mode: 0o600, flag: "wx" });
 		let responseFormatPath: string | undefined;
-		if (agent.responseSchema != null) {
+		if (responseSchema != null) {
 			responseFormatPath = join(dirname(archive.paths.prompt), "response-format.json");
-			writeFileSync(responseFormatPath, JSON.stringify({ schema: agent.responseSchema, repairAttempts, maxOutputBytes: config.maxOutputBytes }), { mode: 0o600, flag: "wx" });
+			writeFileSync(responseFormatPath, JSON.stringify({ schema: responseSchema, repairAttempts, maxOutputBytes: config.maxOutputBytes }), { mode: 0o600, flag: "wx" });
 		}
 		input.onAccepted?.(archive);
 		return input.scheduler.enqueue({
@@ -130,13 +132,13 @@ export function enqueueDelegate(input: {
 				let directory: string | undefined;
 				try {
 					directory = mkdtempSync(join(tmpdir(), "pi-delegate-result-"));
-					const responseFile = join(directory, agent.responseSchema != null && !isFailedChildResult(result) ? "response.json" : "response.md");
+					const responseFile = join(directory, responseSchema != null && !isFailedChildResult(result) ? "response.json" : "response.md");
 					writeFileSync(responseFile, result.text, { encoding: "utf8", mode: 0o600, flag: "wx" });
 					return { ...result, text: `Response saved to: ${responseFile}`, responseFile };
 				} catch (error) {
 					if (directory) { try { rmSync(directory, { recursive: true, force: true }); } catch { /* Best-effort cleanup of this private directory. */ } }
 					const warning = `Could not save response to temporary file: ${error instanceof Error ? error.message : String(error)}`;
-					return { ...result, text: agent.responseSchema != null && !isFailedChildResult(result) ? result.text : `${warning}\n\n${result.text}`,
+					return { ...result, text: responseSchema != null && !isFailedChildResult(result) ? result.text : `${warning}\n\n${result.text}`,
 						recordingError: [result.recordingError, warning].filter(Boolean).join("\n") };
 				}
 			},

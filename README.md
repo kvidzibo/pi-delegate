@@ -55,7 +55,7 @@ Optional features, all off by default and set per role unless noted:
 
 - [Speed](delegate/README.md#speed): `fast`/`ultrafast` OpenAI Codex service tiers, using more plan allowance.
 - [Response template and Save to file](delegate/README.md#response-templates-and-files): guide the final response, or return a temporary file path instead of the body.
-- [Response schema](delegate/README.md#json-schema-validation): enforce JSON output with local validation and bounded repairs. It checks structure, not correctness.
+- [Response schema](delegate/README.md#json-schema-validation): enforce JSON output with local validation and bounded repairs. It checks structure, not correctness. The `implement` role ships a report schema that is off until you set `responseSchemaEnabled: true`.
 - [Completion hook](delegate/README.md#completion-hooks): run a trusted executable with the terminal result, with your permissions. The [review-comment example](examples/review-comment/README.md) drafts review comments without publishing.
 - [Automatic checkpoints](delegate/README.md#automatic-checkpoints): a global setting, not per role. A tool-free advisor role comments on all main-agent work every 10 or 20 action rounds. **It sends conversation and tool excerpts, which may contain sensitive data, to the advisor's provider.** Feedback is advisory, not a review or approval gate.
 
