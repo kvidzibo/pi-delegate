@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, getAgentDir, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { loadDelegateConfig } from "../../delegate/config.ts";
 import { ModelCommand } from "../../delegate/model-command.ts";
@@ -62,8 +62,14 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 			custom: async (create: Function) => {
 				let result: string | undefined;
 				const terminal = { rows: 30, columns: 100 };
-				const component = create({ terminal, requestRender: () => {} }, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; });
+				let settle!: (value: unknown) => void;
+				const settled = new Promise(resolve => { settle = resolve; });
+				const component = create({ terminal, requestRender: () => {} }, ctx.ui.theme, getKeybindings(), (value: string | undefined) => { result = value; settle(value); });
 				try {
+					if (component instanceof BorderedLoader) {
+						assert.match(component.render(100).join("\n"), /Checking recon with test\/available/);
+						return await settled;
+					}
 					const moves = actions[screen++];
 					assert.ok(moves, `unexpected screen ${screen}`);
 					for (const width of [30, 100]) assert.ok(component.render(width).every((line: string) => visibleWidth(line) <= width));
@@ -259,5 +265,35 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	assert.ok(notices.some(text => /changed on disk/.test(text)));
 	assert.equal(JSON.parse(readFileSync(paths.userPath, "utf8")).changedExternally, true);
 	command.stop();
+	// A save that changes how the role launches starts it once; a failure needs explicit acceptance.
+	const checks: string[] = [], failures: string[] = [];
+	let verdict = { failed: true, text: "cmd: pi\nstderr: Error: Model \"test/available\" not found." };
+	const checking = new ModelCommand(config, paths, undefined, async (kind, agent) => { checks.push(`${kind}:${agent.model}`); return verdict; });
+	const pickRole = testCtx.ui.select;
+	testCtx.ui.select = async (title: string, options: string[]) => {
+		if (!/check failed/.test(title)) return pickRole(title, options);
+		assert.deepEqual(options, ["Do not save", "Save anyway"], "Enter on the default must not save a failing role");
+		failures.push(title);
+		return options[0];
+	};
+	const beforeCheck = readFileSync(paths.userPath, "utf8");
+	assert.equal(config.agents.recon.enabled, false);
+	screen = actions.length;
+	const checkedSave = async (moves: number[][]) => { actions.push(...moves); picks = 2; await checking.command("", testCtx, true); assert.equal(screen, actions.length); };
+	await checkedSave([[8, 12]]);
+	assert.deepEqual(checks, [], "Disabled roles are not checked");
+	await checkedSave([[0, 12], [-1]]);
+	assert.deepEqual(checks, ["recon:test/available"]);
+	assert.match(failures[0], /recon check failed: test\/available did not return a response[\s\S]*Model "test\/available" not found/);
+	assert.equal(config.agents.recon.enabled, false, "A declined failed check saves nothing");
+	assert.equal(readFileSync(paths.userPath, "utf8").includes('"enabled":true'), false);
+	verdict = { failed: false, text: "OK" };
+	await checkedSave([[0, 12]]);
+	assert.equal(failures.length, 1);
+	assert.equal(loadDelegateConfig(paths).agents.recon.enabled, true);
+	await checkedSave([[8, 12]]);
+	assert.equal(checks.length, 2, "Saves that leave launch settings alone are not checked");
+	assert.notEqual(readFileSync(paths.userPath, "utf8"), beforeCheck);
+	checking.stop();
 	return { editor: true, safeDefaults: true, preservedOverlay: true, acceptedSnapshot: true };
 }

@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { fingerprint, loadSavingsSnapshot } from "./calibration.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, keyHint, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import { Container } from "@earendil-works/pi-tui";
 import { assertNotNested, resolveChildCwd, truncateOutput } from "../child-runtime/policy.ts";
 import { copyFinalizationProgress } from "../child-runtime/guard-protocol.ts";
-import { loadDelegateConfig, resolveAgent, resolveCheckpointAgent, type Kind } from "./config.ts";
-import { createCheckpointHooks } from "./checkpoints.ts";
+import { loadDelegateConfig, resolveAgent, resolveCheckpointAgent, type AgentConfig, type Kind } from "./config.ts";
+import { createCheckpointHooks, type CheckpointResult } from "./checkpoints.ts";
 import {
 	delegateTargetLine,
 	durationContent,
@@ -30,7 +30,7 @@ import { renderChildCall, renderChildResult, renderJobBoard, renderNotifyMessage
 import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards.ts";
 import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
-import { ModelCommand } from "./model-command.ts";
+import { ModelCommand, ROLE_CHECK_TASK, ROLE_CHECK_TIMEOUT_MS, roleCheckAgent } from "./model-command.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
@@ -184,7 +184,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				: join(agentDir(), "delegate.json"),
 	};
 	const config = loadDelegateConfig(configPaths);
-	const modelCommand = new ModelCommand(config, configPaths, () => registerDelegateTool());
+	const modelCommand = new ModelCommand(config, configPaths, () => registerDelegateTool(),
+		(kind, agent, ctx, signal) => runAdvisor(ctx, { kind, model: agent.model, agent: roleCheckAgent(agent), task: ROLE_CHECK_TASK,
+			origin: `role-check:${kind}:${Date.now()}`, timeoutMs: ROLE_CHECK_TIMEOUT_MS, signal }));
 	const accounting = new Accounting(archiveRoot(agentDir()));
 	const cards = new JobCards();
 	const origins = new Map<string, string>();
@@ -341,28 +343,34 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		checkpoints.restore(_event, ctx);
 	});
 	pi.on("session_tree", (event, ctx) => { cards.restore(ctx.sessionManager.getBranch()); checkpoints.restore(event, ctx); });
-	const checkpoints = createCheckpointHooks(pi, config, async (task, origin, ctx) => {
+	/** Runs one foreground job whose caller delivers the result itself: checkpoints and role checks. */
+	async function runAdvisor(ctx: ExtensionContext, input: {
+		kind: string; model: string; agent: AgentConfig; task: string; origin: string; timeoutMs: number; signal?: AbortSignal;
+	}): Promise<CheckpointResult> {
 		bindUi(ctx);
-		const { kind, agent: configured, model } = resolveCheckpointAgent(config);
-		const agent = signedInSpeed(ctx.modelRegistry, model, configured);
-		ctx.signal?.throwIfAborted();
+		const { kind, model, signal, timeoutMs } = input;
+		const agent = signedInSpeed(ctx.modelRegistry, model, input.agent);
+		signal?.throwIfAborted();
 		const accepted = enqueueDelegate({
-			scheduler, accounting, agent, task, config, childRunner, background: false,
-			timeoutMs: config.defaultTimeoutMs, signal: ctx.signal,
+			scheduler, accounting, agent, task: input.task, config, childRunner, background: false, timeoutMs, signal,
 			identity: {
 				parentSessionId: ctx.sessionManager.getSessionId(), parentSessionFile: ctx.sessionManager.getSessionFile(),
-				toolCallId: origin, kind, cwd: ctx.cwd, requestedModel: model, thinking: agent.thinking,
+				toolCallId: input.origin, kind, cwd: ctx.cwd, requestedModel: model, thinking: agent.thinking,
 			},
 		});
-		// Checkpoints deliver their own result at this boundary, never a follow-up notice.
+		// The caller delivers the result at this boundary, never a follow-up notice.
 		gate.consume(accepted.id);
-		const snap = await scheduler.wait(accepted.id, { timeoutMs: config.defaultTimeoutMs, signal: ctx.signal });
+		const snap = await scheduler.wait(accepted.id, { timeoutMs, signal });
 		if (snap.status === "queued" || snap.status === "running") {
 			scheduler.cancel(snap.id);
 			return { failed: true, text: "Advisor wait ended before completion; cancellation requested.", jobId: snap.id, model };
 		}
 		const text = snap.responseFile ? readFileSync(snap.responseFile, "utf8") : receiptText(snap);
 		return { failed: snap.failed || !text.trim(), text, jobId: snap.id, model, durationMs: accounting.durationMs(snap.archive?.runId) };
+	}
+	const checkpoints = createCheckpointHooks(pi, config, (task, origin, ctx) => {
+		const { kind, agent, model } = resolveCheckpointAgent(config);
+		return runAdvisor(ctx, { kind, model, agent, task, origin, timeoutMs: config.defaultTimeoutMs, signal: ctx.signal });
 	});
 	pi.on("turn_end", checkpoints.turnEnd);
 	const dialogs = new AbortController();

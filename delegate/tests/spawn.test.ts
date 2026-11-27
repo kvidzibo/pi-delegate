@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { appendDelegateLog, buildChildArgs, buildChildEnv, delegateLogPath } from "../spawn.ts";
+import { parseProviderOwners, providerExtension, resetProviderExtensions } from "../provider-extension.ts";
 
 const base = {
 	model: "local-qwen38/qwen38-q4km",
@@ -99,4 +100,27 @@ test("delegate log writes one json line without task text", () => {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+test("a model from an extension provider loads only that extension when extensions are off", async () => {
+	const bridge = "/agent/npm/node_modules/pi-claude-bridge/src/index.ts";
+	const args = buildChildArgs({ ...base, providerExtension: bridge });
+	assert.ok(args.includes("--no-extensions"));
+	assert.equal(args[args.indexOf("--extension") + 1], bridge);
+	assert.equal(buildChildArgs({ ...base, extensions: true, providerExtension: bridge }).includes("--extension"), false);
+
+	const mark = "mark=";
+	const owners = parseProviderOwners(`noise\n${mark}{"x":"spoof"}\nmore\n${mark}${JSON.stringify({ "claude-bridge": bridge, relative: "index.ts" })}\n`, mark);
+	assert.deepEqual([...owners], [["claude-bridge", bridge]], "Only the last marked line and absolute paths count");
+	assert.throws(() => parseProviderOwners("models…\n", mark), /no result/);
+
+	let probes = 0;
+	const failing = async () => { probes++; throw new Error("pi missing"); };
+	const working = async () => { probes++; return owners; };
+	resetProviderExtensions();
+	assert.equal(await providerExtension("claude-bridge/claude-opus", failing), undefined, "A failed probe leaves the launch unchanged");
+	assert.equal(await providerExtension("claude-bridge/claude-opus", working), bridge, "A failed probe is retried");
+	assert.equal(await providerExtension("openai-codex/gpt", working), undefined);
+	assert.equal(probes, 2, "One successful probe serves every later launch");
+	resetProviderExtensions();
 });

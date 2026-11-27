@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runPiChild, type ChildControl, type ChildResult } from "../child-runtime/spawn.ts";
 import type { InheritedLease } from "../child-runtime/lease.ts";
 import { SPEED_ENV, type Speed } from "../child-runtime/speed.ts";
+import { providerExtension } from "./provider-extension.ts";
 
 const SERVICE_TIER_EXTENSION = fileURLToPath(new URL("../child-runtime/service-tier.ts", import.meta.url));
 
@@ -15,6 +16,8 @@ export interface ChildArgsInput {
 	extensions?: boolean;
 	/** Loads the private service-tier extension; the child still checks model eligibility. */
 	speed?: Speed;
+	/** Extension that registers the model's provider; needed only when extensions are off. */
+	providerExtension?: string;
 	promptPath: string;
 	sessionFile: string;
 }
@@ -61,6 +64,7 @@ export function buildChildArgs(input: ChildArgsInput): string[] {
 		input.promptPath,
 	);
 	if (input.speed && input.speed !== "standard") args.push("--extension", SERVICE_TIER_EXTENSION);
+	if (!input.extensions && input.providerExtension) args.push("--extension", input.providerExtension);
 	return args;
 }
 
@@ -113,6 +117,8 @@ function logChildResult(input: RunChildInput, result: ChildResult): void {
 
 export async function runChild(input: RunChildInput): Promise<ChildResult> {
 	if ("execution" in input && input.execution !== undefined) throw new Error("Execution/headroom guard APIs are retired; refusing to launch without the requested policy.");
+	// --no-extensions also drops the extension that registers the model's provider.
+	const provider = input.extensions ? undefined : await providerExtension(input.model);
 	const result = await runPiChild({
 		cwd: input.cwd,
 		model: input.model,
@@ -129,6 +135,7 @@ export async function runChild(input: RunChildInput): Promise<ChildResult> {
 				tools: input.tools,
 				extensions: input.extensions,
 				speed: input.speed,
+				providerExtension: provider,
 				promptPath,
 				sessionFile: input.sessionFile,
 			}),

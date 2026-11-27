@@ -395,7 +395,8 @@ export async function runPiChild(input: RunPiChildInput): Promise<ChildResult> {
 			if (closed) return;
 			closed = true;
 			if ((leaseStartup || responseStartup) && !taskDispatched && !failure && !stopKind) {
-				failure = { reason: "error", text: "Child exited before the startup handshake completed and the task was dispatched." };
+				const detail = tailBytes(stderr, STDERR_TAIL_BYTES).trim();
+				failure = { reason: "error", text: `Child exited before the startup handshake completed and the task was dispatched.${detail ? `\n${detail}` : ""}` };
 			}
 			startup.abort();
 			if (hardTimer) clearTimeout(hardTimer);
