@@ -31,7 +31,7 @@ import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards
 import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
 import { ModelCommand, ROLE_CHECK_TASK, ROLE_CHECK_TIMEOUT_MS, roleCheckAgent } from "./model-command.ts";
-import { REUSE_HINT } from "./display.ts";
+import { REUSE_HINT, STALL_HINT } from "./display.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
@@ -72,15 +72,13 @@ type ViewContext = {
 /** Role-specific parent guidance, injected only while the role is enabled. */
 const roleGuidelines: Array<[string, string]> = [
 	["recon", "Use delegate kind recon for read-only repo mapping, file lookup, failure reproduction notes and narrow review evidence; never edits or broad judgment. Prefer recon over reading many files or long logs in the parent. Do not send recon images or long inherited context."],
-	["implement", "Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Give parallel children disjoint files and scopes; avoid parent/child write races."],
+	["implement", "Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Give parallel children disjoint files and scopes; avoid parent/child write races. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree."],
 	["review", "Use delegate kind review, which is read-only, only if implementation failed or independent judgment is required. Supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands. Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, supply the prior finding and reproduction, and require independent reassessment rather than agreement. In review loops, address findings and review again until none important remain."],
 	["oracle", "Use delegate kind oracle, which is read-only, only as a last resort, without parallel delegates."],
 ];
 
-// Situational guidance travels with the result that needs it instead of the system prompt.
-const STALL_HINT = "Quiet is not proof of a stall: wait again while tools progress. Suspected stall: wrap:true once, wait in a separate call, then peek (timeoutMs 0) before cancel:true.";
 
-function receiptText(snap: JobSnapshot, stallAfterMs?: number): string {
+function receiptText(snap: JobSnapshot): string {
 	if (snap.status === "queued") {
 		const why = snap.reason ? ` ${snap.reason}` : "";
 		const wait = snap.reason === "resource" ? `Waiting for shared resource${snap.resource ? ` ${snap.resource.key}` : ""}.`
@@ -108,7 +106,6 @@ function receiptText(snap: JobSnapshot, stallAfterMs?: number): string {
 			lines.push(`current: ${snap.current.name}${snap.current.args ? ` ${snap.current.args}` : ""}`);
 		}
 		lines.push("Slot still held. jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.");
-		if (stallAfterMs && !snap.cancellationRequested && (snap.quietForMs ?? 0) >= stallAfterMs) lines.push(STALL_HINT);
 		return lines.join("\n");
 	}
 	const answer = snap.answer || snap.stderrTail || snap.stopReason || "(no output)";
@@ -124,8 +121,8 @@ function formatOutput(input: {
 	kind: Kind;
 	model?: string;
 	details: Record<string, unknown>;
-	/** Finished child that could edit files: attach the check-reuse conditions. */
-	edited?: boolean;
+	/** Situational guidance for this result, kept outside the capped answer text. */
+	hint?: string;
 }) {
 	const body = [
 		delegateTargetLine(input.kind, input.model),
@@ -138,7 +135,7 @@ function formatOutput(input: {
 				text: input.failed ? `delegate failed (${input.stopReason || input.exitCode}): ${body}` : body,
 			},
 			...durationContent(input.details.durationMs),
-			...(input.edited ? [{ type: "text" as const, text: REUSE_HINT }] : []),
+			...(input.hint ? [{ type: "text" as const, text: input.hint }] : []),
 			...capabilityContent(input.details.capabilities),
 			...outcomeContent(input.details.outcome),
 			...completionHookContent(input.details.completionHook),
@@ -482,7 +479,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 			"Use delegate as the only parent-child tool, one child per call. The parent owns decomposition, architecture and security judgment, ambiguity resolution, destructive or external actions, integration, final validation and the final answer. Small or tightly coupled edits stay with the parent.",
 			...roleGuidelines.flatMap(([kind, rule]) => config.agents[kind] && config.agents[kind].enabled !== false ? [rule] : []),
 			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model, work around a disabled role, or claim a clean review from a model other than the requested one: report the blocker.",
-			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules; no diff or other context is added automatically, so supply readable artifacts or file paths. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree. Children must not push, merge, publish, release or expand scope.",
+			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules; no diff or other context is added automatically, so supply readable artifacts or file paths. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Children must not push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff and validate the integrated result. Rerun fast checks. Child reports and completion receipts are evidence, not proof of correctness.",
 		],
 		parameters: Type.Object({
@@ -611,7 +608,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				const failed = !pending && snap.failed;
 				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
 				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
-				const text = collect || pending || snap.responseFile ? receiptText(snap, config.checkIntervalMs)
+				const text = collect || pending || snap.responseFile ? receiptText(snap)
 					: truncateOutput(snap.answer || snap.stderrTail || "(no output)", config.maxOutputBytes);
 				updateCard(snap);
 				if (collect && shouldConsume(snap)) gate.consume(snap.id);
@@ -623,7 +620,10 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					maxBytes: config.maxOutputBytes,
 					kind: snap.kind,
 					model: snap.model,
-					edited: snap.status === "done" && !failed && config.agents[snap.kind]?.tools?.some(tool => tool === "write" || tool === "edit"),
+					// Eligibility comes from the tools accepted with the job, not the current role.
+					hint: snap.status === "running" && !snap.cancellationRequested && (snap.quietForMs ?? 0) >= config.checkIntervalMs ? STALL_HINT
+						: snap.status === "done" && !failed && (snap.capabilities?.writeTools.length || snap.capabilities?.tools.some(name => name.includes("*"))) ? REUSE_HINT
+						: undefined,
 					details: uiDetails(snap, collect ? {
 						callType: "collect", operation, background: true, pending, ...checkTiming,
 						answer: pending ? snap.answer : text,

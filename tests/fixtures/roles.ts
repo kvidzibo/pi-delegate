@@ -18,9 +18,9 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	} };
 	writeFileSync(paths.userPath, JSON.stringify(overlay));
 	const config = loadDelegateConfig(paths);
-	let additions = 0;
+	const refreshed: string[] = [];
 	let created: typeof config.agents[string] | undefined;
-	const command = new ModelCommand(config, paths, () => { additions++; created = structuredClone(config.agents.writer); });
+	const command = new ModelCommand(config, paths, () => { refreshed.push(Object.keys(config.agents).filter(kind => config.agents[kind].enabled !== false).join()); created ??= structuredClone(config.agents.writer); });
 	const model = { provider: "test", id: "available", name: "Available", reasoning: false };
 	let picks = 0, screen = 0, edits = 0;
 	let resizedTools = false;
@@ -115,7 +115,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	const original = structuredClone(config.agents.recon);
 	await command.command("", testCtx, true);
 	assert.deepEqual(notices, []);
-	assert.equal(additions, 1, "New roles refresh the native tool declaration after acceptance");
+	assert.deepEqual(refreshed, ["recon,implement,review,oracle,writer", "recon,implement,review,oracle", "implement,review,oracle"], "Added, enabled and disabled roles refresh the native tool declaration after acceptance");
 	assert.equal(screen, actions.length);
 	assert.equal(resizedTools, true);
 	assert.deepEqual(created, { enabled: true, model: "test/available", thinking: "off", prompt: "Write documents.\nKeep scope.", tools: [], extensions: false });

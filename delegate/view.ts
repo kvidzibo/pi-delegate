@@ -1,6 +1,6 @@
 import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, REUSE_HINT, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
+import { activityLabel, aliasForModel, asActivityItem, asActivityList, durationContent, formatDuration, REUSE_HINT, STALL_HINT, paintHeader, type ActivityItem, type ThemeFg } from "./display.ts";
 import { paintNotify, type NotifyDetails } from "./notify.ts";
 import { displayText } from "./stats.ts";
 import type { CardDetails } from "./cards.ts";
@@ -173,7 +173,7 @@ export function renderChildResult(input: RowInput): ChildView {
 		const dataBlocks = [...capabilityContent(d.capabilities), ...outcomeContent(d.outcome)];
 		const textParts = (state.content ?? []).flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
 		// At most one exact trailing separate block per kind; never infer a suffix in report prose.
-		const footers = new Set([...durationContent(d.durationMs), { text: REUSE_HINT }, ...dataBlocks, ...hookBlocks].map(block => block.text));
+		const footers = new Set([...durationContent(d.durationMs), { text: REUSE_HINT }, { text: STALL_HINT }, ...dataBlocks, ...hookBlocks].map(block => block.text));
 		while (textParts.length > 1 && footers.delete(textParts.at(-1)!)) textParts.pop();
 		const contentText = textParts.join("\n");
 		const answer = failed

@@ -6,7 +6,7 @@ import { CustomEditor, getAgentDir, type ExtensionAPI, type ExtensionCommandCont
 import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { withRoleModels } from "./capabilities.ts";
-import { delegateTargetLine, formatDuration, REUSE_HINT } from "../../delegate/display.ts";
+import { delegateTargetLine, formatDuration, REUSE_HINT, STALL_HINT } from "../../delegate/display.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import { NOTIFY_HOLD_MS } from "../../delegate/notify.ts";
 import { truncateOutput } from "../../child-runtime/policy.ts";
@@ -245,9 +245,9 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		timedRun.resolve(success); const reviewed = await call({ jobId: timed.details.jobId });
 		// Situational guidance rides on the result that needs it, not on every receipt.
 		const editing = await launch({ kind: "implement" });
-		assert.doesNotMatch(editing.content[0].text, /Suspected stall/);
+		assert.ok(!editing.content.some((part: any) => part.text === STALL_HINT));
 		const quiet = await call({ jobId: editing.details.jobId });
-		pending(quiet, "running", "collect", "wait"); assert.match(quiet.content[0].text, /Suspected stall: wrap:true once/);
+		pending(quiet, "running", "collect", "wait"); assert.ok(quiet.content.some((part: any) => part.text === STALL_HINT));
 		runs.at(-1)!.resolve(success);
 		const edited = await call({ jobId: editing.details.jobId });
 		assert.ok(edited.content.some((part: any) => part.text === REUSE_HINT));

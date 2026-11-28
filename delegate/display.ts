@@ -50,7 +50,8 @@ export function formatDuration(ms: unknown): string | undefined {
 	return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
 }
 
-/** Attached to finished results of edit-capable roles. */
+/** Situational parent guidance, attached as its own block to the result that needs it. */
+export const STALL_HINT = "Quiet is not proof of a stall: wait again while tools progress. Suspected stall: wrap:true once, wait in a separate call, then peek (timeoutMs 0); cancel:true only if it still shows no progress. A user stop or unsafe or out-of-scope work may be cancelled at once.";
 export const REUSE_HINT = "Reuse a slow check reported as passed only if its saved log shows the pass, `git status --porcelain --untracked-files=all` is empty and `git rev-parse HEAD^{tree}` equals `git rev-parse <reported commit>^{tree}`; otherwise rerun it. Ignored files are not covered. Rerun slow suites once after the last change.";
 
 export function durationContent(durationMs: unknown): Array<{ type: "text"; text: string }> {
