@@ -50,6 +50,9 @@ export function formatDuration(ms: unknown): string | undefined {
 	return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
 }
 
+/** Attached to finished results of edit-capable roles. */
+export const REUSE_HINT = "Reuse a slow check reported as passed only if its saved log shows the pass, `git status --porcelain --untracked-files=all` is empty and `git rev-parse HEAD^{tree}` equals `git rev-parse <reported commit>^{tree}`; otherwise rerun it. Ignored files are not covered. Rerun slow suites once after the last change.";
+
 export function durationContent(durationMs: unknown): Array<{ type: "text"; text: string }> {
 	const duration = formatDuration(durationMs);
 	return duration === undefined ? [] : [{ type: "text", text: `Duration: ${duration}\ndurationMs: ${durationMs}` }];

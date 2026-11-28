@@ -64,6 +64,7 @@ export default function probe(pi: ExtensionAPI) {
 		assert.deepEqual(tools.map((tool) => tool.name), ["delegate"]);
 		assert.equal(Object.hasOwn(tools[0].parameters.properties, "model"), false);
 		assert.ok(tools[0].promptGuidelines?.some(rule => rule.includes("per-call model overrides are not supported")));
+		assert.equal(tools[0].promptGuidelines?.length, 9);
 		assert.ok(!pi.getCommands().some(c => c.name === "delegate-local"));
 		const policyPath = join(getAgentDir(), "response-format.json");
 		writeFileSync(policyPath, JSON.stringify({ schema: { type: "object" }, repairAttempts: 2, maxOutputBytes: 1024 }));

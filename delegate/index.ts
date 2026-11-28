@@ -31,6 +31,7 @@ import { CARD_STATE_TYPE, JobCards, isTerminal, type CardDetails } from "./cards
 import { JobBoard, plainBoardTheme, type BoardUi } from "./board.ts";
 import { projectJobBoard } from "./panel.ts";
 import { ModelCommand, ROLE_CHECK_TASK, ROLE_CHECK_TIMEOUT_MS, roleCheckAgent } from "./model-command.ts";
+import { REUSE_HINT } from "./display.ts";
 import { capabilityContent, copyCapabilities, describeCapabilities, type CapabilityManifest } from "./capabilities.ts";
 import { copyOutcome, outcomeContent } from "./outcomes.ts";
 import { respondToBusyQuery } from "./busy-guard.ts";
@@ -68,7 +69,18 @@ type ViewContext = {
 	invalidate?: () => void;
 };
 
-function receiptText(snap: JobSnapshot): string {
+/** Role-specific parent guidance, injected only while the role is enabled. */
+const roleGuidelines: Array<[string, string]> = [
+	["recon", "Use delegate kind recon for read-only repo mapping, file lookup, failure reproduction notes and narrow review evidence; never edits or broad judgment. Prefer recon over reading many files or long logs in the parent. Do not send recon images or long inherited context."],
+	["implement", "Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Give parallel children disjoint files and scopes; avoid parent/child write races."],
+	["review", "Use delegate kind review, which is read-only, only if implementation failed or independent judgment is required. Supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands. Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, supply the prior finding and reproduction, and require independent reassessment rather than agreement. In review loops, address findings and review again until none important remain."],
+	["oracle", "Use delegate kind oracle, which is read-only, only as a last resort, without parallel delegates."],
+];
+
+// Situational guidance travels with the result that needs it instead of the system prompt.
+const STALL_HINT = "Quiet is not proof of a stall: wait again while tools progress. Suspected stall: wrap:true once, wait in a separate call, then peek (timeoutMs 0) before cancel:true.";
+
+function receiptText(snap: JobSnapshot, stallAfterMs?: number): string {
 	if (snap.status === "queued") {
 		const why = snap.reason ? ` ${snap.reason}` : "";
 		const wait = snap.reason === "resource" ? `Waiting for shared resource${snap.resource ? ` ${snap.resource.key}` : ""}.`
@@ -96,6 +108,7 @@ function receiptText(snap: JobSnapshot): string {
 			lines.push(`current: ${snap.current.name}${snap.current.args ? ` ${snap.current.args}` : ""}`);
 		}
 		lines.push("Slot still held. jobId waits, wrap:true wraps, cancel:true kills. timeoutMs 0 peeks.");
+		if (stallAfterMs && !snap.cancellationRequested && (snap.quietForMs ?? 0) >= stallAfterMs) lines.push(STALL_HINT);
 		return lines.join("\n");
 	}
 	const answer = snap.answer || snap.stderrTail || snap.stopReason || "(no output)";
@@ -111,6 +124,8 @@ function formatOutput(input: {
 	kind: Kind;
 	model?: string;
 	details: Record<string, unknown>;
+	/** Finished child that could edit files: attach the check-reuse conditions. */
+	edited?: boolean;
 }) {
 	const body = [
 		delegateTargetLine(input.kind, input.model),
@@ -123,6 +138,7 @@ function formatOutput(input: {
 				text: input.failed ? `delegate failed (${input.stopReason || input.exitCode}): ${body}` : body,
 			},
 			...durationContent(input.details.durationMs),
+			...(input.edited ? [{ type: "text" as const, text: REUSE_HINT }] : []),
 			...capabilityContent(input.details.capabilities),
 			...outcomeContent(input.details.outcome),
 			...completionHookContent(input.details.completionHook),
@@ -460,31 +476,14 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		renderShell: "self",
 		description:
 			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
-		promptSnippet: "Route isolated work to a named delegate agent. Model comes only from role configuration.",
+		promptSnippet: "Route isolated work to a named delegate agent.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; delegate isolated child work when it saves parent context or time, unless coordination and validation would cost more than doing it directly.",
-			"Use delegate as the only parent-child tool. One child per call. No nesting.",
-			"With delegate, the parent owns decomposition, architecture and security judgment, ambiguity resolution, destructive or external actions, integration, final validation and the final answer. Small or tightly coupled edits stay with the parent.",
-			"Use delegate kind recon for read-only repo mapping, file lookup, failure reproduction notes and narrow review evidence; never edits or broad judgment. Prefer recon over reading many files or long logs in the parent. Do not send recon images or long inherited context.",
-			"Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Give parallel children disjoint files and scopes; avoid parent/child write races.",
-			"Use delegate kind review only if implementation failed or independent judgment is required; review and oracle remain read-only.",
-			"For delegate reviews, supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands. Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, supply the prior finding and reproduction, and require independent reassessment rather than agreement.",
-			"Use delegate kind oracle only as a last resort, without parallel delegates.",
-			"Roles can be disabled in configuration; do not retry a disabled role with another model. No automatic diff or extra task context is prepared; supply readable artifacts or file paths and scope in the task. Review remains read-only by prompt policy.",
-			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model.",
-			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree. Children must not push, merge, publish, release or expand scope.",
-			"Inspect every delegate result and diff and validate the integrated result. Rerun fast checks. Reuse a slow check a child reports as passed only when its saved log shows the pass, `git status --porcelain --untracked-files=all` is empty and `git rev-parse HEAD^{tree}` equals `git rev-parse <reported commit>^{tree}`; otherwise rerun it. Ignored files are not covered. Rerun slow suites once after the last change. Child reports and completion receipts are evidence, not proof of correctness.",
-			"For review loops, use kind review with its configured model; address findings and review again until none important remain. If a requested model differs from the role configuration, report the blocker rather than overriding or substituting a model or claiming a clean review.",
-			"delegate spawns default to background:true and return jobId immediately; the child keeps running. Set background:false to wait on spawn.",
-			"delegate timeoutMs is a wait budget, never a kill. Foreground expiry auto-backgrounds and returns a short check-in.",
-			"With delegate jobId, omit timeoutMs to wait until done or 60s quiet; timeoutMs:0 peeks.",
-			"On a nonterminal delegate check-in, inspect current/recent tools and quietForMs. Wait while useful progress continues; silence or wait expiry alone does not prove a stall.",
-			"For a suspected delegate stall, request wrap:true once, then wait again in a separate call; allow the current turn/tools and final report time to finish.",
-			"Before delegate cancel:true for a suspected stall, fetch and inspect a fresh jobId/timeoutMs:0 snapshot in a separate call. Cancel only if post-wrap checks still show a stall; explicit user stop or unsafe/out-of-scope work may cancel immediately.",
-			"delegate wrap:true is advisory steering, not an interrupt or delivery acknowledgement. cancel:true aborts and kills.",
-			"Collect full delegate results with jobId even after an interactive completion notice; print/JSON stays pull-only.",
-			"Use recorded delegate durationMs and Duration as authoritative elapsed timing; recover missing timing from archived metadata.json. Use Unknown only when timing cannot be recovered.",
-			"Local delegate jobs may queue under maxLocalConcurrent; hosted jobs can run independently. Running children retain their slots until they stop.",
+			"Use delegate as the only parent-child tool, one child per call. The parent owns decomposition, architecture and security judgment, ambiguity resolution, destructive or external actions, integration, final validation and the final answer. Small or tightly coupled edits stay with the parent.",
+			...roleGuidelines.flatMap(([kind, rule]) => config.agents[kind] && config.agents[kind].enabled !== false ? [rule] : []),
+			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model, work around a disabled role, or claim a clean review from a model other than the requested one: report the blocker.",
+			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules; no diff or other context is added automatically, so supply readable artifacts or file paths. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree. Children must not push, merge, publish, release or expand scope.",
+			"Inspect every delegate result and diff and validate the integrated result. Rerun fast checks. Child reports and completion receipts are evidence, not proof of correctness.",
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
@@ -612,7 +611,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 				const failed = !pending && snap.failed;
 				const exitCode = snap.exitCode ?? (failed ? 1 : 0);
 				// Preserve foreground answer capping and the richer empty-answer fallback on collection.
-				const text = collect || pending || snap.responseFile ? receiptText(snap)
+				const text = collect || pending || snap.responseFile ? receiptText(snap, config.checkIntervalMs)
 					: truncateOutput(snap.answer || snap.stderrTail || "(no output)", config.maxOutputBytes);
 				updateCard(snap);
 				if (collect && shouldConsume(snap)) gate.consume(snap.id);
@@ -624,6 +623,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					maxBytes: config.maxOutputBytes,
 					kind: snap.kind,
 					model: snap.model,
+					edited: snap.status === "done" && !failed && config.agents[snap.kind]?.tools?.some(tool => tool === "write" || tool === "edit"),
 					details: uiDetails(snap, collect ? {
 						callType: "collect", operation, background: true, pending, ...checkTiming,
 						answer: pending ? snap.answer : text,

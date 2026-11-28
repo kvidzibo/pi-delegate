@@ -6,7 +6,7 @@ import { CustomEditor, getAgentDir, type ExtensionAPI, type ExtensionCommandCont
 import { KeybindingsManager } from "@earendil-works/pi-tui";
 import delegate from "../../delegate/index.ts";
 import { withRoleModels } from "./capabilities.ts";
-import { delegateTargetLine, formatDuration } from "../../delegate/display.ts";
+import { delegateTargetLine, formatDuration, REUSE_HINT } from "../../delegate/display.ts";
 import { CARD_STATE_TYPE } from "../../delegate/cards.ts";
 import { NOTIFY_HOLD_MS } from "../../delegate/notify.ts";
 import { truncateOutput } from "../../child-runtime/policy.ts";
@@ -47,6 +47,7 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		const path = join(getAgentDir(), "delegate.json");
 		const overlay = JSON.parse(readFileSync(path, "utf8"));
 		overlay.agents.filed = { model: "xai/grok-4.6", prompt: "Offline test.", responseTemplate: "| Finding | Resolution |", saveToFile: true };
+		overlay.checkIntervalMs = 1000;
 		writeFileSync(path, JSON.stringify(overlay));
 		return delegate({ ...pi, registerTool: (next: any) => { tool = next; }, registerCommand() {}, registerMessageRenderer() {},
 			on: (name: string, handler: Function) => handlers.set(name, handler),
@@ -241,7 +242,16 @@ export async function resultProbe(pi: ExtensionAPI, ctx: ExtensionCommandContext
 		const timedRun = runs.at(-1)!;
 		pending(timed, "running", "spawn");
 		foregroundSignal.abort(); assert.equal(timedRun.input.signal?.aborted, false);
-		timedRun.resolve(success); await call({ jobId: timed.details.jobId });
+		timedRun.resolve(success); const reviewed = await call({ jobId: timed.details.jobId });
+		// Situational guidance rides on the result that needs it, not on every receipt.
+		const editing = await launch({ kind: "implement" });
+		assert.doesNotMatch(editing.content[0].text, /Suspected stall/);
+		const quiet = await call({ jobId: editing.details.jobId });
+		pending(quiet, "running", "collect", "wait"); assert.match(quiet.content[0].text, /Suspected stall: wrap:true once/);
+		runs.at(-1)!.resolve(success);
+		const edited = await call({ jobId: editing.details.jobId });
+		assert.ok(edited.content.some((part: any) => part.text === REUSE_HINT));
+		assert.ok(!reviewed.content.some((part: any) => part.text === REUSE_HINT));
 		const local = { kind: "recon" };
 		const blocker = await launch(local);
 		for (const background of [true, false]) {
