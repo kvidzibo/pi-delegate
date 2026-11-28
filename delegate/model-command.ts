@@ -36,7 +36,7 @@ export class ModelCommand {
 	private busy = false;
 	private revision: string;
 
-	constructor(config: DelegateConfig, paths: ConfigPaths, private readonly onRoleAdded?: () => void, private readonly roleCheck?: RoleCheck) {
+	constructor(config: DelegateConfig, paths: ConfigPaths, private readonly onRolesChanged?: () => void, private readonly roleCheck?: RoleCheck) {
 		this.config = config;
 		this.paths = paths;
 		this.revision = delegateConfigRevision(paths);
@@ -374,7 +374,8 @@ export class ModelCommand {
 				if (!await this.verify(ctx, name, before, draft, signal)) continue;
 				this.persist(name, before, draft);
 				this.config.agents[name] = { ...draft, tools: [...draft.tools] };
-				if (adding) this.onRoleAdded?.();
+				// Role names and enabled-role guidance live in the registered tool declaration.
+				if (adding || (before?.enabled !== false) !== (draft.enabled !== false)) this.onRolesChanged?.();
 				return;
 			}
 		}

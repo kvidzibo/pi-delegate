@@ -269,7 +269,7 @@ Spawning requires non-empty `kind` and `task`. Spawns default to `background: tr
 | Cancel | `{ "jobId": "d0001", "cancel": true }` |
 
 - **Waiting:** `timeoutMs` is a wait budget, **not a kill timeout**; foreground expiry leaves the child running in the background. Each collection starts a fresh quiet interval (60 seconds by default) that child events restart. `quietForMs` reports actual child inactivity, not time spent waiting. Completion notices are previews only; collect again for the final result.
-- **Wrap:** advisory. It asks the child to finish without interrupting its current turn or tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall.
+- **Wrap:** advisory. It asks the child to finish without interrupting its current turn or tools; wrapping a queued job cancels it. For a suspected stall, wrap, wait again, then inspect a fresh peek before cancelling. Silence alone does not prove a stall; a check-in on a child that has been quiet for a full interval carries this guidance as a separate block.
 - **Stopping:** cancel stops the child, and shutdown stops all outstanding jobs. The `hardTimeoutMs` setting limits runtime; `0` (default) disables it.
 - **Parent interrupt:** **Esc interrupting the parent cancels all its running and queued delegates**, including background jobs and jobs from earlier turns, and suppresses their completion notices. An interrupted foreground wait is not promoted to background. Until child cleanup finishes, receipts report `cancellationRequested: true`, remain nonterminal and retain capacity. Normal parent completion, wait timeouts and dismissing a menu with Esc leave background jobs running.
 - **Limits:** timer arguments and configuration must not exceed 2,147,483,647 ms.
@@ -282,6 +282,7 @@ Compact cards and receipts read `d0001 · implement · ● Running · Luna · hi
 - **Previews:** tasks wrap to two lines with an ellipsis; clipped results show the hidden line count. Saved-response paths appear only when expanded.
 - **Timing:** completed results expose `durationMs` and a readable `Duration` (for example `4m 36s`), matching the archived `metadata.json`. It excludes queue wait and is zero if cancelled before starting; use archived timing when a result is unavailable. Check receipts freeze elapsed runtime (or queue time) and, after the first check, the interval since the previous one.
 - **Generation rate:** running cards show an approximate `~tg 42.0/s`; finished headers and stats show the run average. Local models are timed from the first generated token. Hosted models are timed from the start of each reply, which includes network and prompt-processing time, so treat the rate as a lower bound; it stays low during hidden reasoning.
+- **Check reuse:** successful results from jobs accepted with `write`, `edit` or wildcard tools include a separate block with the conditions for reusing a slow check the child reports as passed.
 - **Receipts:** returned answers are capped; inspect the native session for more. Capability receipts describe configured tools, not verified availability or sandboxing. Outcome receipts describe execution, not task correctness.
 
 | Command | Shows |
@@ -307,6 +308,6 @@ Archive retention is indefinite. Keep archives private: they can contain sensiti
 
 ## Development
 
-Parent guidance lives in [index.ts](index.ts); role prompts, models and tool policy live in [config.json](config.json). Keep role/model policy out of `AGENTS.md`.
+Parent guidance lives in [index.ts](index.ts): always-needed rules in `promptGuidelines`, role rules only while the role is enabled, and situational hints in the results that need them. Do not repeat tool or parameter descriptions there; role prompts, models and tool policy live in [config.json](config.json). Keep role/model policy out of `AGENTS.md`.
 
 Test from the repository root with `node --test --experimental-strip-types delegate/tests/*.test.ts` and `npm run test:load`. The [implementation contract](SPEC.md) covers runtime changes; see [child-runtime](../child-runtime/README.md) for RPC and shared-capacity requirements.
