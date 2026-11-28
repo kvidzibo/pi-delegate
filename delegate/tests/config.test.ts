@@ -131,7 +131,7 @@ test("response schemas can be switched off without losing them", () => {
 	const implement = base.agents.implement;
 	assert.equal(implement.responseSchemaEnabled, false);
 	assert.deepEqual((implement.responseSchema as any).required, ["completed", "remaining", "files_changed", "checks", "blockers"]);
-	assert.deepEqual(Object.keys((implement.responseSchema as any).properties.checks.items.properties), ["command", "outcome", "details", "log", "tree"]);
+	assert.deepEqual(Object.keys((implement.responseSchema as any).properties.checks.items.properties), ["command", "outcome", "details", "log", "commit"]);
 	assert.equal(effectiveResponseSchema(implement), null);
 	assert.equal("responseSchemaEnabled" in base.agents.recon, false);
 	assert.deepEqual(mergeDelegateConfig(base, { agents: { implement: { thinking: "high" } } }, "inherit.json").agents.implement,
