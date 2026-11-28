@@ -72,7 +72,7 @@ type ViewContext = {
 /** Role-specific parent guidance, injected only while the role is enabled. */
 const roleGuidelines: Array<[string, string]> = [
 	["recon", "Use delegate kind recon for read-only repo mapping, file lookup, failure reproduction notes and narrow review evidence; never edits or broad judgment. Prefer recon over reading many files or long logs in the parent. Do not send recon images or long inherited context."],
-	["implement", "Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Give parallel children disjoint files and scopes; avoid parent/child write races. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree."],
+	["implement", "Use delegate kind implement for implementation and tests once scope and acceptance criteria are defined. Implement children may commit locally unless the task forbids it; forbid it when children share a worktree."],
 	["review", "Use delegate kind review, which is read-only, only if implementation failed or independent judgment is required. Supply requirements, acceptance criteria, exact diff/artifact paths and scope, relevant repository constraints, and permitted validation commands. Keep independent first-pass handoffs neutral: omit requests for approval, implementer self-assessments, and other reviewers' verdicts. For fix verification, supply the prior finding and reproduction, and require independent reassessment rather than agreement. In review loops, address findings and review again until none important remain."],
 	["oracle", "Use delegate kind oracle, which is read-only, only as a last resort, without parallel delegates."],
 ];
@@ -472,14 +472,14 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		label: "Delegate",
 		renderShell: "self",
 		description:
-			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Model from config. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
+			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
 		promptSnippet: "Route isolated work to a named delegate agent.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; delegate isolated child work when it saves parent context or time, unless coordination and validation would cost more than doing it directly.",
 			"Use delegate as the only parent-child tool, one child per call. The parent owns decomposition, architecture and security judgment, ambiguity resolution, destructive or external actions, integration, final validation and the final answer. Small or tightly coupled edits stay with the parent.",
 			...roleGuidelines.flatMap(([kind, rule]) => config.agents[kind] && config.agents[kind].enabled !== false ? [rule] : []),
 			"Delegate models come only from role configuration; per-call model overrides are not supported. To use another model, ask the user to configure the role with /pi-delegate roles. Never silently substitute a model, work around a disabled role, or claim a clean review from a model other than the requested one: report the blocker.",
-			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules; no diff or other context is added automatically, so supply readable artifacts or file paths. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Children must not push, merge, publish, release or expand scope.",
+			"Give every delegate a self-contained task with the goal, exact cwd/targets, relevant context, evidence or checks required, acceptance criteria and stop rules; no diff or other context is added automatically, so supply readable artifacts or file paths. Distinguish allowed edits from validation commands, including permission for new directories, reversible setup and isolated Pi integration tests without delegated work or model requests. Give parallel children disjoint files and scopes; avoid parent/child write races. Children must not push, merge, publish, release or expand scope.",
 			"Inspect every delegate result and diff and validate the integrated result. Rerun fast checks. Child reports and completion receipts are evidence, not proof of correctness.",
 		],
 		parameters: Type.Object({
@@ -620,9 +620,9 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 					maxBytes: config.maxOutputBytes,
 					kind: snap.kind,
 					model: snap.model,
-					// Eligibility comes from the tools accepted with the job, not the current role.
+					// Eligibility comes from the tools accepted with the job, not the current role; unlisted or wildcard names may edit.
 					hint: snap.status === "running" && !snap.cancellationRequested && (snap.quietForMs ?? 0) >= config.checkIntervalMs ? STALL_HINT
-						: snap.status === "done" && !failed && (snap.capabilities?.writeTools.length || snap.capabilities?.tools.some(name => name.includes("*"))) ? REUSE_HINT
+						: snap.status === "done" && !failed && (snap.capabilities?.writeTools.length || snap.capabilities?.omittedTools || snap.capabilities?.tools.some(name => name.includes("*"))) ? REUSE_HINT
 						: undefined,
 					details: uiDetails(snap, collect ? {
 						callType: "collect", operation, background: true, pending, ...checkTiming,
