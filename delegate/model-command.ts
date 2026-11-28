@@ -1,6 +1,6 @@
 import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, settingsConflict, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
 import { SPEEDS, speedForModel, supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
@@ -87,6 +87,8 @@ export class ModelCommand {
 				if (index < 0) throw new Error("Invalid delegate role selection.");
 				const kind = kinds[index];
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
+				// Refuse a stale session here, not after its pickers and role checks.
+				if (delegateConfigRevision(this.paths) !== this.revision) throw settingsConflict("Delegate settings");
 				if (roles && choice === BULK_SPEED) notice = await this.saveCodexSpeed(ctx, signal);
 				else if (roles) {
 					const before = this.revision;
@@ -161,7 +163,7 @@ export class ModelCommand {
 				} else if (action === "save") {
 					try {
 						if (draft.enabled) { await refresh(); if (signal.aborted) return; validate(); }
-						this.revision = saveCheckpointSettings(this.paths, before, draft, this.revision);
+						this.revision = saveCheckpointSettings(this.paths, before, draft, this.revision, draft.enabled ? this.config.agents[draft.role] : undefined);
 						this.config.checkpoints = { ...draft };
 						ctx.ui.notify("Checkpoints saved globally; active here for future checks. Other sessions need /reload. Existing jobs unchanged.", "info");
 						return;
@@ -177,7 +179,8 @@ export class ModelCommand {
 
 	/** One-time bulk set: writes the chosen speed into every role using an OpenAI Codex model. */
 	private async saveCodexSpeed(ctx: ExtensionCommandContext, signal: AbortSignal): Promise<string> {
-		const targets = Object.keys(this.config.agents).filter(kind => this.config.agents[kind].model.startsWith("openai-codex/"));
+		const codex = (agent: AgentConfig) => agent.model.startsWith("openai-codex/");
+		const targets = Object.keys(this.config.agents).filter(kind => codex(this.config.agents[kind]));
 		if (!targets.length) { ctx.ui.notify("No roles use OpenAI Codex models.", "warning"); return ""; }
 		const speeds = new Set(targets.map(kind => this.config.agents[kind].speed ?? "standard"));
 		const labels = SPEEDS.map(speed => `${speed}${speeds.size === 1 && speeds.has(speed) ? " ✓ current" : ""}`);
@@ -201,7 +204,7 @@ export class ModelCommand {
 		const current = Object.fromEntries(targets.map(kind => [kind, this.config.agents[kind]]));
 		// One declined or cancelled check leaves the whole batch unsaved.
 		for (const kind of targets) if (!await this.verify(ctx, kind, current[kind], { ...current[kind], speed }, signal)) return "";
-		this.revision = saveRolesSpeed(this.paths, current, speed, this.revision);
+		this.revision = saveRolesSpeed(this.paths, current, speed, this.revision, codex);
 		// Replace, don't mutate: queued runners close over the previous agent object.
 		for (const kind of targets) this.config.agents[kind] = { ...current[kind], speed };
 		return `Saved ${speed} speed for ${targets.length} Codex roles. New delegates use it now.`;

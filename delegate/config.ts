@@ -375,8 +375,16 @@ export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 	return mergeDelegateConfig(shipped, JSON.parse(readFileSync(input.userPath, "utf8")), input.userPath);
 }
 
+/**
+ * Identity of the user file only. Shipped defaults change on every package update; each save
+ * compares the merged settings it replaces, so those conflict only where an update reaches them.
+ */
 export function delegateConfigRevision(paths: ConfigPaths): string {
-	return JSON.stringify(readConfigState(paths).identity);
+	return userRevision(readConfigState(paths));
+}
+
+function userRevision(state: { identity: (string | null)[] }): string {
+	return JSON.stringify(state.identity.slice(2));
 }
 
 function readConfigState(paths: ConfigPaths) {
@@ -419,9 +427,12 @@ export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: Agent
 	});
 }
 
-/** Set one speed on several existing roles in a single atomic save. */
-export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentConfig>, speed: Speed, revision?: string): string {
+/** Set one speed on every `eligible` role in a single atomic save; `current` must name exactly those roles. */
+export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentConfig>, speed: Speed, revision: string | undefined,
+	eligible: (agent: AgentConfig) => boolean): string {
 	return saveSettingsPatch(paths, "Roles", revision, state => {
+		// A package update can add an eligible role that this session never offered for confirmation.
+		for (const [kind, agent] of Object.entries(state.config.agents)) if (eligible(agent) && !Object.hasOwn(current, kind)) throw settingsConflict(kind);
 		const agents = { ...state.overlay.agents };
 		for (const [kind, agent] of Object.entries(current)) {
 			if (!Object.hasOwn(state.config.agents, kind) || !isDeepStrictEqual(state.config.agents[kind], agent)) throw settingsConflict(kind);
@@ -431,15 +442,18 @@ export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentCo
 	});
 }
 
-export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string): string {
+/** `advisor` is the role the caller validated for enabled checks; a package update may have changed it. */
+export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string, advisor?: AgentConfig): string {
 	return saveSettingsPatch(paths, "Checkpoints", revision, state => {
 		if (!isDeepStrictEqual(state.config.checkpoints, current)) throw settingsConflict("Checkpoints");
+		const role = patch.role ?? current.role;
+		if (advisor && !(Object.hasOwn(state.config.agents, role) && isDeepStrictEqual(state.config.agents[role], advisor))) throw settingsConflict(role);
 		parseCheckpoints(patch, current);
 		return { ...state.overlay, checkpoints: { ...(state.overlay.checkpoints as object | undefined), ...patch } };
 	});
 }
 
-function settingsConflict(label: string): Error {
+export function settingsConflict(label: string): Error {
 	return new Error(`${label} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
 }
 
@@ -449,7 +463,7 @@ function saveSettingsPatch(paths: ConfigPaths, label: string, revision: string |
 	const state = readConfigState(paths);
 	const baseline = JSON.stringify(state.identity);
 	const conflict = () => { throw settingsConflict(label); };
-	if (revision !== undefined && revision !== baseline) conflict();
+	if (revision !== undefined && revision !== userRevision(state)) conflict();
 	const { shipped, mode } = state;
 	const next = update(state);
 	mergeDelegateConfig(shipped, next, state.path!);
@@ -460,12 +474,13 @@ function saveSettingsPatch(paths: ConfigPaths, label: string, revision: string |
 	catch { throw new Error("Settings are busy or not writable; no changes were made."); }
 	const temp = `${path}.${randomUUID()}.tmp`;
 	try {
-		if (delegateConfigRevision(paths) !== baseline) conflict();
+		const unchanged = () => JSON.stringify(readConfigState(paths).identity) === baseline;
+		if (!unchanged()) conflict();
 		const text = `${JSON.stringify(next, null, 2)}\n`;
-		const nextRevision = JSON.stringify([state.identity[0], state.identity[1], join(realpathSync(dirname(path)), basename(path)), text]);
+		const nextRevision = JSON.stringify([join(realpathSync(dirname(path)), basename(path)), text]);
 		writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
 		chmodSync(temp, mode);
-		if (delegateConfigRevision(paths) !== baseline) conflict();
+		if (!unchanged()) conflict();
 		renameSync(temp, path);
 		return nextRevision;
 	} finally {
