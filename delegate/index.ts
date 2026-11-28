@@ -467,12 +467,13 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		lastChecks.clear();
 	});
 
+	const enabledRoles = () => Object.keys(config.agents).filter(kind => config.agents[kind].enabled !== false).join(", ");
 	const registerDelegateTool = () => pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
 		renderShell: "self",
 		description:
-			`Child agent. Roles: ${Object.keys(config.agents).join(", ")}. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
+			`Child agent. Roles: ${enabledRoles()}. Background by default; returns jobId. background:false waits. jobId waits/peeks/wraps/cancels. timeoutMs is wait budget, never kills. Interactive mode may inject a completion notice. Local models share maxLocalConcurrent. No nesting.`,
 		promptSnippet: "Route isolated work to a named delegate agent.",
 		promptGuidelines: [
 			"Before each substantial task, assess delegate; delegate isolated child work when it saves parent context or time, unless coordination and validation would cost more than doing it directly.",
@@ -484,7 +485,7 @@ export default function delegate(pi: ExtensionAPI, childRunner: typeof runChild 
 		],
 		parameters: Type.Object({
 			task: optionalArgument(Type.String({ description: "Task for the child. Required to spawn. Max 20000 chars." })),
-			kind: optionalArgument(Type.String({ description: `Configured role: ${Object.keys(config.agents).join(", ")}. Required to spawn.` })),
+			kind: optionalArgument(Type.String({ description: `Configured role: ${enabledRoles()}. Required to spawn.` })),
 			cwd: optionalArgument(
 				Type.String({ description: "Child working directory. Relative paths resolve against parent cwd." }),
 			),
