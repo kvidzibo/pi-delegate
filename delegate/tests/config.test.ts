@@ -16,6 +16,7 @@ import {
 	parseCompletionHook,
 	resolveAgent,
 	saveDelegatePatch,
+	saveRolesSpeed,
 	type DelegateConfig,
 } from "../config.ts";
 
@@ -410,5 +411,28 @@ test("completion hooks inherit, disable, snapshot and save for every named role 
 			assert.equal(config.agents[kind].completionHook, null);
 			assert.equal(mergeDelegateConfig(config, { agents: { [kind]: { thinking: "off" } } }, "disabled").agents[kind].completionHook, null);
 		}
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a package update conflicts only with saves of the roles it changed", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-delegate-update-"));
+	const paths = { shippedPath: join(dir, "config.json"), userPath: join(dir, "delegate.json") };
+	try {
+		const defaults = JSON.parse(readFileSync(shippedPath, "utf8"));
+		writeFileSync(paths.shippedPath, JSON.stringify(defaults));
+		writeFileSync(paths.userPath, JSON.stringify({ agents: { review: { thinking: "low" } } }));
+		const { agents } = loadDelegateConfig(paths);
+		let revision = delegateConfigRevision(paths);
+		// The session stays open across an update that rewrites one shipped role.
+		defaults.agents.recon.prompt += "\nUpdated.";
+		writeFileSync(paths.shippedPath, JSON.stringify(defaults));
+		assert.equal(revision, delegateConfigRevision(paths));
+		revision = saveRolesSpeed(paths, { review: agents.review, oracle: agents.oracle }, "fast", revision);
+		assert.equal(revision, delegateConfigRevision(paths));
+		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")).agents, { review: { thinking: "low", speed: "fast" }, oracle: { speed: "fast" } });
+		const before = readFileSync(paths.userPath, "utf8");
+		assert.throws(() => saveRolesSpeed(paths, { recon: agents.recon }, "fast", revision), /recon changed on disk/);
+		assert.throws(() => saveDelegatePatch(paths, "recon", agents.recon, { thinking: "low" }, revision), /recon changed on disk/);
+		assert.equal(readFileSync(paths.userPath, "utf8"), before);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

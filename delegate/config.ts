@@ -375,8 +375,16 @@ export function loadDelegateConfig(input: ConfigPaths): DelegateConfig {
 	return mergeDelegateConfig(shipped, JSON.parse(readFileSync(input.userPath, "utf8")), input.userPath);
 }
 
+/**
+ * Identity of the user file only. Shipped defaults change on every package update; each save
+ * compares the merged settings it replaces, so those conflict only where an update reaches them.
+ */
 export function delegateConfigRevision(paths: ConfigPaths): string {
-	return JSON.stringify(readConfigState(paths).identity);
+	return userRevision(readConfigState(paths));
+}
+
+function userRevision(state: { identity: (string | null)[] }): string {
+	return JSON.stringify(state.identity.slice(2));
 }
 
 function readConfigState(paths: ConfigPaths) {
@@ -439,7 +447,7 @@ export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointCo
 	});
 }
 
-function settingsConflict(label: string): Error {
+export function settingsConflict(label: string): Error {
 	return new Error(`${label} changed on disk. Run /reload before changing it here (reload stops outstanding children).`);
 }
 
@@ -449,7 +457,7 @@ function saveSettingsPatch(paths: ConfigPaths, label: string, revision: string |
 	const state = readConfigState(paths);
 	const baseline = JSON.stringify(state.identity);
 	const conflict = () => { throw settingsConflict(label); };
-	if (revision !== undefined && revision !== baseline) conflict();
+	if (revision !== undefined && revision !== userRevision(state)) conflict();
 	const { shipped, mode } = state;
 	const next = update(state);
 	mergeDelegateConfig(shipped, next, state.path!);
@@ -460,12 +468,13 @@ function saveSettingsPatch(paths: ConfigPaths, label: string, revision: string |
 	catch { throw new Error("Settings are busy or not writable; no changes were made."); }
 	const temp = `${path}.${randomUUID()}.tmp`;
 	try {
-		if (delegateConfigRevision(paths) !== baseline) conflict();
+		const unchanged = () => JSON.stringify(readConfigState(paths).identity) === baseline;
+		if (!unchanged()) conflict();
 		const text = `${JSON.stringify(next, null, 2)}\n`;
-		const nextRevision = JSON.stringify([state.identity[0], state.identity[1], join(realpathSync(dirname(path)), basename(path)), text]);
+		const nextRevision = JSON.stringify([join(realpathSync(dirname(path)), basename(path)), text]);
 		writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
 		chmodSync(temp, mode);
-		if (delegateConfigRevision(paths) !== baseline) conflict();
+		if (!unchanged()) conflict();
 		renameSync(temp, path);
 		return nextRevision;
 	} finally {

@@ -1,6 +1,6 @@
 import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
+import { assertKind, delegateConfigRevision, parseCompletionHook, resolveCheckpointAgent, saveCheckpointSettings, saveDelegatePatch, saveRolesSpeed, settingsConflict, type AgentConfig, type ConfigPaths, type DelegateConfig, type Kind } from "./config.ts";
 import { roleMenu } from "./role-menu.ts";
 import { compileResponseSchema } from "../child-runtime/response-schema.ts";
 import { SPEEDS, speedForModel, supportedSpeeds, type Speed } from "../child-runtime/speed.ts";
@@ -87,6 +87,8 @@ export class ModelCommand {
 				if (index < 0) throw new Error("Invalid delegate role selection.");
 				const kind = kinds[index];
 				if (!this.paths.userPath) throw new Error("User config is disabled (PI_DELEGATE_SKIP_USER_CONFIG=1).");
+				// Refuse a stale session here, not after its pickers and role checks.
+				if (delegateConfigRevision(this.paths) !== this.revision) throw settingsConflict("Delegate settings");
 				if (roles && choice === BULK_SPEED) notice = await this.saveCodexSpeed(ctx, signal);
 				else if (roles) {
 					const before = this.revision;
