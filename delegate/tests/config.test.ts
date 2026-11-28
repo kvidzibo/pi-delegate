@@ -427,11 +427,15 @@ test("a package update conflicts only with saves of the roles it changed", () =>
 		defaults.agents.recon.prompt += "\nUpdated.";
 		writeFileSync(paths.shippedPath, JSON.stringify(defaults));
 		assert.equal(revision, delegateConfigRevision(paths));
-		revision = saveRolesSpeed(paths, { review: agents.review, oracle: agents.oracle }, "fast", revision);
+		const picked = (agent: { prompt: string }) => [agents.review.prompt, agents.oracle.prompt].includes(agent.prompt);
+		revision = saveRolesSpeed(paths, { review: agents.review, oracle: agents.oracle }, "fast", revision, picked);
 		assert.equal(revision, delegateConfigRevision(paths));
 		assert.deepEqual(JSON.parse(readFileSync(paths.userPath, "utf8")).agents, { review: { thinking: "low", speed: "fast" }, oracle: { speed: "fast" } });
 		const before = readFileSync(paths.userPath, "utf8");
-		assert.throws(() => saveRolesSpeed(paths, { recon: agents.recon }, "fast", revision), /recon changed on disk/);
+		assert.throws(() => saveRolesSpeed(paths, { recon: agents.recon }, "fast", revision, () => false), /recon changed on disk/);
+		// Neither a role the session never confirmed nor an advisor it validated differently is saved.
+		assert.throws(() => saveRolesSpeed(paths, { review: loadDelegateConfig(paths).agents.review }, "ultrafast", revision, picked), /oracle changed on disk/);
+		assert.throws(() => saveCheckpointSettings(paths, loadDelegateConfig(paths).checkpoints, { role: "recon" }, revision, agents.recon), /recon changed on disk/);
 		assert.throws(() => saveDelegatePatch(paths, "recon", agents.recon, { thinking: "low" }, revision), /recon changed on disk/);
 		assert.equal(readFileSync(paths.userPath, "utf8"), before);
 	} finally { rmSync(dir, { recursive: true, force: true }); }

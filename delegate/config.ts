@@ -427,9 +427,12 @@ export function saveDelegatePatch(paths: ConfigPaths, kind: Kind, current: Agent
 	});
 }
 
-/** Set one speed on several existing roles in a single atomic save. */
-export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentConfig>, speed: Speed, revision?: string): string {
+/** Set one speed on every `eligible` role in a single atomic save; `current` must name exactly those roles. */
+export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentConfig>, speed: Speed, revision: string | undefined,
+	eligible: (agent: AgentConfig) => boolean): string {
 	return saveSettingsPatch(paths, "Roles", revision, state => {
+		// A package update can add an eligible role that this session never offered for confirmation.
+		for (const [kind, agent] of Object.entries(state.config.agents)) if (eligible(agent) && !Object.hasOwn(current, kind)) throw settingsConflict(kind);
 		const agents = { ...state.overlay.agents };
 		for (const [kind, agent] of Object.entries(current)) {
 			if (!Object.hasOwn(state.config.agents, kind) || !isDeepStrictEqual(state.config.agents[kind], agent)) throw settingsConflict(kind);
@@ -439,9 +442,12 @@ export function saveRolesSpeed(paths: ConfigPaths, current: Record<Kind, AgentCo
 	});
 }
 
-export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string): string {
+/** `advisor` is the role the caller validated for enabled checks; a package update may have changed it. */
+export function saveCheckpointSettings(paths: ConfigPaths, current: CheckpointConfig, patch: Partial<CheckpointConfig>, revision?: string, advisor?: AgentConfig): string {
 	return saveSettingsPatch(paths, "Checkpoints", revision, state => {
 		if (!isDeepStrictEqual(state.config.checkpoints, current)) throw settingsConflict("Checkpoints");
+		const role = patch.role ?? current.role;
+		if (advisor && !(Object.hasOwn(state.config.agents, role) && isDeepStrictEqual(state.config.agents[role], advisor))) throw settingsConflict(role);
 		parseCheckpoints(patch, current);
 		return { ...state.overlay, checkpoints: { ...(state.overlay.checkpoints as object | undefined), ...patch } };
 	});

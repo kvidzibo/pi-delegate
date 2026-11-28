@@ -271,6 +271,7 @@ export async function rolesProbe(ctx: ExtensionCommandContext) {
 	picks = 2; screen = discardStart - 1;
 	await command.command("", testCtx, true);
 	assert.ok(notices.some(text => /changed on disk/.test(text)));
+	assert.equal(screen, discardStart - 1, "A stale session is refused before the role editor opens");
 	assert.equal(JSON.parse(readFileSync(paths.userPath, "utf8")).changedExternally, true);
 	command.stop();
 	// A save that changes how the role launches starts it once; a failure needs explicit acceptance.
