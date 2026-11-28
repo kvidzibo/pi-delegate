@@ -98,6 +98,9 @@ process.stdin.on('end', () => {
 	const plain = await finishHook(spawn("recon", { ...agent, responseSchema: null }, async () => ({ text: "plain response", exitCode: 0, stderrTail: "" })).id);
 	assert.equal(plain.completionHook?.status, "succeeded");
 	assert.deepEqual(entries().at(-1).payload.response, { text: "plain response", schemaValidated: false });
+	const off = await finishHook(spawn("recon", { ...agent, responseSchemaEnabled: false }, async () => ({ text: "not JSON", exitCode: 0, stderrTail: "", stopReason: "stop" })).id);
+	assert.equal(off.completionHook?.status, "succeeded");
+	assert.deepEqual(entries().at(-1).payload.response, { text: "not JSON", schemaValidated: false }, "A switched-off schema is not enforced");
 	const disabled = await finishHook(spawn("recon", { ...agent, completionHook: null }).id);
 	assert.equal(disabled.completionHook, undefined);
 

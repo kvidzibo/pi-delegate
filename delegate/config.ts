@@ -44,12 +44,19 @@ export interface AgentConfig {
 	completionHook?: CompletionHookConfig | null;
 	responseTemplate?: string;
 	responseSchema?: ResponseSchema | null;
+	/** Undefined means enabled; false keeps the schema in config but runs the role as schema-less. */
+	responseSchemaEnabled?: boolean;
 	responseRepairAttempts?: number;
 	saveToFile?: boolean;
 	extensions: boolean;
 	tools: string[];
 	thinking: ThinkingLevel;
 	speed?: Speed;
+}
+
+/** The schema the runtime uses: null when unset or switched off with responseSchemaEnabled: false. */
+export function effectiveResponseSchema(agent: Pick<AgentConfig, "responseSchema" | "responseSchemaEnabled">): ResponseSchema | null {
+	return agent.responseSchemaEnabled === false ? null : agent.responseSchema ?? null;
 }
 
 export interface CheckpointConfig {
@@ -157,6 +164,7 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		if (parsed.responseSchema !== undefined && parsed.responseSchema !== null) compileResponseSchema(parsed.responseSchema);
 		if (parsed.responseRepairAttempts !== undefined) assertRepairAttempts(parsed.responseRepairAttempts);
 	} catch (error) { errors.push(`responseSchema/responseRepairAttempts: ${error instanceof Error ? error.message : String(error)}`); }
+	if (parsed.responseSchemaEnabled !== undefined && typeof parsed.responseSchemaEnabled !== "boolean") errors.push("responseSchemaEnabled (boolean)");
 	if (parsed.saveToFile !== undefined && typeof parsed.saveToFile !== "boolean") errors.push("saveToFile (boolean)");
 	if (parsed.enabled !== undefined && typeof parsed.enabled !== "boolean") errors.push("enabled (boolean)");
 	if (parsed.extensions !== undefined && typeof parsed.extensions !== "boolean") errors.push("extensions (boolean)");
@@ -172,6 +180,7 @@ function parseAgent(value: unknown, label: string): AgentConfig {
 		...(completionHook !== undefined ? { completionHook } : {}),
 		...(parsed.responseTemplate !== undefined ? { responseTemplate: parsed.responseTemplate as string } : {}),
 		...(parsed.responseSchema !== undefined ? { responseSchema: structuredClone(parsed.responseSchema) as ResponseSchema | null } : {}),
+		...(parsed.responseSchemaEnabled !== undefined ? { responseSchemaEnabled: parsed.responseSchemaEnabled as boolean } : {}),
 		...(parsed.responseRepairAttempts !== undefined ? { responseRepairAttempts: parsed.responseRepairAttempts as number } : {}),
 		...(parsed.saveToFile !== undefined ? { saveToFile: parsed.saveToFile as boolean } : {}),
 		extensions: parsed.extensions === true,
@@ -297,6 +306,7 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 		completionHook: base.completionHook,
 		responseTemplate: base.responseTemplate,
 		responseSchema: base.responseSchema,
+		responseSchemaEnabled: base.responseSchemaEnabled,
 		responseRepairAttempts: base.responseRepairAttempts,
 		saveToFile: base.saveToFile,
 		extensions: base.extensions,
@@ -310,6 +320,9 @@ function mergeAgent(base: AgentConfig | undefined, extra: unknown, label: string
 	if (parsed.completionHook !== undefined) next.completionHook = parsed.completionHook;
 	if (parsed.responseTemplate !== undefined) next.responseTemplate = parsed.responseTemplate;
 	if (parsed.responseSchema !== undefined) next.responseSchema = parsed.responseSchema;
+	// A user's own schema must not inherit a shipped "disabled" flag.
+	if (parsed.responseSchema !== undefined && parsed.responseSchemaEnabled === undefined) next.responseSchemaEnabled = undefined;
+	if (parsed.responseSchemaEnabled !== undefined) next.responseSchemaEnabled = parsed.responseSchemaEnabled;
 	if (parsed.responseRepairAttempts !== undefined) next.responseRepairAttempts = parsed.responseRepairAttempts;
 	if (parsed.saveToFile !== undefined) next.saveToFile = parsed.saveToFile;
 	if (parsed.extensions !== undefined) next.extensions = parsed.extensions;

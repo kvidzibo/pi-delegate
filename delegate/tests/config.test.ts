@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
 	assertKind,
 	delegateConfigRevision,
+	effectiveResponseSchema,
 	resolveCheckpointAgent,
 	saveCheckpointSettings,
 	loadDelegateConfig,
@@ -125,6 +126,32 @@ test("user overlay overrides one model", () => {
 	assert.equal(mergeDelegateConfig(typed, { agents: { recon: { responseSchema: false } } }, "false.json").agents.recon.responseSchema, false);
 });
 
+test("response schemas can be switched off without losing them", () => {
+	const base = shipped();
+	const implement = base.agents.implement;
+	assert.equal(implement.responseSchemaEnabled, false);
+	assert.deepEqual((implement.responseSchema as any).required, ["completed", "remaining", "files_changed", "checks", "blockers"]);
+	assert.deepEqual(Object.keys((implement.responseSchema as any).properties.checks.items.properties), ["command", "outcome", "details", "log", "commit"]);
+	assert.equal(effectiveResponseSchema(implement), null);
+	assert.equal("responseSchemaEnabled" in base.agents.recon, false);
+	assert.deepEqual(mergeDelegateConfig(base, { agents: { implement: { thinking: "high" } } }, "inherit.json").agents.implement,
+		{ ...implement, thinking: "high" });
+	const on = mergeDelegateConfig(base, { agents: { implement: { responseSchemaEnabled: true } } }, "on.json").agents.implement;
+	assert.deepEqual(on, { ...implement, responseSchemaEnabled: true });
+	assert.deepEqual(effectiveResponseSchema(on), implement.responseSchema);
+	// A user's own schema must not inherit the shipped disabled flag.
+	const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] };
+	const own = mergeDelegateConfig(base, { agents: { implement: { responseSchema: schema } } }, "own.json").agents.implement;
+	assert.equal("responseSchemaEnabled" in own, false);
+	assert.deepEqual(effectiveResponseSchema(own), schema);
+	const ownOff = mergeDelegateConfig(base, { agents: { implement: { responseSchema: schema, responseSchemaEnabled: false } } }, "own-off.json").agents.implement;
+	assert.equal(ownOff.responseSchemaEnabled, false);
+	assert.equal(effectiveResponseSchema(ownOff), null);
+	assert.equal(effectiveResponseSchema({ responseSchema: false }), false);
+	assert.equal(effectiveResponseSchema({}), null);
+	assert.throws(() => mergeDelegateConfig(base, { agents: { recon: { responseSchema: { type: "strnig" }, responseSchemaEnabled: false } } }, "bad"), /responseSchema/);
+});
+
 test("legacy context settings are accepted but ignored in defaults and overlays", () => {
 	const base = shipped();
 	for (const context of [[], ["git-diff"], [{ source: "git-changed-files" }], "obsolete", null]) {
@@ -241,6 +268,7 @@ test("broken shipped invariants refused", () => {
 	for (const [field, values, expected] of [
 		["responseTemplate", [null, true, 42, [], {}], /responseTemplate.*string/],
 		["saveToFile", [null, "true", 1, [], {}], /saveToFile.*boolean/],
+		["responseSchemaEnabled", [null, "false", 0, [], {}], /responseSchemaEnabled.*boolean/],
 		["speed", [null, "priority", "Fast", true, 1, []], /speed \(one of standard\|fast\|ultrafast\)/],
 		["responseSchema", ["{}", 1, [], { type: "strnig" }, { unknownKeyword: true }, { $async: true }, { $ref: "https://example.com/schema" }], /responseSchema/],
 		["responseRepairAttempts", [null, -1, 3, 1.5, "2"], /responseRepairAttempts/],

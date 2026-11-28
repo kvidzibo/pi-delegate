@@ -50,6 +50,7 @@ Role names match `[a-z][a-z0-9_-]{0,63}`. New roles require nonempty `model` and
 | `speed` | `standard`; `fast` or `ultrafast` requests an OpenAI Codex service tier (see [Speed](#speed)) |
 | `responseTemplate` | Empty/omitted: unchanged response instructions |
 | `responseSchema` | Omitted/`null`: no validation; a draft-07 object or boolean enables JSON validation |
+| `responseSchemaEnabled` | Omitted/`true`: a configured schema applies; `false` keeps the schema but runs the role as if it had none |
 | `responseRepairAttempts` | `2`; integer `0`–`2`, additional attempts after the initial response |
 | `saveToFile` | `false`: return the response inline |
 | `completionHook` | Omitted/`null`: disabled; `{ command: [...], timeoutMs: 10000 }` runs after termination |
@@ -144,7 +145,7 @@ All response settings are captured when the job is accepted.
 
 ## JSON Schema validation
 
-In **Roles → Response schema**, paste a complete JSON Schema. Syntax and schema errors keep the text for correction; Esc cancels. Empty text disables validation (`responseSchema: null`). **Repair attempts** cycles through 0, 1 and 2. For manual configuration:
+In **Roles → Response schema**, paste a complete JSON Schema. Syntax and schema errors keep the text for correction; Esc cancels. Empty text disables validation (`responseSchema: null`). **Response schema enabled** switches a configured schema off without deleting it (`responseSchemaEnabled: false`). **Repair attempts** cycles through 0, 1 and 2. For manual configuration:
 
 ```json
 { "agents": { "review": {
@@ -161,6 +162,7 @@ In **Roles → Response schema**, paste a complete JSON Schema. Syntax and schem
 } } }
 ```
 
+- **Shipped implement schema:** the `implement` role ships a structured report schema with `responseSchemaEnabled: false`, so it returns the Markdown checklist. Enable it with **Response schema enabled** in Roles or `{ "agents": { "implement": { "responseSchemaEnabled": true } } }`. An overlay that sets its own `responseSchema` without `responseSchemaEnabled` keeps that schema enabled.
 - **Schema support:** requires Pi 1.5.0+. Ajv uses strict draft-07 validation, all errors and standard `ajv-formats` formats, without coercion, defaults or property removal. Self-contained `$ref` references work; unresolved external references, async schemas and unsupported keywords/drafts are rejected. `false` rejects everything; use `null` to disable an inherited schema.
 - **Template:** the schema replaces template instructions while enabled, without deleting the saved template. The model must return one JSON value without fences or prose.
 - **Repairs:** validation runs before truncation/saving. Invalid or oversized output gets precise feedback in the same child session, with tools disabled and calls blocked; a tool call during repair fails the job. Repairs share the original time limit, capacity slot and usage accounting. Cancellation, provider errors and token-limit failures are not retried as format errors.
@@ -235,7 +237,7 @@ Stop rules: scope limits and concrete conditions to report
 
 These are task-text conventions, not tool arguments. File ownership limits edits, not execution of authorized tests. Explicitly authorize new directories, setup and any isolated Pi integration tests; test processes must use temporary configuration and must not delegate work or make model requests. The shipped implementer and reviewer permit these tests; recon and oracle prohibit extra Pi processes.
 
-The implementer reports completed/remaining requirements, changed files, checks actually run with results, unrun checks with reasons, and concrete blocker evidence. Treat this as a child-reported checklist, not parent-verified correctness.
+The implementer runs fast checks while working and each slow suite once after its last code change, saving the output to a log file. Unless the task forbids commits, it first commits its task changes locally (never pushes) so the suite runs on a commit. It reports completed/remaining requirements, changed files, checks actually run with results, unrun checks with reasons, each slow suite's log path and commit, and concrete blocker evidence. Treat this as a child-reported checklist, not parent-verified correctness. The parent reruns fast checks and reuses a reported slow pass only when the saved log shows it, the working tree is clean and `HEAD` has the same tree as the reported commit. Forbid commits in the task when children share a worktree.
 
 Custom `prompt` overrides replace the shipped prompt and do not inherit its checklist, test permissions or review guidance.
 
